@@ -32,7 +32,7 @@ Starting with nothing but a Mac and a tablet? Follow these in order (~15 min, mo
 
 1. **Install your tablet's macOS driver** (e.g. Wacom's driver from wacom.com). Check the pen
    moves the cursor in any app before continuing.
-2. **Download PaintTool SAI Ver.2** from https://www.systemax.jp/en/sai/ — under *"Download
+2. **Download PaintTool SAI Ver.2** from https://www.systemax.jp/en/sai/devdept.html — under *"Download
    PaintTool SAI Ver.2 Technical Preview Stable Version"*, get the **SAI Ver.2 64bit … Technical
    Preview** ZIP (~3 MB). Unzip it; the folder contains `sai2.exe`. *(You can draw and test
    pressure for free — a license is only needed to save; see step 7.)*
@@ -72,7 +72,7 @@ This tool **can't** bundle everything — two pieces are legally yours to provid
 
 | You provide | Where |
 |---|---|
-| **PaintTool SAI Ver.2** (free technical preview, 64-bit ZIP) | https://www.systemax.jp/en/sai/ |
+| **PaintTool SAI Ver.2** (free technical preview, 64-bit ZIP) | https://www.systemax.jp/en/sai/devdept.html |
 | **A SAI license** — only needed to *save* your work | https://www.systemax.jp/en/license.html (you can draw & test pressure without it) |
 | **A tablet + its macOS driver** | e.g. Wacom driver from wacom.com |
 | **Wine** (Gcenx "Wine Staging" build) | https://github.com/Gcenx/macOS_Wine_builds/releases |
