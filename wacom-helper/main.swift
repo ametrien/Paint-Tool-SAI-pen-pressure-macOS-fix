@@ -496,14 +496,13 @@ final class SetupController: NSObject, NSApplicationDelegate {
         ]
         buildWindow()
         refresh()
-        // Actively ASK for the permissions on launch: these show the native macOS
-        // prompts ("… would like to monitor input" / "… receive keystrokes") with
-        // an "Open System Settings" button — so the user doesn't have to find and
-        // add the app manually. No-ops if already granted.
+        // On launch, actively ask ONLY for Input Monitoring — the permission
+        // pressure actually needs — via the native prompt (with an "Open System
+        // Settings" button), so the user doesn't add the app manually. No-op if
+        // already granted. Accessibility is OPTIONAL (only for the Cmd→Ctrl
+        // remap), so we do NOT prompt for it here — the user grants it only if
+        // they click that row's "Grant…" button.
         if !inputMonitoringGranted() { _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent) }
-        if remapCmdToCtrl && !AXIsProcessTrusted() {
-            _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
-        }
         // .common mode so the checklist keeps refreshing even while the window
         // is being interacted with (plain .default timers can stall).
         let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in self?.refresh() }
