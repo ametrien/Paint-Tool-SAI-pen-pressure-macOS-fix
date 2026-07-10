@@ -100,11 +100,18 @@ func ensureSetup(_ saiSrc: String, _ wine: String) -> Bool {
                    "/t", "REG_SZ", "/d", "native,builtin", "/f"], env: env)
     return FileManager.default.fileExists(atPath: saiExe)
 }
-func runAppStartup() {
+var g_wine = ""   // resolved during setup; used to launch SAI after the tap is granted
+
+// SETUP ONLY (runs before the pressure tap): resolve Wine, pick the SAI folder,
+// build the prefix + install the bridge. Does NOT launch SAI — that happens
+// only after the tap is created, so a first run without permissions doesn't
+// leave an orphaned SAI window behind (you'd otherwise have to restart).
+func runAppSetup() {
     guard let wine = wineBin() else {
         alertUser("Wine isn't installed. Please download Gcenx 'Wine Staging' and put 'Wine Staging.app' in your Applications folder, then reopen this app.\n\nhttps://github.com/Gcenx/macOS_Wine_builds/releases")
         exit(1)
     }
+    g_wine = wine
     var sai = savedSAIPath()
     if sai == nil {
         sai = osa("POSIX path of (choose folder with prompt \"Select your SAI Ver.2 folder (the one that contains sai2.exe)\")")
@@ -112,10 +119,15 @@ func runAppStartup() {
     }
     guard let saiSrc = sai else { exit(0) }                 // user cancelled the picker
     guard ensureSetup(saiSrc, wine) else { exit(1) }
+}
+
+// LAUNCH (runs only after the pressure tap is active): start SAI; quit the app
+// when SAI closes.
+func launchSAIApp() {
     let pf = "\(appPrefix)/drive_c/wt_pressure.txt"
     try? "0".write(toFile: pf, atomically: true, encoding: .ascii)
     let p = Process()
-    p.executableURL = URL(fileURLWithPath: wine); p.arguments = ["sai2.exe"]
+    p.executableURL = URL(fileURLWithPath: g_wine); p.arguments = ["sai2.exe"]
     p.currentDirectoryURL = URL(fileURLWithPath: "\(appPrefix)/drive_c/SAI2")
     var e = ProcessInfo.processInfo.environment
     e["WINEPREFIX"] = appPrefix; e["WINEDEBUG"] = "-all"
@@ -126,7 +138,7 @@ func runAppStartup() {
     try? p.run()                                            // async; quits the app when SAI closes
 }
 
-if isAppMode { runAppStartup() }
+if isAppMode { runAppSetup() }   // SAI is launched later, after the tap succeeds (see below)
 
 // FULL VIRTUAL DESKTOP bounds (union of all displays), in the global display
 // coordinate space that CGEvent.location uses (top-left origin, y-down, points).
@@ -421,6 +433,7 @@ signal(SIGINT) { _ in
     exit(0)
 }
 
+if isAppMode { launchSAIApp() }
 print("wacom-pressure-helper (CGEventTap) running — writing to \(outPath)")
 print("Draw with the pen; 'captured=N pressure=P' lines should appear. Ctrl+C to quit.")
 CFRunLoopRun()
