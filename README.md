@@ -32,9 +32,10 @@ Starting with nothing but a Mac and a tablet? Follow these in order (~15 min, mo
 
 1. **Install your tablet's macOS driver** (e.g. Wacom's driver from wacom.com). Check the pen
    moves the cursor in any app before continuing.
-2. **Download PaintTool SAI Ver.2** (free technical preview) from
-   https://www.systemax.jp/en/sai/ and unzip it. Note the folder — it contains `sai2.exe`.
-   *(Saving your art needs a SAI license; see step 7.)*
+2. **Download PaintTool SAI Ver.2** from https://www.systemax.jp/en/sai/ — under *"Download
+   PaintTool SAI Ver.2 Technical Preview Stable Version"*, get the **SAI Ver.2 64bit … Technical
+   Preview** ZIP (~3 MB). Unzip it; the folder contains `sai2.exe`. *(You can draw and test
+   pressure for free — a license is only needed to save; see step 7.)*
 3. **Get this tool** (you need Xcode command-line tools — run `xcode-select --install` if you
    don't have them):
    ```bash
@@ -52,8 +53,9 @@ Starting with nothing but a Mac and a tablet? Follow these in order (~15 min, mo
    - click **Launch SAI with Pressure**.
 6. **Turn on WinTab in SAI:** Others → Options → **Pen Tablet** → **Use WinTab API**, then
    relaunch SAI (reopen the app).
-7. **Draw — you've got pressure!** To be able to *save*, drop your `sai-*.slc` license into
-   `~/SAI2-pressure/drive_c/SAI2/` and restart SAI.
+7. **Draw — you've got pressure!** *To save your work* you need a SAI license: buy/download it
+   from https://www.systemax.jp/en/license.html, then drop the `sai-*.slc` certificate into
+   `~/SAI2-pressure/drive_c/SAI2/` and restart SAI (SAI reads the license only at startup).
 
 That's it. The sections below explain the pieces, the manual (command-line) route, and options.
 
@@ -65,8 +67,8 @@ This tool **can't** bundle everything — two pieces are legally yours to provid
 
 | You provide | Where |
 |---|---|
-| **PaintTool SAI Ver.2** (free technical preview) | https://www.systemax.jp/en/sai/ |
-| **Your SAI license** (if you have one; needed to *save*) | your `.slc` certificate from your purchase |
+| **PaintTool SAI Ver.2** (free technical preview, 64-bit ZIP) | https://www.systemax.jp/en/sai/ |
+| **A SAI license** — only needed to *save* your work | https://www.systemax.jp/en/license.html (you can draw & test pressure without it) |
 | **A tablet + its macOS driver** | e.g. Wacom driver from wacom.com |
 | **Wine** (Gcenx "Wine Staging" build) | https://github.com/Gcenx/macOS_Wine_builds/releases |
 
