@@ -15,18 +15,15 @@ echo "Assembling bundle..."
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-# main executable is a tiny launcher that runs the helper with --app
-cat > "$APP/Contents/MacOS/SAI Pen Pressure" <<'LAUNCH'
-#!/bin/bash
-DIR="$(cd "$(dirname "$0")" && pwd)"
-exec "$DIR/wacom-pressure-helper" --app
-LAUNCH
-chmod +x "$APP/Contents/MacOS/SAI Pen Pressure"
+# The main executable must be a REAL Mach-O binary (a shell-script launcher makes
+# downloaded/quarantined apps fail to open with error -47). So the compiled
+# helper IS the main executable; it auto-detects app mode from being in a .app.
+cp "$REPO/wacom-helper/wacom-pressure-helper" "$APP/Contents/MacOS/SAIPenPressure"
+chmod +x "$APP/Contents/MacOS/SAIPenPressure"
 
-# the real binary + our DLL + the Wine installer live inside the bundle
-cp "$REPO/wacom-helper/wacom-pressure-helper" "$APP/Contents/MacOS/wacom-pressure-helper"
-cp "$REPO/wintab-src/wintab32.dll"            "$APP/Contents/Resources/wintab32.dll"
-cp "$REPO/install-wine.sh"                    "$APP/Contents/Resources/install-wine.sh"
+# our DLL + the Wine installer live in Resources
+cp "$REPO/wintab-src/wintab32.dll"  "$APP/Contents/Resources/wintab32.dll"
+cp "$REPO/install-wine.sh"          "$APP/Contents/Resources/install-wine.sh"
 chmod +x "$APP/Contents/Resources/install-wine.sh"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -40,7 +37,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>1.0</string>
   <key>CFBundleShortVersionString</key><string>1.0</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleExecutable</key><string>SAI Pen Pressure</string>
+  <key>CFBundleExecutable</key><string>SAIPenPressure</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <!-- shown in the permission prompts -->
