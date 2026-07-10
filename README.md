@@ -34,7 +34,26 @@ it all together.
 
 ---
 
-## Install (step by step)
+## Easiest: the app (recommended)
+
+Build the double-clickable app once:
+```bash
+./make-app.sh          # produces dist/SAI Pen Pressure.app  (drag it to /Applications)
+```
+Then just **double-click "SAI Pen Pressure"**:
+1. First launch: **right-click → Open** once (it's unsigned — Gatekeeper asks).
+2. It **asks for your SAI Ver.2 folder** (the one with `sai2.exe`), then sets up the Wine
+   prefix, installs the bridge, and launches SAI + pressure together.
+3. Grant **"SAI Pen Pressure"** *Accessibility* + *Input Monitoring* when macOS prompts
+   (System Settings → Privacy & Security), then reopen it. That's it — no Terminal.
+
+You still bring your own Wine (in `/Applications`), SAI, and license (drop your `.slc` into
+the prefix's `SAI2` folder and restart). The manual route below does the same thing if you
+prefer the command line.
+
+---
+
+## Install (step by step, manual)
 
 1. **Install Wine.** Download `wine-staging-*-osx64.tar.xz` (or the `.app`) from the
    [Gcenx releases](https://github.com/Gcenx/macOS_Wine_builds/releases) and put
