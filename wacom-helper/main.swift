@@ -454,12 +454,18 @@ if !isAppMode {
 
 // ---- App mode: a small setup wizard (AppKit) -------------------------------
 final class SetupController: NSObject, NSApplicationDelegate {
-    struct Req { let title, detail, fixTitle: String; let ok: () -> Bool; let fix: () -> Void; let required: Bool }
+    struct Req {
+        let title, detail, fixTitle: String
+        let ok: () -> Bool; let fix: () -> Void; let required: Bool
+        var dynamicDetail: (() -> String)? = nil   // recomputed each refresh (e.g. show the chosen path)
+        var keepButton: Bool = false               // keep the button visible even when satisfied (e.g. "Change…")
+    }
     var reqs: [Req] = []
     var window: NSWindow!
     var subtitle: NSTextField!
     var launchBtn: NSButton!
     var statusFields: [NSTextField] = []
+    var detailFields: [NSTextField] = []
     var fixButtons: [NSButton] = []
     var running = false
 
@@ -475,8 +481,11 @@ final class SetupController: NSObject, NSApplicationDelegate {
         reqs = [
             Req(title: "Wine (runs SAI on Mac)", detail: "Gcenx Wine Staging in /Applications", fixTitle: "Install Wine…",
                 ok: { wineBin() != nil }, fix: { installWineViaTerminal() }, required: true),
-            Req(title: "PaintTool SAI folder", detail: "the folder that contains sai2.exe", fixTitle: "Choose…",
-                ok: { saiReady() }, fix: { [weak self] in self?.chooseSAI() }, required: true),
+            Req(title: "PaintTool SAI folder", detail: "No folder chosen yet — click Choose.", fixTitle: "Choose…",
+                ok: { saiReady() }, fix: { [weak self] in self?.chooseSAI() }, required: true,
+                dynamicDetail: { savedSAIPath().map { "Using: \(($0 as NSString).abbreviatingWithTildeInPath)" }
+                                 ?? "No folder chosen yet — click Choose." },
+                keepButton: true),
             Req(title: "Input Monitoring permission", detail: "lets the app read your tablet's pressure", fixTitle: "Grant…",
                 ok: { inputMonitoringGranted() }, fix: { requestInputMonitoring() }, required: true),
             Req(title: "Accessibility permission (optional)", detail: "only for Cmd→Ctrl shortcut remapping", fixTitle: "Grant…",
@@ -508,7 +517,9 @@ final class SetupController: NSObject, NSApplicationDelegate {
             statusFields.append(status)
             let col = NSStackView(); col.orientation = .vertical; col.alignment = .leading; col.spacing = 1
             col.addArrangedSubview(lbl(r.title, 13, bold: true))
-            col.addArrangedSubview(lbl(r.detail, 11, color: .secondaryLabelColor))
+            let detail = lbl(r.detail, 11, color: .secondaryLabelColor)
+            detailFields.append(detail)
+            col.addArrangedSubview(detail)
             let btn = NSButton(title: r.fixTitle, target: self, action: #selector(fixTapped(_:)))
             btn.tag = i; btn.bezelStyle = .rounded
             btn.setContentHuggingPriority(.required, for: .horizontal)
@@ -539,7 +550,13 @@ final class SetupController: NSObject, NSApplicationDelegate {
         for (i, r) in reqs.enumerated() {
             let ok = r.ok()
             statusFields[i].stringValue = ok ? "✅" : (r.required ? "❌" : "⚪️")
-            fixButtons[i].isHidden = ok
+            if let dd = r.dynamicDetail { detailFields[i].stringValue = dd() }   // e.g. show the chosen folder
+            if r.keepButton {                       // stays visible so you can change it
+                fixButtons[i].isHidden = false
+                fixButtons[i].title = ok ? "Change…" : r.fixTitle
+            } else {
+                fixButtons[i].isHidden = ok
+            }
         }
         // Launch needs Wine + SAI; Input Monitoring is verified for real by
         // actually creating the tap on Launch (the permission check can read
