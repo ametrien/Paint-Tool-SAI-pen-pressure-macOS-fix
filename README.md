@@ -53,9 +53,15 @@ Starting with nothing but a Mac and a tablet? Follow these in order (~15 min, mo
    - click **Launch SAI with Pressure**.
 6. **Turn on WinTab in SAI:** Others → Options → **Pen Tablet** → **Use WinTab API**, then
    relaunch SAI (reopen the app).
-7. **Draw — you've got pressure!** *To save your work* you need a SAI license: buy/download it
-   from https://www.systemax.jp/en/license.html, then drop the `sai-*.slc` certificate into
-   `~/SAI2-pressure/drive_c/SAI2/` and restart SAI (SAI reads the license only at startup).
+7. **Draw — you've got pressure!** *To save your work* you need a SAI license:
+   - Buy one, and you'll get an email titled *"Information About Your Software License"* with a
+     **License Number** and a **Certificate Download Password**.
+   - In SAI, open **Others → System ID** and note the ID it shows.
+   - Go to https://www.systemax.jp/en/license.html, enter the License Number, password, and your
+     **System ID**, and download the `.slc` certificate.
+   - Drop that `.slc` into `~/SAI2-pressure/drive_c/SAI2/` and restart SAI (it reads the license
+     only at startup). *(The certificate is tied to that System ID — if you ever rebuild the Wine
+     prefix and the ID changes, just re-download it from the same page.)*
 
 That's it. The sections below explain the pieces, the manual (command-line) route, and options.
 
