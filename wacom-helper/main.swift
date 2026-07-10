@@ -34,6 +34,100 @@ let outPath: String = {
 // Startup banner, warnings and errors always print.
 let verbose = ProcessInfo.processInfo.environment["WT_VERBOSE"] != nil
 
+// ============================================================================
+// APP-BUNDLE MODE — when launched as "SAI Pen Pressure.app" (with --app).
+// First run: pick the SAI folder, create the Wine prefix, install our DLL.
+// Every run: launch SAI alongside the pressure engine; quit when SAI closes.
+// Run from a terminal WITHOUT --app and none of this happens (dev mode).
+// Permissions (Accessibility / Input Monitoring) attach to the .app itself.
+// ============================================================================
+let isAppMode = CommandLine.arguments.contains("--app")
+let appPrefix = NSString(string: "~/SAI2-pressure").expandingTildeInPath
+
+func appSupport() -> String {
+    let d = NSString(string: "~/Library/Application Support/SAIPenPressure").expandingTildeInPath
+    try? FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true)
+    return d
+}
+func savedSAIPath() -> String? {
+    guard let s = try? String(contentsOfFile: appSupport() + "/config.txt", encoding: .utf8) else { return nil }
+    let p = s.trimmingCharacters(in: .whitespacesAndNewlines); return p.isEmpty ? nil : p
+}
+func saveSAIPath(_ p: String) { try? p.write(toFile: appSupport() + "/config.txt", atomically: true, encoding: .utf8) }
+
+func osa(_ src: String) -> String? {
+    let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript"); p.arguments = ["-e", src]
+    let out = Pipe(); p.standardOutput = out; p.standardError = Pipe()
+    try? p.run(); p.waitUntilExit()
+    guard p.terminationStatus == 0 else { return nil }
+    let s = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    return (s?.isEmpty ?? true) ? nil : s
+}
+func alertUser(_ msg: String) { _ = osa("display dialog \(msg.debugDescription) buttons {\"OK\"} with icon note") }
+
+@discardableResult
+func runProc(_ exe: String, _ args: [String], env: [String: String] = [:], wait: Bool = true) -> Process {
+    let p = Process(); p.executableURL = URL(fileURLWithPath: exe); p.arguments = args
+    if !env.isEmpty { var e = ProcessInfo.processInfo.environment; env.forEach { e[$0] = $1 }; p.environment = e }
+    try? p.run(); if wait { p.waitUntilExit() }; return p
+}
+func wineBin() -> String? {
+    let def = "/Applications/Wine Staging.app/Contents/Resources/wine/bin/wine"
+    if FileManager.default.isExecutableFile(atPath: def) { return def }
+    if let e = ProcessInfo.processInfo.environment["WINE"], FileManager.default.isExecutableFile(atPath: e) { return e }
+    return nil
+}
+func ensureSetup(_ saiSrc: String, _ wine: String) -> Bool {
+    let saiExe = "\(appPrefix)/drive_c/SAI2/sai2.exe"
+    if FileManager.default.fileExists(atPath: saiExe) { return true }        // already set up
+    alertUser("Setting up SAI for the first time — this takes about a minute after you click OK. Please wait for SAI to appear.")
+    let env = ["WINEPREFIX": appPrefix, "WINEDEBUG": "-all"]
+    runProc(wine, ["wineboot", "-u"], env: env)
+    let dst = "\(appPrefix)/drive_c/SAI2"
+    try? FileManager.default.createDirectory(atPath: dst, withIntermediateDirectories: true)
+    runProc("/bin/cp", ["-R", "\(saiSrc)/.", dst])
+    guard FileManager.default.fileExists(atPath: saiExe) else {
+        alertUser("Couldn't find sai2.exe in the folder you chose. Reopen the app and pick the folder that directly contains sai2.exe."); return false
+    }
+    if let res = Bundle.main.resourcePath {
+        let sys = "\(appPrefix)/drive_c/windows/system32"
+        try? FileManager.default.createDirectory(atPath: sys, withIntermediateDirectories: true)
+        try? FileManager.default.removeItem(atPath: "\(sys)/wintab32.dll")
+        try? FileManager.default.copyItem(atPath: "\(res)/wintab32.dll", toPath: "\(sys)/wintab32.dll")
+    }
+    runProc(wine, ["reg", "add", "HKCU\\Software\\Wine\\DllOverrides", "/v", "wintab32",
+                   "/t", "REG_SZ", "/d", "native,builtin", "/f"], env: env)
+    return FileManager.default.fileExists(atPath: saiExe)
+}
+func runAppStartup() {
+    guard let wine = wineBin() else {
+        alertUser("Wine isn't installed. Please download Gcenx 'Wine Staging' and put 'Wine Staging.app' in your Applications folder, then reopen this app.\n\nhttps://github.com/Gcenx/macOS_Wine_builds/releases")
+        exit(1)
+    }
+    var sai = savedSAIPath()
+    if sai == nil {
+        sai = osa("POSIX path of (choose folder with prompt \"Select your SAI Ver.2 folder (the one that contains sai2.exe)\")")
+        if let s = sai { saveSAIPath(s) }
+    }
+    guard let saiSrc = sai else { exit(0) }                 // user cancelled the picker
+    guard ensureSetup(saiSrc, wine) else { exit(1) }
+    let pf = "\(appPrefix)/drive_c/wt_pressure.txt"
+    try? "0".write(toFile: pf, atomically: true, encoding: .ascii)
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: wine); p.arguments = ["sai2.exe"]
+    p.currentDirectoryURL = URL(fileURLWithPath: "\(appPrefix)/drive_c/SAI2")
+    var e = ProcessInfo.processInfo.environment
+    e["WINEPREFIX"] = appPrefix; e["WINEDEBUG"] = "-all"
+    p.environment = e
+    p.terminationHandler = { _ in
+        try? "0".write(toFile: pf, atomically: true, encoding: .ascii); exit(0)
+    }
+    try? p.run()                                            // async; quits the app when SAI closes
+}
+
+if isAppMode { runAppStartup() }
+
 // FULL VIRTUAL DESKTOP bounds (union of all displays), in the global display
 // coordinate space that CGEvent.location uses (top-left origin, y-down, points).
 // We report the pen position within THIS combined space so a 2nd monitor maps
@@ -154,9 +248,6 @@ let tapCallback: CGEventTapCallBack = { _, type, event, _ in
     case .leftMouseUp:
         if isTabletMouse(event) { emit(pressure: 0, loc: event.location) }   // pen tip lift (still hovering)
     case .mouseMoved, .leftMouseDown, .leftMouseDragged:
-        if type == .leftMouseDown {
-            maybeKickSAIFocus(event.location)   // un-stick Wine's half-activated window
-        }
         if isTabletMouse(event) {
             inProximity = true
             let pr = event.getDoubleValueField(.tabletEventPointPressure)
@@ -207,57 +298,6 @@ func isSAIFrontmost() -> Bool {
     let hay = [(app.bundleIdentifier ?? ""), (app.localizedName ?? ""),
                (app.executableURL?.path ?? "")].joined(separator: " ").lowercased()
     return hay.contains("wine") || hay.contains("sai")
-}
-
-// ============================================================================
-// FOCUS KICK — work around the winemac.drv stuck-focus bug.
-// Clicking a Wine window after using another app often half-activates Wine:
-// the window looks active but ignores all input. What reliably un-sticks it is
-// a full DEACTIVATE + REACTIVATE cycle (what a Spaces swipe does). So: when a
-// click lands inside a Wine/SAI window while Wine is NOT frontmost, we bounce
-// activation (Finder for an instant, then Wine) — the manual "switch to
-// another app, then back" trick, automated.
-// ============================================================================
-var lastKick = 0.0
-
-func wineApp() -> NSRunningApplication? {
-    return NSWorkspace.shared.runningApplications.first(where: { app in
-        let hay = [(app.bundleIdentifier ?? ""), (app.localizedName ?? ""),
-                   (app.executableURL?.path ?? "")].joined(separator: " ").lowercased()
-        return hay.contains("wine") || hay.contains("sai")
-    })
-}
-
-func clickIsInWineWindow(_ p: CGPoint) -> Bool {
-    guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
-                                                kCGNullWindowID) as? [[String: Any]] else { return false }
-    for w in list {
-        let owner = ((w[kCGWindowOwnerName as String] as? String) ?? "").lowercased()
-        guard owner.contains("wine") || owner.contains("sai") else { continue }
-        if let b = w[kCGWindowBounds as String] as? [String: CGFloat] {
-            let r = CGRect(x: b["X"] ?? 0, y: b["Y"] ?? 0,
-                           width: b["Width"] ?? 0, height: b["Height"] ?? 0)
-            if r.contains(p) { return true }   // global top-left coords, same as CGEvent.location
-        }
-    }
-    return false
-}
-
-func maybeKickSAIFocus(_ clickLoc: CGPoint) {
-    let now = CFAbsoluteTimeGetCurrent()
-    guard now - lastKick > 1.0 else { return }              // debounce
-    guard !isSAIFrontmost() else { return }                 // only when Wine isn't frontmost
-    guard clickIsInWineWindow(clickLoc) else { return }     // only clicks INTO a Wine window
-    guard let sai = wineApp() else { return }
-    lastKick = now
-    // bounce: brief Finder activation, then Wine — forces a clean re-activation
-    let finder = NSWorkspace.shared.runningApplications.first {
-        $0.bundleIdentifier == "com.apple.finder"
-    }
-    finder?.activate(options: [])
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-        sai.activate(options: [.activateIgnoringOtherApps])
-    }
 }
 
 let kVK_Command = Int64(55), kVK_RightCommand = Int64(54), kVK_Control = Int64(59)
@@ -328,8 +368,12 @@ guard let tap = CGEvent.tapCreate(
     callback: tapCallback,
     userInfo: nil
 ) else {
-    print("ERROR: CGEvent.tapCreate failed — grant Accessibility + Input")
-    print("Monitoring to this terminal, restart it, and re-run.")
+    if isAppMode {
+        alertUser("SAI Pen Pressure needs permission to read the tablet.\n\nOpen System Settings → Privacy & Security, add \"SAI Pen Pressure\" to BOTH \"Accessibility\" and \"Input Monitoring\", then reopen this app.\n\n(SAI will keep running; pressure starts once permission is granted and you reopen.)")
+    } else {
+        print("ERROR: CGEvent.tapCreate failed — grant Accessibility + Input")
+        print("Monitoring to this terminal, restart it, and re-run.")
+    }
     exit(1)
 }
 gTap = tap
