@@ -12,9 +12,17 @@ macOS + Wine already run SAI and move the cursor fine, but Wine's Mac driver thr
 The result: pressure-sensitive strokes that taper with how hard you press, plus your mouse/
 trackpad still paint normally.
 
-> **Status:** working on Apple Silicon with a Wacom Intuos (CTL-4100). Position + pressure +
-> hover tracking + mouse coexistence all work. Multi-monitor is supported (single cursor across
-> displays). See [Limitations](#limitations).
+> **Status:** working. Position + pressure + hover tracking + mouse coexistence all work, plus
+> multi-monitor and Mac-style Cmd shortcuts. See [Limitations](#limitations).
+>
+> **Tested configuration:**
+> - Mac: **Apple M3 Pro**, **macOS Tahoe 26.3 (25D125)**
+> - SAI: **PaintTool SAI Ver.2 (64-bit)**
+> - Tablet: **Wacom Intuos (CTL-4100)**, over USB and Bluetooth
+> - Displays: **single screen**, and **two screens in mirroring mode**
+>
+> Other tablets / Macs / display setups are untested — reports welcome (see
+> [CONTRIBUTING](CONTRIBUTING.md)).
 
 ---
 
