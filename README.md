@@ -36,15 +36,14 @@ Starting with nothing but a Mac and a tablet? Follow these in order (~15 min, mo
    PaintTool SAI Ver.2 Technical Preview Stable Version"*, get the **SAI Ver.2 64bit … Technical
    Preview** ZIP (~3 MB). Unzip it; the folder contains `sai2.exe`. *(You can draw and test
    pressure for free — a license is only needed to save; see step 7.)*
-3. **Get this tool** (you need Xcode command-line tools — run `xcode-select --install` if you
-   don't have them):
-   ```bash
-   git clone https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix.git
-   cd Paint-Tool-SAI-pen-pressure-macOS-fix
-   ./make-app.sh          # builds dist/SAI Pen Pressure.app
-   ```
-4. **Open the app:** right-click **`dist/SAI Pen Pressure.app`** → **Open** (once — it's
-   unsigned; see ["is this safe?"](#macos-wont-let-me-open-it--is-this-safe) below).
+3. **Download the app** — no terminal needed. From the
+   [**latest release**](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/releases/latest),
+   download **`SAI-Pen-Pressure-….zip`** and double-click it to unzip → you get
+   **`SAI Pen Pressure.app`** (drag it to your Applications folder if you like).
+   *Developers can instead `git clone` this repo and run `./make-app.sh`.*
+4. **Open it.** macOS blocks unsigned apps, so: double-click the app once (it'll refuse), then go
+   **System Settings → Privacy & Security**, scroll down, and click **"Open Anyway"** → confirm.
+   You only do this once. *(Why the warning? see ["is this safe?"](#macos-wont-let-me-open-it--is-this-safe).)*
 5. **Follow the setup window.** It checks everything and fixes each item:
    - **Install Wine** if you don't have it (downloads it, with progress) →
    - **Choose** your SAI folder from step 2 →
@@ -85,13 +84,12 @@ it all together.
 
 ## Easiest: the app (recommended)
 
-Build the double-clickable app once:
-```bash
-./make-app.sh          # produces dist/SAI Pen Pressure.app  (drag it to /Applications)
-```
-Then **double-click "SAI Pen Pressure"**:
+**Download `SAI Pen Pressure.app`** from the
+[latest release](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/releases/latest)
+(no terminal needed) — or build it yourself with `./make-app.sh`. Then:
 
-1. **First launch:** right-click the app → **Open** (once — it's unsigned, so Gatekeeper asks).
+1. **First launch:** double-click it → macOS blocks it → **System Settings → Privacy & Security →
+   "Open Anyway"** (it's unsigned; [why?](#macos-wont-let-me-open-it--is-this-safe)).
 2. It **asks for your SAI Ver.2 folder** (the one containing `sai2.exe`), then sets up the
    Wine prefix and installs the bridge.
 3. **Grant permissions.** macOS will pop up **two** prompts — the app needs *both*, under
@@ -112,8 +110,9 @@ prefer the command line.
 
 macOS shows an "unidentified developer" warning because signing an app so Gatekeeper trusts it
 requires a **paid Apple Developer account (~$100/year)**, which this free project doesn't have.
-So you have to allow it yourself: **right-click the app → Open** (or System Settings → Privacy &
-Security → *Open Anyway*).
+So you allow it yourself: double-click the app once (macOS refuses), then go **System Settings →
+Privacy & Security**, scroll down, and click **"Open Anyway"**. (On older macOS, right-click the
+app → **Open** also works.)
 
 And if you have doubts — **you should!** — this whole thing is **open source**. Read the code
 before you run it: the entire bridge is a small `wintab32.dll` (C) and one Swift helper, right
