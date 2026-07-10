@@ -122,11 +122,11 @@ func runAppSetup() {
         // Wine missing — offer to install it automatically in a visible Terminal
         // (real download progress; the user sees exactly what's happening).
         let installer = Bundle.main.resourcePath.map { "\($0)/install-wine.sh" }
-        let choice = osa("button returned of (display dialog \"Wine isn't installed — SAI needs it to run.\n\nInstall it automatically now? (~300 MB download; you'll see progress in a Terminal window, then reopen this app.)\" buttons {\"Do it manually\", \"Install Wine\"} default button \"Install Wine\" with icon note)")
+        let choice = osa("button returned of (display dialog \"Wine isn't installed. SAI needs it to run.\n\nInstall it automatically now? (~300 MB download; you'll see progress in a Terminal window, then reopen this app.)\" buttons {\"Do it manually\", \"Install Wine\"} default button \"Install Wine\" with icon note)")
         if choice == "Install Wine", let sh = installer, FileManager.default.fileExists(atPath: sh) {
             _ = osa("tell application \"Terminal\" to do script \"bash '\(sh)'\"")
             _ = osa("tell application \"Terminal\" to activate")
-            alertUser("Installing Wine in Terminal — watch the progress there. When it says it's done, just reopen SAI Pen Pressure.")
+            alertUser("Installing Wine in Terminal. Watch the progress there. When it says it's done, just reopen SAI Pen Pressure.")
         } else {
             alertUser("Download Gcenx 'Wine Staging', put 'Wine Staging.app' in /Applications, then reopen this app.\n\nhttps://github.com/Gcenx/macOS_Wine_builds/releases")
         }
@@ -484,15 +484,20 @@ final class SetupController: NSObject, NSApplicationDelegate {
         ]
         buildWindow()
         refresh()
-        Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in self?.refresh() }
+        // .common mode so the checklist keeps refreshing even while the window
+        // is being interacted with (plain .default timers can stall).
+        let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in self?.refresh() }
+        RunLoop.main.add(t, forMode: .common)
     }
+
+    func applicationDidBecomeActive(_ note: Notification) { refresh() }   // re-check when refocused
 
     func buildWindow() {
         let content = NSStackView()
         content.orientation = .vertical; content.alignment = .leading; content.spacing = 12
         content.edgeInsets = NSEdgeInsets(top: 20, left: 24, bottom: 20, right: 24)
         content.translatesAutoresizingMaskIntoConstraints = false
-        content.addArrangedSubview(lbl("SAI Pen Pressure — Setup", 18, bold: true))
+        content.addArrangedSubview(lbl("SAI Pen Pressure Setup", 18, bold: true))
         subtitle = lbl("Let's get everything ready.", 12, color: .secondaryLabelColor)
         content.addArrangedSubview(subtitle)
 
@@ -544,9 +549,9 @@ final class SetupController: NSObject, NSApplicationDelegate {
         if !canLaunch {
             subtitle.stringValue = "Add the missing items above, then Launch."
         } else if !inputMonitoringGranted() {
-            subtitle.stringValue = "Ready — grant Input Monitoring so pressure works, then Launch."
+            subtitle.stringValue = "Ready. Grant Input Monitoring so pressure works, then Launch."
         } else {
-            subtitle.stringValue = "All set — click Launch."
+            subtitle.stringValue = "All set. Click Launch."
         }
     }
 
@@ -577,7 +582,7 @@ final class SetupController: NSObject, NSApplicationDelegate {
         DispatchQueue.global().async {
             let ok = ensureSetup(sai, wine)
             DispatchQueue.main.async {
-                guard ok else { self.subtitle.stringValue = "Setup failed — re-check the SAI folder."; self.refresh(); return }
+                guard ok else { self.subtitle.stringValue = "Setup failed. Re-check the SAI folder."; self.refresh(); return }
                 if startPressureEngine() {
                     self.running = true
                     launchSAIApp()
