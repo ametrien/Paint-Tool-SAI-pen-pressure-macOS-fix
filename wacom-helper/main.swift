@@ -518,7 +518,7 @@ final class SetupController: NSObject, NSApplicationDelegate {
         launchBtn = NSButton(title: "Launch SAI with Pressure", target: self, action: #selector(launchTapped))
         launchBtn.bezelStyle = .rounded; launchBtn.keyEquivalent = "\r"; launchBtn.controlSize = .large
         content.addArrangedSubview(launchBtn)
-        content.addArrangedSubview(lbl("After granting a permission the first time, macOS may ask you to reopen the app — it will tell you.", 10, color: .tertiaryLabelColor))
+        content.addArrangedSubview(lbl("After granting a permission the first time, macOS may ask you to reopen the app.", 10, color: .tertiaryLabelColor))
 
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 360),
                           styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
@@ -531,15 +531,23 @@ final class SetupController: NSObject, NSApplicationDelegate {
 
     func refresh() {
         if running { return }
-        var allReq = true
         for (i, r) in reqs.enumerated() {
             let ok = r.ok()
             statusFields[i].stringValue = ok ? "✅" : (r.required ? "❌" : "⚪️")
             fixButtons[i].isHidden = ok
-            if r.required && !ok { allReq = false }
         }
-        launchBtn.isEnabled = allReq
-        subtitle.stringValue = allReq ? "All set — click Launch." : "Fix the ❌ items, then Launch."
+        // Launch needs Wine + SAI; Input Monitoring is verified for real by
+        // actually creating the tap on Launch (the permission check can read
+        // ❌ even when the tap will work), so it doesn't hard-block here.
+        let canLaunch = wineBin() != nil && saiReady()
+        launchBtn.isEnabled = canLaunch
+        if !canLaunch {
+            subtitle.stringValue = "Add the missing items above, then Launch."
+        } else if !inputMonitoringGranted() {
+            subtitle.stringValue = "Ready — grant Input Monitoring so pressure works, then Launch."
+        } else {
+            subtitle.stringValue = "All set — click Launch."
+        }
     }
 
     @objc func fixTapped(_ sender: NSButton) {
@@ -583,7 +591,11 @@ final class SetupController: NSObject, NSApplicationDelegate {
     }
 
     func relaunchForPermission() {
-        _ = osa("display dialog \"Permission was just granted. The app needs to reopen to start using it.\" buttons {\"Reopen\"} default button \"Reopen\" with icon note")
+        // Tap couldn't be created — Input Monitoring isn't (yet) granted to THIS
+        // app build. Guide the user to grant it, open the right Settings pane,
+        // and reopen the app (macOS applies the grant on a fresh launch).
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
+        _ = osa("display dialog \"Couldn't read the tablet yet.\n\nIn System Settings → Privacy & Security → Input Monitoring, turn ON 'SAI Pen Pressure', then reopen this app.\" buttons {\"Reopen now\"} default button \"Reopen now\" with icon caution")
         let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/bash")
         p.arguments = ["-c", "sleep 1; open '\(Bundle.main.bundlePath)'"]
         try? p.run()

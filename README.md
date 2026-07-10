@@ -18,7 +18,7 @@ trackpad still paint normally.
 > **Tested configuration:**
 > - Mac: **Apple M3 Pro**, **macOS Tahoe 26.3 (25D125)**
 > - SAI: **PaintTool SAI Ver.2 (64-bit)**
-> - Tablet: **Wacom Intuos (CTL-4100)**, over USB and Bluetooth
+> - Tablet: **Wacom Intuos BT S (CTL-4100WL)**, over USB and Bluetooth
 > - Displays: **single screen**, and **two screens in mirroring mode**
 >
 > Other tablets / Macs / display setups are untested — reports welcome (see
@@ -66,6 +66,17 @@ Then **double-click "SAI Pen Pressure"**:
 You still bring your own Wine (in `/Applications`), SAI, and license (drop your `.slc` into
 the prefix's `SAI2` folder and restart SAI). The manual route below does the same thing if you
 prefer the command line.
+
+### "macOS won't let me open it / is this safe?"
+
+macOS shows an "unidentified developer" warning because signing an app so Gatekeeper trusts it
+requires a **paid Apple Developer account (~$100/year)**, which this free project doesn't have.
+So you have to allow it yourself: **right-click the app → Open** (or System Settings → Privacy &
+Security → *Open Anyway*).
+
+And if you have doubts — **you should!** — this whole thing is **open source**. Read the code
+before you run it: the entire bridge is a small `wintab32.dll` (C) and one Swift helper, right
+here in this repo. Don't run tools you can't inspect.
 
 ---
 
