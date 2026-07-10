@@ -43,10 +43,20 @@ let verbose = ProcessInfo.processInfo.environment["WT_VERBOSE"] != nil
 // Permissions (Accessibility / Input Monitoring) attach to the .app itself.
 // ============================================================================
 let isAppMode = CommandLine.arguments.contains("--app")
-let appPrefix = NSString(string: "~/SAI2-pressure").expandingTildeInPath
+// Wine prefix the app manages. Override with SAI_PREFIX (e.g. to test from
+// scratch in a throwaway location without touching a real setup).
+let appPrefix: String = {
+    if let p = ProcessInfo.processInfo.environment["SAI_PREFIX"], !p.isEmpty {
+        return (p as NSString).expandingTildeInPath
+    }
+    return NSString(string: "~/SAI2-pressure").expandingTildeInPath
+}()
 
 func appSupport() -> String {
-    let d = NSString(string: "~/Library/Application Support/SAIPenPressure").expandingTildeInPath
+    // where the saved SAI-folder config lives; override with SAIPP_CONFIG_DIR
+    // (used to test the first-run wizard without clobbering a real config).
+    let d = ProcessInfo.processInfo.environment["SAIPP_CONFIG_DIR"].map { ($0 as NSString).expandingTildeInPath }
+        ?? NSString(string: "~/Library/Application Support/SAIPenPressure").expandingTildeInPath
     try? FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true)
     return d
 }
