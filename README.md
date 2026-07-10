@@ -40,15 +40,23 @@ Build the double-clickable app once:
 ```bash
 ./make-app.sh          # produces dist/SAI Pen Pressure.app  (drag it to /Applications)
 ```
-Then just **double-click "SAI Pen Pressure"**:
-1. First launch: **right-click → Open** once (it's unsigned — Gatekeeper asks).
-2. It **asks for your SAI Ver.2 folder** (the one with `sai2.exe`), then sets up the Wine
-   prefix, installs the bridge, and launches SAI + pressure together.
-3. Grant **"SAI Pen Pressure"** *Accessibility* + *Input Monitoring* when macOS prompts
-   (System Settings → Privacy & Security), then reopen it. That's it — no Terminal.
+Then **double-click "SAI Pen Pressure"**:
+
+1. **First launch:** right-click the app → **Open** (once — it's unsigned, so Gatekeeper asks).
+2. It **asks for your SAI Ver.2 folder** (the one containing `sai2.exe`), then sets up the
+   Wine prefix and installs the bridge.
+3. **Grant permissions.** macOS will pop up **two** prompts — the app needs *both*, under
+   System Settings → **Privacy & Security**:
+   - **Input Monitoring** → turn on **"SAI Pen Pressure"** (this reads the tablet's pressure).
+   - **Accessibility** (the prompt says *"…would like to receive keystrokes"*) → turn on
+     **"SAI Pen Pressure"** (this is only for the Cmd→Ctrl shortcut remap; you can skip it if
+     you don't want that feature, and pressure still works).
+4. **⚠️ Quit and reopen the app.** macOS only applies these permissions on a **fresh launch** —
+   the first run *won't have pressure* until you restart the app. You only do this once; after
+   that, double-clicking the app just works.
 
 You still bring your own Wine (in `/Applications`), SAI, and license (drop your `.slc` into
-the prefix's `SAI2` folder and restart). The manual route below does the same thing if you
+the prefix's `SAI2` folder and restart SAI). The manual route below does the same thing if you
 prefer the command line.
 
 ---
