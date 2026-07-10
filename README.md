@@ -26,6 +26,39 @@ trackpad still paint normally.
 
 ---
 
+## Quick start — from zero to drawing
+
+Starting with nothing but a Mac and a tablet? Follow these in order (~15 min, most of it downloads):
+
+1. **Install your tablet's macOS driver** (e.g. Wacom's driver from wacom.com). Check the pen
+   moves the cursor in any app before continuing.
+2. **Download PaintTool SAI Ver.2** (free technical preview) from
+   https://www.systemax.jp/en/sai/ and unzip it. Note the folder — it contains `sai2.exe`.
+   *(Saving your art needs a SAI license; see step 7.)*
+3. **Get this tool** (you need Xcode command-line tools — run `xcode-select --install` if you
+   don't have them):
+   ```bash
+   git clone https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix.git
+   cd Paint-Tool-SAI-pen-pressure-macOS-fix
+   ./make-app.sh          # builds dist/SAI Pen Pressure.app
+   ```
+4. **Open the app:** right-click **`dist/SAI Pen Pressure.app`** → **Open** (once — it's
+   unsigned; see ["is this safe?"](#macos-wont-let-me-open-it--is-this-safe) below).
+5. **Follow the setup window.** It checks everything and fixes each item:
+   - **Install Wine** if you don't have it (downloads it, with progress) →
+   - **Choose** your SAI folder from step 2 →
+   - **Grant** *Input Monitoring* (and optionally *Accessibility* for Cmd-shortcuts); reopen the
+     app if macOS asks →
+   - click **Launch SAI with Pressure**.
+6. **Turn on WinTab in SAI:** Others → Options → **Pen Tablet** → **Use WinTab API**, then
+   relaunch SAI (reopen the app).
+7. **Draw — you've got pressure!** To be able to *save*, drop your `sai-*.slc` license into
+   `~/SAI2-pressure/drive_c/SAI2/` and restart SAI.
+
+That's it. The sections below explain the pieces, the manual (command-line) route, and options.
+
+---
+
 ## What you need to bring
 
 This tool **can't** bundle everything — two pieces are legally yours to provide:
