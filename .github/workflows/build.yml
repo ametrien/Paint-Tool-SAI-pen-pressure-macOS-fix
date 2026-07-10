@@ -42,9 +42,16 @@ jobs:
             echo "checking $f"; bash -n "$f"
           done
 
+      # Non-blocking: an external check (GitHub API can rate-limit shared CI IPs),
+      # so it warns but never fails the build. Uses the built-in token for a
+      # higher rate limit.
       - name: Sanity-check the Wine download URL is still resolvable
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          URL=$(curl -fsSL "https://api.github.com/repos/Gcenx/macOS_Wine_builds/releases?per_page=30" \
+          URL=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+                  "https://api.github.com/repos/Gcenx/macOS_Wine_builds/releases?per_page=30" \
                 | grep -oiE 'https://[^"]+staging[^"]+osx64[^"]*\.tar\.xz' | head -1 || true)
           echo "resolved: ${URL:-<none>}"
           test -n "$URL"
