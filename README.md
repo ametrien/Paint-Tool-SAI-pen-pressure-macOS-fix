@@ -24,6 +24,8 @@ trackpad still paint normally.
 > Other tablets / Macs / display setups are untested — reports welcome (see
 > [CONTRIBUTING](CONTRIBUTING.md)).
 
+📺 **Video walkthrough:** [watch the setup tutorial](https://youtu.be/62mJwWQsEYI)
+
 ---
 
 ## Quick start — from zero to drawing
@@ -63,6 +65,9 @@ Starting with nothing but a Mac and a tablet? Follow these in order (~15 min, mo
      prefix and the ID changes, just re-download it from the same page.)*
 
 That's it. The sections below explain the pieces, the manual (command-line) route, and options.
+
+> Prefer video? There's a [step-by-step tutorial](https://youtu.be/62mJwWQsEYI) covering this
+> same quick-start flow.
 
 ---
 
