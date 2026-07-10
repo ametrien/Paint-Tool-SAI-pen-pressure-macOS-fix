@@ -51,10 +51,21 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 
 # ad-hoc code signature so macOS keeps the permission grant stable across runs
-codesign --force --deep --sign - "$APP" 2>/dev/null || \
-  echo "  (codesign unavailable — app still runs; you may re-grant permissions after rebuilds)"
+# Sign with a STABLE self-signed identity if one exists, so macOS keeps the
+# Input Monitoring / Accessibility grants across rebuilds. Falls back to ad-hoc
+# (which changes each build -> you must re-grant permissions after every rebuild).
+SIGN_ID="${SIGN_ID:-SAI Pen Pressure Local}"
+if security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGN_ID"; then
+  echo "Signing with stable identity: \"$SIGN_ID\" (permissions persist across rebuilds)"
+  codesign --force --deep --sign "$SIGN_ID" "$APP"
+else
+  codesign --force --deep --sign - "$APP" 2>/dev/null || true
+  echo "NOTE: signed ad-hoc — you'll have to RE-GRANT permissions after each rebuild."
+  echo "      To make grants persist: Keychain Access -> Certificate Assistant ->"
+  echo "      Create a Certificate named \"$SIGN_ID\", type 'Code Signing', self-signed."
+fi
 
 echo ""
 echo "Built: $APP"
 echo "First launch: right-click the app → Open (unsigned-developer bypass, once)."
-echo "It will ask for your SAI2 folder, then grant it Accessibility + Input Monitoring."
+echo "The setup window walks through Wine / SAI folder / permissions."
