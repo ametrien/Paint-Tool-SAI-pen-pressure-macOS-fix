@@ -97,12 +97,11 @@ it all together.
    "Open Anyway"** (it's unsigned; [why?](#macos-wont-let-me-open-it--is-this-safe)).
 2. It **asks for your SAI Ver.2 folder** (the one containing `sai2.exe`), then sets up the
    Wine prefix and installs the bridge.
-3. **Grant permissions.** macOS will pop up **two** prompts — the app needs *both*, under
-   System Settings → **Privacy & Security**:
-   - **Input Monitoring** → turn on **"SAI Pen Pressure"** (this reads the tablet's pressure).
-   - **Accessibility** (the prompt says *"…would like to receive keystrokes"*) → turn on
-     **"SAI Pen Pressure"** (this is only for the Cmd→Ctrl shortcut remap; you can skip it if
-     you don't want that feature, and pressure still works).
+3. **Grant Input Monitoring.** On first launch the app asks for **Input Monitoring** — turn on
+   **"SAI Pen Pressure"** under System Settings → **Privacy & Security**. This is what reads your
+   tablet's pressure (required).
+   - **Accessibility is optional** — grant it *only* if you want the Cmd→Ctrl shortcut remap, by
+     clicking that row's **Grant…** button in the setup window. Pressure works fine without it.
 4. **⚠️ Quit and reopen the app.** macOS only applies these permissions on a **fresh launch** —
    the first run *won't have pressure* until you restart the app. You only do this once; after
    that, double-clicking the app just works.
