@@ -18,6 +18,7 @@
 import AppKit
 import CoreGraphics
 import Foundation
+import IOKit.hid       // IOHIDCheckAccess/RequestAccess — live Input-Monitoring status
 
 // Output file the DLL reads. Configurable via WT_PRESSURE_FILE so the tool
 // isn't tied to one prefix (needed for distribution); defaults to the standard
@@ -148,7 +149,7 @@ func launchSAIApp() {
     try? p.run()                                            // async; quits the app when SAI closes
 }
 
-if isAppMode { runAppSetup() }   // SAI is launched later, after the tap succeeds (see below)
+// (app mode is driven by the setup wizard at the bottom of this file)
 
 // FULL VIRTUAL DESKTOP bounds (union of all displays), in the global display
 // coordinate space that CGEvent.location uses (top-left origin, y-down, points).
@@ -363,87 +364,225 @@ let keyCallback: CGEventTapCallBack = { _, type, event, _ in
     return Unmanaged.passUnretained(event)
 }
 
-if !AXIsProcessTrusted() {
-    print("WARNING: not trusted for Accessibility — the tap will capture nothing.")
-    print("Grant this terminal BOTH Accessibility and Input Monitoring in")
-    print("System Settings → Privacy & Security, restart the terminal, and re-run.")
-}
-
 // virtual-desktop bounds now + on every display change (monitor plug/unplug)
 refreshVirtualBounds()
 let reconfigCB: CGDisplayReconfigurationCallBack = { _, _, _ in refreshVirtualBounds() }
 CGDisplayRegisterReconfigurationCallback(reconfigCB, nil)
 
-let mask: CGEventMask =
-    (CGEventMask(1) << CGEventType.leftMouseDown.rawValue)    |
-    (CGEventMask(1) << CGEventType.leftMouseDragged.rawValue) |
-    (CGEventMask(1) << CGEventType.leftMouseUp.rawValue)      |
-    (CGEventMask(1) << CGEventType.mouseMoved.rawValue)       |
-    (CGEventMask(1) << CGEventType.tabletPointer.rawValue)    |
-    (CGEventMask(1) << CGEventType.tabletProximity.rawValue)
+// ---- the pressure engine: create the taps + timers on the current run loop.
+// Returns false if the tablet tap can't be created (permission missing). ------
+func startPressureEngine() -> Bool {
+    let mask: CGEventMask =
+        (CGEventMask(1) << CGEventType.leftMouseDown.rawValue)    |
+        (CGEventMask(1) << CGEventType.leftMouseDragged.rawValue) |
+        (CGEventMask(1) << CGEventType.leftMouseUp.rawValue)      |
+        (CGEventMask(1) << CGEventType.mouseMoved.rawValue)       |
+        (CGEventMask(1) << CGEventType.tabletPointer.rawValue)    |
+        (CGEventMask(1) << CGEventType.tabletProximity.rawValue)
+    guard let tap = CGEvent.tapCreate(
+        tap: .cghidEventTap, place: .headInsertEventTap, options: .listenOnly,
+        eventsOfInterest: mask, callback: tapCallback, userInfo: nil) else { return false }
+    gTap = tap
+    CFRunLoopAddSource(CFRunLoopGetCurrent(), CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0), .commonModes)
+    CGEvent.tapEnable(tap: tap, enable: true)
 
-guard let tap = CGEvent.tapCreate(
-    tap: .cghidEventTap,               // earliest point: least coalescing
-    place: .headInsertEventTap,
-    options: .listenOnly,              // passive: we never modify events
-    eventsOfInterest: mask,
-    callback: tapCallback,
-    userInfo: nil
-) else {
-    if isAppMode {
-        alertUser("SAI Pen Pressure needs permission to read the tablet.\n\nOpen System Settings → Privacy & Security, add \"SAI Pen Pressure\" to BOTH \"Accessibility\" and \"Input Monitoring\", then reopen this app.\n\n(SAI will keep running; pressure starts once permission is granted and you reopen.)")
-    } else {
-        print("ERROR: CGEvent.tapCreate failed — grant Accessibility + Input")
-        print("Monitoring to this terminal, restart it, and re-run.")
+    let kaTimer = CFRunLoopTimerCreateWithHandler(nil, CFAbsoluteTimeGetCurrent() + 0.04, 0.04, 0, 0) { _ in keepAlive() }
+    CFRunLoopAddTimer(CFRunLoopGetCurrent(), kaTimer, .commonModes)
+
+    if remapCmdToCtrl {
+        let keyMask: CGEventMask =
+            (CGEventMask(1) << CGEventType.keyDown.rawValue) |
+            (CGEventMask(1) << CGEventType.keyUp.rawValue)   |
+            (CGEventMask(1) << CGEventType.flagsChanged.rawValue)
+        if let keyTap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
+            eventsOfInterest: keyMask, callback: keyCallback, userInfo: nil) {
+            gKeyTap = keyTap
+            CFRunLoopAddSource(CFRunLoopGetCurrent(), CFMachPortCreateRunLoopSource(kCFAllocatorDefault, keyTap, 0), .commonModes)
+            CGEvent.tapEnable(tap: keyTap, enable: true)
+        }
     }
-    exit(1)
+    writeFile("0")                      // start pen-up
+    return true
 }
-gTap = tap
-let src = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-CFRunLoopAddSource(CFRunLoopGetCurrent(), src, .commonModes)
-CGEvent.tapEnable(tap: tap, enable: true)
 
-// keepalive timer: while the pen is in proximity but idle, resend the last
-// sample so SAI keeps the OS arrow cursor hidden (it flickered back in gaps).
-let kaTimer = CFRunLoopTimerCreateWithHandler(nil, CFAbsoluteTimeGetCurrent() + 0.04, 0.04, 0, 0) { _ in
-    keepAlive()
+// ---- permission helpers (used by both modes / the wizard) ------------------
+func inputMonitoringGranted() -> Bool { IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted }
+func requestInputMonitoring() {
+    _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)     // shows the system prompt
+    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
 }
-CFRunLoopAddTimer(CFRunLoopGetCurrent(), kaTimer, .commonModes)
+func requestAccessibility() {
+    _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
+    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+}
+func installWineViaTerminal() {
+    guard let sh = Bundle.main.resourcePath.map({ "\($0)/install-wine.sh" }), FileManager.default.fileExists(atPath: sh) else {
+        NSWorkspace.shared.open(URL(string: "https://github.com/Gcenx/macOS_Wine_builds/releases")!); return
+    }
+    _ = osa("tell application \"Terminal\" to do script \"bash '\(sh)'\"")
+    _ = osa("tell application \"Terminal\" to activate")
+}
+func saiReady() -> Bool { savedSAIPath() != nil }
 
-// keyboard remap tap — ACTIVE (can modify events), at the session level so it
-// rewrites key events before apps receive them. Optional: if it can't be
-// created, pressure still works; only the Cmd->Ctrl remap is unavailable.
-if remapCmdToCtrl {
-    let keyMask: CGEventMask =
-        (CGEventMask(1) << CGEventType.keyDown.rawValue) |
-        (CGEventMask(1) << CGEventType.keyUp.rawValue)   |
-        (CGEventMask(1) << CGEventType.flagsChanged.rawValue)
-    if let keyTap = CGEvent.tapCreate(
-        tap: .cgSessionEventTap,
-        place: .headInsertEventTap,
-        options: .defaultTap,          // active: allowed to modify events
-        eventsOfInterest: keyMask,
-        callback: keyCallback,
-        userInfo: nil
-    ) {
-        gKeyTap = keyTap
-        let ksrc = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, keyTap, 0)
-        CFRunLoopAddSource(CFRunLoopGetCurrent(), ksrc, .commonModes)
-        CGEvent.tapEnable(tap: keyTap, enable: true)
-        print("Cmd→Ctrl remap active (only while SAI is frontmost).")
-    } else {
-        print("WARNING: keyboard remap tap failed (needs Accessibility) — Cmd→Ctrl off.")
+// ============================================================================
+//  ENTRY POINT
+// ============================================================================
+if !isAppMode {
+    // Dev / terminal mode: start the engine right away and run.
+    if !AXIsProcessTrusted() {
+        print("WARNING: not trusted for Accessibility — grant this terminal Accessibility + Input Monitoring.")
+    }
+    if !startPressureEngine() {
+        print("ERROR: tap failed — grant this terminal Input Monitoring (+ Accessibility), then re-run.")
+        exit(1)
+    }
+    signal(SIGINT) { _ in try? "0".write(toFile: outPath, atomically: true, encoding: .ascii); exit(0) }
+    print("wacom-pressure-helper running — writing to \(outPath). Ctrl+C to quit.")
+    CFRunLoopRun()
+}
+
+// ---- App mode: a small setup wizard (AppKit) -------------------------------
+final class SetupController: NSObject, NSApplicationDelegate {
+    struct Req { let title, detail, fixTitle: String; let ok: () -> Bool; let fix: () -> Void; let required: Bool }
+    var reqs: [Req] = []
+    var window: NSWindow!
+    var subtitle: NSTextField!
+    var launchBtn: NSButton!
+    var statusFields: [NSTextField] = []
+    var fixButtons: [NSButton] = []
+    var running = false
+
+    func lbl(_ s: String, _ size: CGFloat, bold: Bool = false, color: NSColor = .labelColor) -> NSTextField {
+        let l = NSTextField(labelWithString: s)
+        l.font = bold ? .boldSystemFont(ofSize: size) : .systemFont(ofSize: size)
+        l.textColor = color
+        return l
+    }
+
+    func applicationDidFinishLaunching(_ note: Notification) {
+        NSApp.activate(ignoringOtherApps: true)
+        reqs = [
+            Req(title: "Wine (runs SAI on Mac)", detail: "Gcenx Wine Staging in /Applications", fixTitle: "Install Wine…",
+                ok: { wineBin() != nil }, fix: { installWineViaTerminal() }, required: true),
+            Req(title: "PaintTool SAI folder", detail: "the folder that contains sai2.exe", fixTitle: "Choose…",
+                ok: { saiReady() }, fix: { [weak self] in self?.chooseSAI() }, required: true),
+            Req(title: "Input Monitoring permission", detail: "lets the app read your tablet's pressure", fixTitle: "Grant…",
+                ok: { inputMonitoringGranted() }, fix: { requestInputMonitoring() }, required: true),
+            Req(title: "Accessibility permission (optional)", detail: "only for Cmd→Ctrl shortcut remapping", fixTitle: "Grant…",
+                ok: { AXIsProcessTrusted() }, fix: { requestAccessibility() }, required: false),
+        ]
+        buildWindow()
+        refresh()
+        Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in self?.refresh() }
+    }
+
+    func buildWindow() {
+        let content = NSStackView()
+        content.orientation = .vertical; content.alignment = .leading; content.spacing = 12
+        content.edgeInsets = NSEdgeInsets(top: 20, left: 24, bottom: 20, right: 24)
+        content.translatesAutoresizingMaskIntoConstraints = false
+        content.addArrangedSubview(lbl("SAI Pen Pressure — Setup", 18, bold: true))
+        subtitle = lbl("Let's get everything ready.", 12, color: .secondaryLabelColor)
+        content.addArrangedSubview(subtitle)
+
+        for (i, r) in reqs.enumerated() {
+            let row = NSStackView(); row.orientation = .horizontal; row.alignment = .centerY; row.spacing = 10
+            let status = lbl("…", 15, bold: true)
+            status.widthAnchor.constraint(equalToConstant: 22).isActive = true
+            statusFields.append(status)
+            let col = NSStackView(); col.orientation = .vertical; col.alignment = .leading; col.spacing = 1
+            col.addArrangedSubview(lbl(r.title, 13, bold: true))
+            col.addArrangedSubview(lbl(r.detail, 11, color: .secondaryLabelColor))
+            let btn = NSButton(title: r.fixTitle, target: self, action: #selector(fixTapped(_:)))
+            btn.tag = i; btn.bezelStyle = .rounded
+            btn.setContentHuggingPriority(.required, for: .horizontal)
+            fixButtons.append(btn)
+            let spacer = NSView()
+            spacer.widthAnchor.constraint(greaterThanOrEqualToConstant: 16).isActive = true
+            row.addArrangedSubview(status); row.addArrangedSubview(col); row.addArrangedSubview(spacer); row.addArrangedSubview(btn)
+            row.widthAnchor.constraint(equalToConstant: 472).isActive = true
+            content.addArrangedSubview(row)
+        }
+
+        launchBtn = NSButton(title: "Launch SAI with Pressure", target: self, action: #selector(launchTapped))
+        launchBtn.bezelStyle = .rounded; launchBtn.keyEquivalent = "\r"; launchBtn.controlSize = .large
+        content.addArrangedSubview(launchBtn)
+        content.addArrangedSubview(lbl("After granting a permission the first time, macOS may ask you to reopen the app — it will tell you.", 10, color: .tertiaryLabelColor))
+
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 360),
+                          styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
+        window.title = "SAI Pen Pressure"
+        window.contentView = content
+        window.isReleasedWhenClosed = false
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    func refresh() {
+        if running { return }
+        var allReq = true
+        for (i, r) in reqs.enumerated() {
+            let ok = r.ok()
+            statusFields[i].stringValue = ok ? "✅" : (r.required ? "❌" : "⚪️")
+            fixButtons[i].isHidden = ok
+            if r.required && !ok { allReq = false }
+        }
+        launchBtn.isEnabled = allReq
+        subtitle.stringValue = allReq ? "All set — click Launch." : "Fix the ❌ items, then Launch."
+    }
+
+    @objc func fixTapped(_ sender: NSButton) {
+        reqs[sender.tag].fix()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self.refresh() }
+    }
+
+    func chooseSAI() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true; panel.canChooseFiles = false
+        panel.prompt = "Choose"; panel.message = "Select your SAI Ver.2 folder (the one containing sai2.exe)"
+        if panel.runModal() == .OK, let url = panel.url {
+            if FileManager.default.fileExists(atPath: url.appendingPathComponent("sai2.exe").path) {
+                saveSAIPath(url.path)
+            } else {
+                alertUser("That folder doesn't contain sai2.exe. Pick the folder that directly contains sai2.exe.")
+            }
+        }
+        refresh()
+    }
+
+    @objc func launchTapped() {
+        guard let wine = wineBin(), let sai = savedSAIPath() else { refresh(); return }
+        g_wine = wine
+        launchBtn.isEnabled = false
+        subtitle.stringValue = "Setting up… (first time can take a minute)"
+        DispatchQueue.global().async {
+            let ok = ensureSetup(sai, wine)
+            DispatchQueue.main.async {
+                guard ok else { self.subtitle.stringValue = "Setup failed — re-check the SAI folder."; self.refresh(); return }
+                if startPressureEngine() {
+                    self.running = true
+                    launchSAIApp()
+                    self.subtitle.stringValue = "Running — pressure is active. Close SAI to quit."
+                    self.window.miniaturize(nil)
+                } else {
+                    self.relaunchForPermission()
+                }
+            }
+        }
+    }
+
+    func relaunchForPermission() {
+        _ = osa("display dialog \"Permission was just granted. The app needs to reopen to start using it.\" buttons {\"Reopen\"} default button \"Reopen\" with icon note")
+        let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        p.arguments = ["-c", "sleep 1; open '\(Bundle.main.bundlePath)'"]
+        try? p.run()
+        exit(0)
     }
 }
 
-writeFile("0")                          // start pen-up
-signal(SIGINT) { _ in
-    try? "0".write(toFile: outPath, atomically: true, encoding: .ascii)
-    print("\nstopped (pen released).")
-    exit(0)
-}
-
-if isAppMode { launchSAIApp() }
-print("wacom-pressure-helper (CGEventTap) running — writing to \(outPath)")
-print("Draw with the pen; 'captured=N pressure=P' lines should appear. Ctrl+C to quit.")
-CFRunLoopRun()
+let g_setup = SetupController()     // strong ref (NSApplication.delegate is weak)
+let nsApp = NSApplication.shared
+nsApp.setActivationPolicy(.regular)
+nsApp.delegate = g_setup
+nsApp.run()
