@@ -23,9 +23,11 @@ exec "$DIR/wacom-pressure-helper" --app
 LAUNCH
 chmod +x "$APP/Contents/MacOS/SAI Pen Pressure"
 
-# the real binary + our DLL live inside the bundle
+# the real binary + our DLL + the Wine installer live inside the bundle
 cp "$REPO/wacom-helper/wacom-pressure-helper" "$APP/Contents/MacOS/wacom-pressure-helper"
 cp "$REPO/wintab-src/wintab32.dll"            "$APP/Contents/Resources/wintab32.dll"
+cp "$REPO/install-wine.sh"                    "$APP/Contents/Resources/install-wine.sh"
+chmod +x "$APP/Contents/Resources/install-wine.sh"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

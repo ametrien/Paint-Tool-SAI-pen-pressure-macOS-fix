@@ -108,8 +108,18 @@ var g_wine = ""   // resolved during setup; used to launch SAI after the tap is 
 // leave an orphaned SAI window behind (you'd otherwise have to restart).
 func runAppSetup() {
     guard let wine = wineBin() else {
-        alertUser("Wine isn't installed. Please download Gcenx 'Wine Staging' and put 'Wine Staging.app' in your Applications folder, then reopen this app.\n\nhttps://github.com/Gcenx/macOS_Wine_builds/releases")
-        exit(1)
+        // Wine missing — offer to install it automatically in a visible Terminal
+        // (real download progress; the user sees exactly what's happening).
+        let installer = Bundle.main.resourcePath.map { "\($0)/install-wine.sh" }
+        let choice = osa("button returned of (display dialog \"Wine isn't installed — SAI needs it to run.\n\nInstall it automatically now? (~300 MB download; you'll see progress in a Terminal window, then reopen this app.)\" buttons {\"Do it manually\", \"Install Wine\"} default button \"Install Wine\" with icon note)")
+        if choice == "Install Wine", let sh = installer, FileManager.default.fileExists(atPath: sh) {
+            _ = osa("tell application \"Terminal\" to do script \"bash '\(sh)'\"")
+            _ = osa("tell application \"Terminal\" to activate")
+            alertUser("Installing Wine in Terminal — watch the progress there. When it says it's done, just reopen SAI Pen Pressure.")
+        } else {
+            alertUser("Download Gcenx 'Wine Staging', put 'Wine Staging.app' in /Applications, then reopen this app.\n\nhttps://github.com/Gcenx/macOS_Wine_builds/releases")
+        }
+        exit(0)
     }
     g_wine = wine
     var sai = savedSAIPath()
