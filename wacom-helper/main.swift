@@ -44,6 +44,15 @@ let outPath: String = {
 // Startup banner, warnings and errors always print.
 let verbose = ProcessInfo.processInfo.environment["WT_VERBOSE"] != nil
 
+// EXPERIMENT (WT_NO_HOVER=1): don't stream hover packets — only presses and the
+// pen-up that ends a stroke. Used to isolate SAI's pen-vs-mouse suppression:
+// if pen taps on SAI's top menu work in this mode, the suppression is driven by
+// our continuous hover stream (fixable by gating hover); if they still fail,
+// it's triggered by the tap's own packets (not fixable without breaking canvas).
+// Side effects while ON (expected, the reasons hover streaming exists): brush
+// cursor lags the pen while hovering; OS arrow cursor may flicker back.
+let noHover = ProcessInfo.processInfo.environment["WT_NO_HOVER"] != nil
+
 // ============================================================================
 // APP-BUNDLE MODE — when launched as "SAI Pen Pressure.app" (with --app).
 // First run: pick the SAI folder, create the Wine prefix, install our DLL.
@@ -257,6 +266,9 @@ func send(_ p: Int, _ xf: Int, _ yf: Int) {
 func emit(pressure: Int, loc: CGPoint) {
     // coordinate mapping + clamp + dedup rules live in PressureCore (unit-tested)
     let p = PressureCore.clampPressure(pressure)
+    // WT_NO_HOVER experiment: drop hover samples (p==0) unless they END a
+    // stroke (previous sample was a press) — see the flag's comment up top.
+    if noHover && p == 0 && lastKeyP <= 0 { return }
     let (xf, yf) = PressureCore.mapToVirtual(locX: loc.x, locY: loc.y, vX: vX, vY: vY, vH: vH)
     if PressureCore.isDuplicate(p: p, xf: xf, yf: yf, lastP: lastKeyP, lastX: lastKeyX, lastY: lastKeyY) { return }
     lastKeyP = p; lastKeyX = xf; lastKeyY = yf
@@ -271,6 +283,7 @@ func emit(pressure: Int, loc: CGPoint) {
 // last sample was pen-up/hover (lastKeyP == 0): re-sending an actual press
 // (lastKeyP > 0) made SAI register spurious extra clicks / feel glitchy.
 func keepAlive() {
+    if noHover { return }   // WT_NO_HOVER experiment: no hover keepalive at all
     if PressureCore.keepAliveShouldResend(inProximity: inProximity, lastPressure: lastKeyP,
                                           secondsSinceLastSend: CFAbsoluteTimeGetCurrent() - lastSendMs) {
         send(lastKeyP, lastKeyX, lastKeyY)
