@@ -31,6 +31,25 @@ cp "$REPO/wintab-src/wintab32.dll"  "$APP/Contents/Resources/wintab32.dll"
 cp "$REPO/install-wine.sh"          "$APP/Contents/Resources/install-wine.sh"
 chmod +x "$APP/Contents/Resources/install-wine.sh"
 
+# App icon — render the pen emoji to a 1024px PNG, then build an .icns.
+# Best-effort: if anything fails the app just uses the default icon (non-fatal).
+HAS_ICON=""
+ICONWORK="$(mktemp -d)"
+if swiftc -O -o "$ICONWORK/make-icon" "$REPO/make-icon.swift" 2>/dev/null \
+   && "$ICONWORK/make-icon" "$ICONWORK/icon1024.png" 2>/dev/null; then
+  mkdir -p "$ICONWORK/icon.iconset"
+  for s in 16 32 128 256 512; do
+    sips -z $s $s        "$ICONWORK/icon1024.png" --out "$ICONWORK/icon.iconset/icon_${s}x${s}.png"    >/dev/null 2>&1
+    sips -z $((s*2)) $((s*2)) "$ICONWORK/icon1024.png" --out "$ICONWORK/icon.iconset/icon_${s}x${s}@2x.png" >/dev/null 2>&1
+  done
+  if iconutil -c icns "$ICONWORK/icon.iconset" -o "$APP/Contents/Resources/AppIcon.icns" 2>/dev/null; then
+    HAS_ICON=1
+    echo "App icon: built AppIcon.icns from pen emoji."
+  fi
+fi
+[ -z "$HAS_ICON" ] && echo "App icon: skipped (using default) — non-fatal."
+rm -rf "$ICONWORK"
+
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -42,7 +61,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>$VERSION</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleExecutable</key><string>SAIPenPressure</string>
+  <key>CFBundleExecutable</key><string>SAIPenPressure</string>${HAS_ICON:+
+  <key>CFBundleIconFile</key><string>AppIcon</string>}
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <!-- shown in the permission prompts -->
@@ -52,19 +72,19 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# ad-hoc code signature so macOS keeps the permission grant stable across runs
-# Sign with a STABLE self-signed identity if one exists, so macOS keeps the
-# Input Monitoring / Accessibility grants across rebuilds. Falls back to ad-hoc
-# (which changes each build -> you must re-grant permissions after every rebuild).
-SIGN_ID="${SIGN_ID:-SAI Pen Pressure Local}"
-if security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGN_ID"; then
-  echo "Signing with stable identity: \"$SIGN_ID\" (permissions persist across rebuilds)"
+# --- Code signing -----------------------------------------------------------
+# Default: AD-HOC. Ad-hoc gives every build its own distinct identity, so macOS
+# treats each rebuild as a separate app. That's what we want while developing:
+# the Mac app's permissions/state stay INDEPENDENT and don't get entangled with
+# other builds (a stable identity persists TCC grants across rebuilds, but that
+# also connects the versions and gets in the way of debugging).
+# To opt into a stable identity on purpose, pass SIGN_ID="<identity name or hash>".
+if [ -n "$SIGN_ID" ]; then
+  echo "Signing with identity: $SIGN_ID"
   codesign --force --deep --sign "$SIGN_ID" "$APP"
 else
   codesign --force --deep --sign - "$APP" 2>/dev/null || true
-  echo "NOTE: signed ad-hoc — you'll have to RE-GRANT permissions after each rebuild."
-  echo "      To make grants persist: Keychain Access -> Certificate Assistant ->"
-  echo "      Create a Certificate named \"$SIGN_ID\", type 'Code Signing', self-signed."
+  echo "Signed ad-hoc (each build independent)."
 fi
 
 echo ""
