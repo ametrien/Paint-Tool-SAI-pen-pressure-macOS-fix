@@ -7,6 +7,11 @@ set -e
 REPO="$(cd "$(dirname "$0")" && pwd)"
 APP="$REPO/dist/SAI Pen Pressure.app"
 BUNDLE_ID="com.runasharp.saipenpressure"
+# One source of truth for the version: the latest git tag (v0.1.0 -> 0.1.0).
+# Override with SAIPP_VERSION; falls back to 0.0.0-dev outside a tagged repo.
+VERSION="${SAIPP_VERSION:-$(git -C "$REPO" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')}"
+VERSION="${VERSION:-0.0.0-dev}"
+echo "Version: $VERSION"
 
 echo "Building helper (with --app support)..."
 ( cd "$REPO/wacom-helper" && swiftc -O -o wacom-pressure-helper main.swift )
@@ -34,8 +39,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleName</key><string>SAI Pen Pressure</string>
   <key>CFBundleDisplayName</key><string>SAI Pen Pressure</string>
   <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
-  <key>CFBundleVersion</key><string>1.0</string>
-  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>CFBundleVersion</key><string>$VERSION</string>
+  <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleExecutable</key><string>SAIPenPressure</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
