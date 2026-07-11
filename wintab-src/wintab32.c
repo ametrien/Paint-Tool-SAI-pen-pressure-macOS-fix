@@ -106,7 +106,17 @@ static void fill_default_context(LOGCONTEXTW *lc) {
     memset(lc, 0, sizeof(*lc));
     static const WCHAR nm[] = L"OurDefault";
     memcpy(lc->lcName, nm, sizeof(nm));
-    lc->lcOptions  = 0x0004;          /* CXO_MESSAGES */
+    /* CXO_MESSAGES only. KNOWN QUIRK: while the pen is in range, SAI suppresses
+     * the pen's synthesized mouse clicks, so the TOP MENU ROW ("File", ...)
+     * ignores pen taps (canvas/brush panels are fine — they run on the WinTab
+     * packets). Use the mouse/trackpad for the menu.
+     * Tried: advertising CXO_SYSTEM (0x0001) like a real Wacom driver makes SAI
+     * accept the mouse click, but SAI then processes BOTH the mouse click AND
+     * our buttons=1 packet -> menus open and instantly close (double-click).
+     * Real drivers dodge this because Windows tags pen-synthesized mouse events
+     * (GetMessageExtraInfo signature) so apps can de-dup; Wine's mouse events
+     * carry no tag. No DLL-side fix without risking canvas double-strokes. */
+    lc->lcOptions  = 0x0004;
     lc->lcMsgBase  = WT_DEFBASE;
     lc->lcPktRate  = 133;
     lc->lcPktData  = OUR_PKTDATA;
