@@ -214,6 +214,12 @@ and [`HANDOVER-START-HERE.md`](HANDOVER-START-HERE.md).
   macOS driver *should* work (the helper reads standard tablet events) but are untested.
 - **Bluetooth report rate (~130 Hz)** makes fast curves boxy — use USB for ~200 Hz (see Tips).
 - Tilt/rotation are not forwarded (the test tablet has none); pressure only.
+- **SAI's top menu row ("File", …) ignores pen taps** while the pen is in range — SAI
+  de-duplicates pen-vs-mouse input and drops the pen's mouse click there. Canvas, brush
+  panels and tools all respond to the pen normally. **Workaround: click the menu with the
+  mouse/trackpad.** (Advertising the context as `CXO_SYSTEM` like a real driver makes menus
+  take the click but then they open-and-instantly-close — Wine's mouse events lack the pen
+  tag SAI needs to de-dup — so this stays as a documented quirk.)
 - A few **Wine window quirks** remain — these are Wine-on-Mac (`winemac.drv`) behaviors,
   independent of the pressure bridge:
   - the window sometimes opens inactive until you click it;
