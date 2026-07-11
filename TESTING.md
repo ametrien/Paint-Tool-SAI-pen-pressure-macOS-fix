@@ -83,6 +83,8 @@ connection (USB/BT), SAI version.** Tick each item ✅/❌ and note anything odd
 
 ### Known non-bugs (don't report as new)
 - Fast curves are boxy over **Bluetooth** (~130 Hz) — use USB (~200 Hz).
+- SAI's **top menu row ignores pen taps** while the pen is in range (SAI drops the pen's
+  mouse click as a "duplicate") — use the mouse/trackpad for menus. See README Limitations.
 - After app-switching, SAI's window can get stuck ignoring input — Space-swipe to fix (a Wine
   `winemac.drv` issue, not this bridge).
 
