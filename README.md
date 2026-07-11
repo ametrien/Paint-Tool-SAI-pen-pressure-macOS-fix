@@ -221,7 +221,8 @@ and [`HANDOVER-START-HERE.md`](HANDOVER-START-HERE.md).
 
 ## Build from source (contributors)
 
-Prebuilt binaries are committed, but to rebuild:
+Only `wintab32.dll` is committed prebuilt (cross-compiling it needs mingw-w64). The Swift
+helper is built from source automatically by `install.sh` / `make-app.sh` — or by hand:
 ```bash
 # custom wintab32.dll  (needs mingw-w64:  brew install mingw-w64)
 cd wintab-src
