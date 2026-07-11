@@ -1,8 +1,13 @@
 # macOS
 .DS_Store
 
-# build artifacts (rebuilt from source; see README "Build from source")
+# build artifacts (rebuilt from source; see README "Build from source").
+# The compiled helper is NOT committed — install.sh / make-app.sh build it
+# automatically with the stock Xcode command-line tools. wintab32.dll IS
+# committed (cross-compiling it needs mingw-w64, too big an ask for users).
 wintab-src/wintab32_res.o
+wacom-helper/wacom-pressure-helper
+make-icon
 
 # NEVER commit proprietary SAI files or licenses
 *.exe
