@@ -5,18 +5,41 @@ screen. So testing is two parts: **automated build checks** (CI, below) and a **
 checklist** you run with hardware before a release or when reviewing a PR that touches drawing
 behaviour.
 
-## Automated (CI)
+## Automated
 
-Every push / PR runs `.github/workflows/build.yml` on a macOS runner: it cross-builds
-`wintab32.dll` (mingw-w64), builds the Swift helper, assembles the `.app`, lints the shell
-scripts, and checks the Wine-download URL still resolves. Green = it builds and packages; it
-does **not** verify drawing behaviour (that's the checklist).
+### Unit tests (no hardware needed)
+
+The tricky, bug-prone logic — coordinate mapping (y-flip, fixed point, multi-monitor),
+packet conflation, sample parsing (torn reads), the dedup/keepalive rules that fixed the
+double-click bug, and the Cmd→Ctrl remap decisions — lives in pure functions
+(`wacom-helper/PressureCore.swift`, `wintab-src/wintab_core.h`) with native unit tests:
+
+```bash
+bash tests/run-tests.sh    # builds + runs the C and Swift test suites
+```
+
+If you change behaviour in either core file, add or adjust a test case.
+
+### CI
+
+Every push / PR runs `.github/workflows/build.yml` on a macOS runner: unit tests,
+cross-build of `wintab32.dll` (mingw-w64), the Swift helper (+ `--version` smoke test),
+the `.app` bundle with structural validation (real Mach-O main executable — the error -47
+regression guard — DLL/installer/icon present, version stamped), `shellcheck` on the shell
+scripts, and a Wine-download-URL check. The built app is attached as a workflow artifact.
+
+Pushing a `v*` tag additionally runs `.github/workflows/release.yml`, which builds, zips,
+and attaches the app to a GitHub Release (after checking the zip contains no `.slc`/`.exe`).
+
+Green = logic + build + packaging verified; CI does **not** verify drawing behaviour
+(that's the checklist below).
 
 Run the same checks locally:
 ```bash
+bash tests/run-tests.sh
 cd wintab-src && x86_64-w64-mingw32-windres wintab32.rc -O coff -o wintab32_res.o && \
   x86_64-w64-mingw32-gcc -shared -O2 -o wintab32.dll wintab32.c wintab32_res.o wintab32.def -lgdi32 -luser32 -lws2_32 -municode
-cd ../wacom-helper && swiftc -O -o wacom-pressure-helper main.swift
+cd ../wacom-helper && swiftc -O -o wacom-pressure-helper main.swift PressureCore.swift
 cd .. && bash make-app.sh
 ```
 

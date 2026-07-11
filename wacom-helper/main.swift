@@ -20,6 +20,15 @@ import CoreGraphics
 import Foundation
 import IOKit.hid       // IOHIDCheckAccess/RequestAccess — live Input-Monitoring status
 
+// --version: print the build's version and exit (useful in bug reports).
+// Packaged app: the version make-app.sh stamped from the git tag. Bare dev
+// binary: "dev (unbundled)".
+if CommandLine.arguments.contains("--version") {
+    let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+    print(v ?? "dev (unbundled)")
+    exit(0)
+}
+
 // Output file the DLL reads. Configurable via WT_PRESSURE_FILE so the tool
 // isn't tied to one prefix (needed for distribution); defaults to the standard
 // location so existing setups keep working with no env var.
@@ -193,14 +202,13 @@ func refreshVirtualBounds() {
     }
     var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
     CGGetActiveDisplayList(count, &ids, &count)
-    var minX = Double.greatestFiniteMagnitude, minY = Double.greatestFiniteMagnitude
-    var maxX = -Double.greatestFiniteMagnitude, maxY = -Double.greatestFiniteMagnitude
-    for id in ids {
-        let b = CGDisplayBounds(id)          // top-left global space, same as CGEvent.location
-        minX = min(minX, Double(b.minX)); minY = min(minY, Double(b.minY))
-        maxX = max(maxX, Double(b.maxX)); maxY = max(maxY, Double(b.maxY))
+    // top-left global space, same as CGEvent.location
+    let rects = ids.map { id -> (x: Double, y: Double, w: Double, h: Double) in
+        let b = CGDisplayBounds(id)
+        return (Double(b.minX), Double(b.minY), Double(b.width), Double(b.height))
     }
-    vX = minX; vY = minY; vW = maxX - minX; vH = maxY - minY
+    guard let u = PressureCore.virtualUnion(of: rects) else { return }
+    vX = u.x; vY = u.y; vW = u.w; vH = u.h
     if verbose { print("virtual desktop: origin(\(Int(vX)),\(Int(vY))) size \(Int(vW))x\(Int(vH))") }
 }
 
@@ -247,14 +255,10 @@ func send(_ p: Int, _ xf: Int, _ yf: Int) {
 }
 
 func emit(pressure: Int, loc: CGPoint) {
-    let p = max(0, min(1023, pressure))
-    // position RELATIVE to the virtual-desktop origin, flipped to bottom-left
-    // y-up within the whole virtual desktop (matches the DLL's y-up convention).
-    // 8x fixed-point preserves sub-pixel precision through the integer protocol.
-    let xf = Int((loc.x - vX) * 8)
-    let yf = Int(((vY + vH) - loc.y) * 8)
-    // drop consecutive identical samples (also de-dups any doubled tap events)
-    if p == lastKeyP && xf == lastKeyX && yf == lastKeyY { return }
+    // coordinate mapping + clamp + dedup rules live in PressureCore (unit-tested)
+    let p = PressureCore.clampPressure(pressure)
+    let (xf, yf) = PressureCore.mapToVirtual(locX: loc.x, locY: loc.y, vX: vX, vY: vY, vH: vH)
+    if PressureCore.isDuplicate(p: p, xf: xf, yf: yf, lastP: lastKeyP, lastX: lastKeyX, lastY: lastKeyY) { return }
     lastKeyP = p; lastKeyX = xf; lastKeyY = yf
     send(p, xf, yf)
     if verbose && (seq % 100 == 1 || p == 0) {
@@ -267,8 +271,8 @@ func emit(pressure: Int, loc: CGPoint) {
 // last sample was pen-up/hover (lastKeyP == 0): re-sending an actual press
 // (lastKeyP > 0) made SAI register spurious extra clicks / feel glitchy.
 func keepAlive() {
-    guard inProximity, lastKeyP == 0 else { return }
-    if CFAbsoluteTimeGetCurrent() - lastSendMs > 0.05 {   // only if idle > 50ms
+    if PressureCore.keepAliveShouldResend(inProximity: inProximity, lastPressure: lastKeyP,
+                                          secondsSinceLastSend: CFAbsoluteTimeGetCurrent() - lastSendMs) {
         send(lastKeyP, lastKeyX, lastKeyY)
     }
 }
@@ -376,12 +380,16 @@ let keyCallback: CGEventTapCallBack = { _, type, event, _ in
 
     // keyDown / keyUp: for allowlisted keys pressed with Cmd, swap the modifier
     // flag Cmd -> Ctrl (Shift/Option preserved). Non-allowlisted keys (incl.
-    // Cmd+Tab / Cmd+Space / Cmd+Q) pass through untouched.
+    // Cmd+Tab / Cmd+Space / Cmd+Q) pass through untouched. Decision logic is
+    // PressureCore.shouldRemapKey (unit-tested).
+    // (cheap checks first: don't query the frontmost app for every keystroke)
     guard remapCmdToCtrl, event.flags.contains(.maskCommand) else {
         return Unmanaged.passUnretained(event)
     }
     let kc = event.getIntegerValueField(.keyboardEventKeycode)
-    guard remapKeys.contains(kc), isSAIFrontmost() else {
+    guard remapKeys.contains(kc),
+          PressureCore.shouldRemapKey(keycode: kc, hasCommand: true,
+                                      saiFrontmost: isSAIFrontmost(), allowlist: remapKeys) else {
         return Unmanaged.passUnretained(event)
     }
     var flags = event.flags

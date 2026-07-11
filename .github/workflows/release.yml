@@ -1,0 +1,38 @@
+name: release
+
+# Push a tag like v0.1.1 and CI builds the app, zips it, and attaches it to a
+# GitHub Release — no human zipping/uploading, no stale assets.
+on:
+  push:
+    tags: [ "v*" ]
+
+permissions:
+  contents: write   # create the release + upload the asset
+
+jobs:
+  release:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unit tests
+        run: bash tests/run-tests.sh
+
+      - name: Build the .app (version = the pushed tag)
+        run: SAIPP_VERSION="${GITHUB_REF_NAME#v}" bash make-app.sh
+
+      - name: Zip the app (ditto preserves the bundle correctly)
+        run: |
+          cd dist
+          ditto -c -k --keepParent "SAI Pen Pressure.app" "SAI-Pen-Pressure-${GITHUB_REF_NAME}.zip"
+          # safety: the zip must never contain a SAI license or executable
+          ! unzip -l "SAI-Pen-Pressure-${GITHUB_REF_NAME}.zip" | grep -iE "\.slc|\.exe"
+
+      - name: Create/refresh the GitHub Release with the zip
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --generate-notes \
+            "dist/SAI-Pen-Pressure-${GITHUB_REF_NAME}.zip" \
+          || gh release upload "$GITHUB_REF_NAME" \
+            "dist/SAI-Pen-Pressure-${GITHUB_REF_NAME}.zip" --clobber
