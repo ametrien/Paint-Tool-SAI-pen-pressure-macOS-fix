@@ -95,6 +95,20 @@ func wineBin() -> String? {
 func ensureSetup(_ saiSrc: String, _ wine: String) -> Bool {
     let saiExe = "\(appPrefix)/drive_c/SAI2/sai2.exe"
     if FileManager.default.fileExists(atPath: saiExe) { return true }        // already set up
+    // Fail fast (before the ~1-minute wineboot) with a SPECIFIC message if the
+    // chosen SAI folder is gone or doesn't actually contain sai2.exe — e.g. the
+    // user moved/deleted it after picking it, or picked the wrong level.
+    var isDir: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: saiSrc, isDirectory: &isDir), isDir.boolValue else {
+        alertUser("The SAI folder you chose can't be found anymore:\n\n\(saiSrc)\n\nIt may have been moved, renamed, or deleted. Reopen the app and choose your SAI Ver.2 folder again.")
+        try? FileManager.default.removeItem(atPath: appSupport() + "/config.txt")   // clear the stale path so the app re-asks
+        return false
+    }
+    guard FileManager.default.fileExists(atPath: "\(saiSrc)/sai2.exe") else {
+        alertUser("That folder doesn't contain sai2.exe:\n\n\(saiSrc)\n\nPick the folder that DIRECTLY contains sai2.exe (usually named like \"SAI Ver.2 64bit ...\").")
+        try? FileManager.default.removeItem(atPath: appSupport() + "/config.txt")
+        return false
+    }
     alertUser("Setting up SAI for the first time — this takes about a minute after you click OK. Please wait for SAI to appear.")
     let env = ["WINEPREFIX": appPrefix, "WINEDEBUG": "-all"]
     runProc(wine, ["wineboot", "-u"], env: env)
@@ -102,7 +116,7 @@ func ensureSetup(_ saiSrc: String, _ wine: String) -> Bool {
     try? FileManager.default.createDirectory(atPath: dst, withIntermediateDirectories: true)
     runProc("/bin/cp", ["-R", "\(saiSrc)/.", dst])
     guard FileManager.default.fileExists(atPath: saiExe) else {
-        alertUser("Couldn't find sai2.exe in the folder you chose. Reopen the app and pick the folder that directly contains sai2.exe."); return false
+        alertUser("Something went wrong copying SAI into the Wine prefix. Check that you have free disk space and that the SAI folder is readable, then reopen the app and try again."); return false
     }
     if let res = Bundle.main.resourcePath {
         let sys = "\(appPrefix)/drive_c/windows/system32"
@@ -419,6 +433,15 @@ func startPressureEngine() -> Bool {
     return true
 }
 
+// Start the engine at most once. The wizard can start it early (the "Test
+// Tablet Pressure" button) AND on Launch; creating the tap twice would be wrong.
+var engineStarted = false
+func startPressureEngineOnce() -> Bool {
+    if engineStarted { return true }
+    if startPressureEngine() { engineStarted = true }
+    return engineStarted
+}
+
 // ---- permission helpers (used by both modes / the wizard) ------------------
 func inputMonitoringGranted() -> Bool { IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted }
 func requestInputMonitoring() {
@@ -455,6 +478,26 @@ if !isAppMode {
     CFRunLoopRun()
 }
 
+// A dead-simple pressure bar we draw ourselves. NSProgressIndicator eases
+// (animates) toward each new value, which lags behind the real pen pressure and
+// feels "smoothed". This redraws INSTANTLY on every value set, so the bar tracks
+// the pen exactly like the % number does.
+final class PressureBar: NSView {
+    var value: CGFloat = 0 { didSet { if value != oldValue { needsDisplay = true } } }  // 0...1
+    override func draw(_ dirtyRect: NSRect) {
+        let r = bounds, radius = r.height / 2
+        NSColor.quaternaryLabelColor.setFill()
+        NSBezierPath(roundedRect: r, xRadius: radius, yRadius: radius).fill()
+        let v = min(1, max(0, value))
+        if v > 0.001 {
+            let w = max(r.height, r.width * v)                 // keep a round cap even when tiny
+            NSColor.controlAccentColor.setFill()
+            NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: w, height: r.height),
+                         xRadius: radius, yRadius: radius).fill()
+        }
+    }
+}
+
 // ---- App mode: a small setup wizard (AppKit) -------------------------------
 final class SetupController: NSObject, NSApplicationDelegate {
     struct Req {
@@ -462,6 +505,7 @@ final class SetupController: NSObject, NSApplicationDelegate {
         let ok: () -> Bool; let fix: () -> Void; let required: Bool
         var dynamicDetail: (() -> String)? = nil   // recomputed each refresh (e.g. show the chosen path)
         var keepButton: Bool = false               // keep the button visible even when satisfied (e.g. "Change…")
+        var keepButtonTitle: String = "Change…"    // button label when satisfied (e.g. "Uninstall…" for Wine)
     }
     var reqs: [Req] = []
     var window: NSWindow!
@@ -471,6 +515,15 @@ final class SetupController: NSObject, NSApplicationDelegate {
     var detailFields: [NSTextField] = []
     var fixButtons: [NSButton] = []
     var running = false
+    // "Test Tablet Pressure" widgets — a live 0–100% bar so the user can confirm
+    // the pen works BEFORE launching SAI.
+    var testBtn: NSButton!
+    var testHint: NSTextField!
+    var barRow: NSStackView!
+    var pressureBar: PressureBar!
+    var pressureLabel: NSTextField!
+    var testing = false
+    var testTimer: Timer?
 
     func lbl(_ s: String, _ size: CGFloat, bold: Bool = false, color: NSColor = .labelColor) -> NSTextField {
         let l = NSTextField(labelWithString: s)
@@ -483,7 +536,11 @@ final class SetupController: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         reqs = [
             Req(title: "Wine (runs SAI on Mac)", detail: "Gcenx Wine Staging in /Applications", fixTitle: "Install Wine…",
-                ok: { wineBin() != nil }, fix: { installWineViaTerminal() }, required: true),
+                ok: { wineBin() != nil },
+                fix: { [weak self] in
+                    if wineBin() == nil { installWineViaTerminal() } else { self?.uninstallWine() }
+                }, required: true,
+                keepButton: true, keepButtonTitle: "Uninstall…"),
             Req(title: "PaintTool SAI folder", detail: "No folder chosen yet — click Choose.", fixTitle: "Choose…",
                 ok: { saiReady() }, fix: { [weak self] in self?.chooseSAI() }, required: true,
                 dynamicDetail: { savedSAIPath().map { "Using: \(($0 as NSString).abbreviatingWithTildeInPath)" }
@@ -541,12 +598,29 @@ final class SetupController: NSObject, NSApplicationDelegate {
             content.addArrangedSubview(row)
         }
 
+        // --- Test tablet pressure (optional; confirm the pen before Launch) ---
+        testBtn = NSButton(title: "Test Tablet Pressure", target: self, action: #selector(testTapped))
+        testBtn.bezelStyle = .rounded
+        content.addArrangedSubview(testBtn)
+        testHint = lbl("Now press your pen on the tablet — the bar should move.", 11, color: .secondaryLabelColor)
+        testHint.isHidden = true
+        content.addArrangedSubview(testHint)
+        barRow = NSStackView(); barRow.orientation = .horizontal; barRow.alignment = .centerY; barRow.spacing = 10
+        pressureBar = PressureBar()
+        pressureBar.widthAnchor.constraint(equalToConstant: 240).isActive = true
+        pressureBar.heightAnchor.constraint(equalToConstant: 14).isActive = true
+        pressureLabel = lbl("0%", 12, bold: true)
+        pressureLabel.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        barRow.addArrangedSubview(pressureBar); barRow.addArrangedSubview(pressureLabel)
+        barRow.isHidden = true
+        content.addArrangedSubview(barRow)
+
         launchBtn = NSButton(title: "Launch SAI with Pressure", target: self, action: #selector(launchTapped))
         launchBtn.bezelStyle = .rounded; launchBtn.keyEquivalent = "\r"; launchBtn.controlSize = .large
         content.addArrangedSubview(launchBtn)
         content.addArrangedSubview(lbl("After granting a permission the first time, macOS may ask you to reopen the app.", 10, color: .tertiaryLabelColor))
 
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 360),
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 448),
                           styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "SAI Pen Pressure"
         window.contentView = content
@@ -561,9 +635,9 @@ final class SetupController: NSObject, NSApplicationDelegate {
             let ok = r.ok()
             statusFields[i].stringValue = ok ? "✅" : (r.required ? "❌" : "⚪️")
             if let dd = r.dynamicDetail { detailFields[i].stringValue = dd() }   // e.g. show the chosen folder
-            if r.keepButton {                       // stays visible so you can change it
+            if r.keepButton {                       // stays visible so you can change/uninstall it
                 fixButtons[i].isHidden = false
-                fixButtons[i].title = ok ? "Change…" : r.fixTitle
+                fixButtons[i].title = ok ? r.keepButtonTitle : r.fixTitle
             } else {
                 fixButtons[i].isHidden = ok
             }
@@ -601,8 +675,62 @@ final class SetupController: NSObject, NSApplicationDelegate {
         refresh()
     }
 
+    // Uninstall Wine on request: move "Wine Staging.app" to the Trash (reversible)
+    // after confirming. Deliberately leaves the Wine prefix (~/SAI2-pressure) and
+    // its SAI setup + license .slc untouched — only the Wine runtime is removed.
+    func uninstallWine() {
+        let path = "/Applications/Wine Staging.app"
+        guard FileManager.default.fileExists(atPath: path) else {
+            alertUser("Wine Staging isn't in /Applications, so there's nothing to uninstall.")
+            refresh(); return
+        }
+        let choice = osa("button returned of (display dialog \"Move 'Wine Staging.app' to the Trash?\n\nThis removes the Wine runtime. Your SAI setup and license (in ~/SAI2-pressure) are kept, and you can reinstall Wine anytime from this window.\" buttons {\"Cancel\", \"Move to Trash\"} default button \"Cancel\" with icon caution)")
+        guard choice == "Move to Trash" else { refresh(); return }
+        do {
+            try FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)
+            alertUser("Wine was moved to the Trash. Reopen this window's Install Wine option whenever you want it back.")
+        } catch {
+            alertUser("Couldn't remove Wine automatically. Drag 'Wine Staging.app' from /Applications to the Trash yourself.\n\n(\(error.localizedDescription))")
+        }
+        refresh()
+    }
+
+    // Start/stop the live pressure test. Doubles as a real Input-Monitoring check:
+    // if the tap can't be created, the permission isn't granted to this build yet.
+    @objc func testTapped() {
+        if testing { stopTest(); return }
+        guard startPressureEngineOnce() else {
+            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
+            alertUser("Couldn't read the tablet yet.\n\nIn System Settings → Privacy & Security → Input Monitoring, turn ON \"SAI Pen Pressure\", then reopen this app and try Test again.")
+            return
+        }
+        testing = true
+        testBtn.title = "Stop Test"
+        testHint.isHidden = false; barRow.isHidden = false
+        // fast (~60fps), .common-mode timer so the bar tracks the pen instantly and
+        // keeps updating even while the window is being interacted with. The bar is
+        // custom-drawn (no easing), so it jumps to the real value like the % does.
+        let t = Timer(timeInterval: 1.0/60.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            let p = max(0, lastKeyP)                 // lastKeyP is -1 until a pen is first seen
+            self.pressureBar.value = CGFloat(p) / 1023.0
+            self.pressureLabel.stringValue = "\(Int((Double(p) / 1023.0 * 100).rounded()))%"
+        }
+        RunLoop.main.add(t, forMode: .common)
+        testTimer = t
+    }
+
+    func stopTest() {
+        testing = false
+        testTimer?.invalidate(); testTimer = nil
+        if testBtn != nil { testBtn.title = "Test Tablet Pressure" }
+        if testHint != nil { testHint.isHidden = true }
+        if barRow != nil { barRow.isHidden = true }
+    }
+
     @objc func launchTapped() {
         guard let wine = wineBin(), let sai = savedSAIPath() else { refresh(); return }
+        stopTest()                          // tidy up the live test UI if it was open
         g_wine = wine
         launchBtn.isEnabled = false
         subtitle.stringValue = "Setting up… (first time can take a minute)"
@@ -610,7 +738,7 @@ final class SetupController: NSObject, NSApplicationDelegate {
             let ok = ensureSetup(sai, wine)
             DispatchQueue.main.async {
                 guard ok else { self.subtitle.stringValue = "Setup failed. Re-check the SAI folder."; self.refresh(); return }
-                if startPressureEngine() {
+                if startPressureEngineOnce() {
                     self.running = true
                     launchSAIApp()
                     self.subtitle.stringValue = "Running — pressure is active. Close SAI to quit."
