@@ -6,6 +6,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
 ## [Unreleased]
 
 ### Added
+- **KNOWN_ISSUES.md** documenting the pen-vs-menu and Wine focus quirks in full —
+  cause, what we tried, what didn't work, and the workaround for each.
+- `WT_NO_HOVER=1` diagnostic env flag on the helper (streams presses only, no hover)
+  to investigate SAI's pen-vs-mouse suppression.
 - **Test Tablet Pressure** button in the setup window: a live 0–100% bar
   (custom-drawn, no easing — tracks the raw pen exactly) to confirm the tablet
   works *before* launching SAI. Doubles as a real Input Monitoring check.
