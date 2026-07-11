@@ -1,0 +1,43 @@
+# Changelog
+
+All notable changes to this project are documented here.
+Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](https://semver.org/).
+
+## [Unreleased]
+
+### Added
+- **Test Tablet Pressure** button in the setup window: a live 0–100% bar
+  (custom-drawn, no easing — tracks the raw pen exactly) to confirm the tablet
+  works *before* launching SAI. Doubles as a real Input Monitoring check.
+- **Uninstall Wine** option in the setup window (moves `Wine Staging.app` to
+  the Trash; your SAI setup and license are kept).
+- App icon (pen emoji, generated at build time by `make-icon.swift`).
+- `--version` flag on the helper binary (useful in bug reports).
+- **Unit tests** for the pure pressure-pipeline logic (`tests/run-tests.sh`):
+  coordinate mapping, packet conflation, sample parsing, dedup/keepalive rules,
+  Cmd→Ctrl remap decisions, multi-monitor union — run natively, no hardware.
+- Release automation: pushing a `v*` tag builds, zips, and attaches the app to
+  a GitHub Release.
+
+### Changed
+- Setup wizard only auto-prompts for **Input Monitoring** (required);
+  **Accessibility** is optional and prompted only via its own Grant button.
+- Specific, actionable error messages when the chosen SAI folder is missing,
+  has no `sai2.exe`, or the copy into the Wine prefix fails.
+- Pure logic extracted into `wacom-helper/PressureCore.swift` and
+  `wintab-src/wintab_core.h` (OS glue unchanged) so it can be unit-tested.
+- App builds are ad-hoc signed (each build independent); the compiled helper
+  binary is no longer committed — it's built from source automatically.
+- App version now derives from the git tag instead of a hardcoded value.
+
+## [0.1.0] — 2026-07-10
+
+### Added
+- First release: real Wacom **pen pressure for PaintTool SAI Ver.2 under Wine
+  on macOS** via a custom `wintab32.dll` + native macOS helper.
+- Pressure, hover cursor tracking, mouse/trackpad coexistence, multi-monitor
+  support, Mac-style **Cmd→Ctrl** shortcut remapping while SAI is frontmost.
+- Double-clickable **SAI Pen Pressure.app** with a step-by-step setup window
+  (Wine install, SAI folder pick, permission checks) — no terminal needed.
+- Automatic Wine installation (Gcenx Wine Staging) with visible progress.
+- Manual command-line route (`install.sh`) for developers.

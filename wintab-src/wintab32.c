@@ -22,6 +22,8 @@
 #include <windows.h>
 #include <stdio.h>
 
+#include "wintab_core.h"   /* the pure logic (parse/map/conflate) — unit-tested natively */
+
 #define SAMPLE_PORT 47800   /* UDP; the mac helper sends every pen sample here */
 
 /* ---- WinTab constants / structs (subset; we don't have wintab.h in mingw) - */
@@ -126,24 +128,17 @@ static void fill_default_context(LOGCONTEXTW *lc) {
  * bare "p" (no position -> caller falls back to the Wine cursor). A failed
  * open/parse (file caught mid-rewrite) returns the LAST good sample — treating
  * torn reads as pen-up caused stroke gaps SAI bridged with straight segments. */
-typedef struct { int press, x, y, w, h, has_pos; } SAMPLE;
+typedef WTC_SAMPLE SAMPLE;   /* defined (and parsed) in wintab_core.h */
 static SAMPLE g_sample;   /* last good sample */
 
 static SAMPLE read_sample(void) {
     FILE *f = fopen("C:\\wt_pressure.txt", "rb");
     if (!f) return g_sample;
-    int p=-1, x=0, y=0, w=0, h=0;
-    int n = fscanf(f, "%d %d %d %d %d", &p, &x, &y, &w, &h);
+    char buf[128];
+    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
     fclose(f);
-    if (n < 1 || p < 0) return g_sample;
-    if (p > MAX_PRESS) p = MAX_PRESS;
-    g_sample.press = p;
-    if (n == 5 && w > 0 && h > 0) {
-        g_sample.x = x; g_sample.y = y; g_sample.w = w; g_sample.h = h;
-        g_sample.has_pos = 1;
-    } else {
-        g_sample.has_pos = 0;
-    }
+    buf[n] = '\0';
+    (void)wtc_parse_sample(buf, &g_sample);   /* failed parse keeps the last good sample */
     return g_sample;
 }
 
@@ -199,13 +194,9 @@ static void emit_sample(const SAMPLE *s) {
             oY = g_ctx.lcOutOrgY; eY = g_ctx.lcOutExtY;
         }
         LeaveCriticalSection(&g_cs);
-        if (!eX) eX = IN_EXT;
-        if (!eY) eY = IN_EXT;
-        pk.x = oX + (LONG)((LONGLONG)s->x * eX / s->w);
-        if (eY > 0)  /* y-up: mac y is already y-up */
-            pk.y = oY + (LONG)((LONGLONG)s->y * eY / s->h);
-        else         /* y-down */
-            pk.y = oY + (LONG)((LONGLONG)(s->h - 1 - s->y) * (-eY) / s->h);
+        int32_t px, py;
+        wtc_map_to_out(s, oX, oY, eX, eY, IN_EXT, &px, &py);
+        pk.x = px; pk.y = py;
     }
     /* else: keep pk.x/pk.y from g_last (position-less pen-up) */
 
@@ -226,8 +217,7 @@ static void emit_sample(const SAMPLE *s) {
     UINT ser = 0; BOOL post;
     EnterCriticalSection(&g_cs);
     g_last = pk;
-    int outstanding = (int)(g_serial - 1 - g_fetched);
-    post = transition || outstanding < POST_WINDOW;
+    post = wtc_should_post(g_serial, g_fetched, transition, POST_WINDOW);
     if (post) {
         ser = g_serial++;
         g_last_serial = ser;
@@ -250,7 +240,7 @@ static void flush_pending(void) {
     if (!g_open || !g_hwnd) return;
     UINT ser = 0; BOOL post = FALSE;
     EnterCriticalSection(&g_cs);
-    if (g_dirty && (int)(g_serial - 1 - g_fetched) < POST_WINDOW) {
+    if (g_dirty && wtc_should_post(g_serial, g_fetched, 0, POST_WINDOW)) {
         ser = g_serial++;
         g_last_serial = ser;
         g_ring_serial[ser % RING_SZ] = ser;
@@ -263,17 +253,8 @@ static void flush_pending(void) {
     if (post) { PostMessageW(g_hwnd, WT_PACKET, ser, (LPARAM)0xC0FFEE01); g_posted++; }
 }
 
-/* parse "p [x y w h]" into a SAMPLE */
-static int parse_sample(const char *buf, SAMPLE *out) {
-    int p=-1, x=0, y=0, w=0, h=0;
-    int n = sscanf(buf, "%d %d %d %d %d", &p, &x, &y, &w, &h);
-    if (n < 1 || p < 0) return 0;
-    if (p > MAX_PRESS) p = MAX_PRESS;
-    out->press = p;
-    if (n == 5 && w > 0 && h > 0) { out->x=x; out->y=y; out->w=w; out->h=h; out->has_pos=1; }
-    else out->has_pos = 0;
-    return 1;
-}
+/* parse "p [x y w h]" into a SAMPLE (pure logic lives in wintab_core.h) */
+static int parse_sample(const char *buf, SAMPLE *out) { return wtc_parse_sample(buf, out); }
 
 /* producer: block on the UDP socket and post EACH datagram the instant it
  * arrives (no fixed poll interval — removes up to 6 ms of cursor-vs-ink lag

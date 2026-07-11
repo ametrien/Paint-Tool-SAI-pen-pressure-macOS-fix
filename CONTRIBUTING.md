@@ -50,7 +50,7 @@ x86_64-w64-mingw32-gcc -shared -O2 -o wintab32.dll wintab32.c wintab32_res.o win
     -lgdi32 -luser32 -lws2_32 -municode
 
 # native helper
-cd ../wacom-helper && swiftc -O -o wacom-pressure-helper main.swift
+cd ../wacom-helper && swiftc -O -o wacom-pressure-helper main.swift PressureCore.swift
 
 # the .app wrapper
 bash make-app.sh
