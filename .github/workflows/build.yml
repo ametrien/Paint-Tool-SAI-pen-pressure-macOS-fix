@@ -11,8 +11,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install mingw-w64 (for the wintab32.dll cross-build)
-        run: brew install mingw-w64
+      - name: Unit tests (pure logic — C core + Swift core, no hardware needed)
+        run: bash tests/run-tests.sh
+
+      - name: Install mingw-w64 (DLL cross-build) + shellcheck
+        run: brew install mingw-w64 shellcheck
 
       - name: Build wintab32.dll
         run: |
@@ -26,21 +29,35 @@ jobs:
       - name: Build the native helper
         run: |
           cd wacom-helper
-          swiftc -O -o wacom-pressure-helper main.swift
+          swiftc -O -o wacom-pressure-helper main.swift PressureCore.swift
           test -x wacom-pressure-helper
+          # --version must print and EXIT (a hang here means the flag regressed)
+          ./wacom-pressure-helper --version
 
       - name: Build the .app bundle
-        run: |
-          bash make-app.sh
-          test -d "dist/SAI Pen Pressure.app"
-          test -f "dist/SAI Pen Pressure.app/Contents/Resources/wintab32.dll"
-          test -f "dist/SAI Pen Pressure.app/Contents/Resources/install-wine.sh"
+        run: bash make-app.sh
 
-      - name: Lint shell scripts
+      - name: Validate the .app bundle
         run: |
-          for f in install.sh install-wine.sh make-app.sh; do
-            echo "checking $f"; bash -n "$f"
-          done
+          APP="dist/SAI Pen Pressure.app"
+          test -d "$APP"
+          # main executable must be a real Mach-O binary (a script here breaks
+          # downloaded apps with error -47 — regression guard)
+          file "$APP/Contents/MacOS/SAIPenPressure" | grep -q "Mach-O"
+          test -f "$APP/Contents/Resources/wintab32.dll"
+          test -f "$APP/Contents/Resources/install-wine.sh"
+          test -f "$APP/Contents/Resources/AppIcon.icns"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP/Contents/Info.plist" | grep -qx "SAIPenPressure"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist"
+
+      - name: Lint shell scripts (shellcheck)
+        run: shellcheck -S error install.sh install-wine.sh make-app.sh tests/run-tests.sh
+
+      - name: Upload the built app (workflow artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: SAI-Pen-Pressure-app
+          path: dist/SAI Pen Pressure.app
 
       # Non-blocking: an external check (GitHub API can rate-limit shared CI IPs),
       # so it warns but never fails the build. Uses the built-in token for a

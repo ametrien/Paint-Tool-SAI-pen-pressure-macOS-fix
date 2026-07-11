@@ -1,5 +1,10 @@
 # SAI Pen Pressure on macOS
 
+[![build](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/actions/workflows/build.yml/badge.svg)](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/actions/workflows/build.yml)
+[![release](https://img.shields.io/github/v/release/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix)](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/releases/latest)
+[![downloads](https://img.shields.io/github/downloads/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/total)](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/releases)
+[![license](https://img.shields.io/github/license/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix)](LICENSE)
+
 Run **PaintTool SAI Ver.2** on a Mac (via Wine) **with real Wacom pen pressure** — the one
 thing that normally doesn't survive the trip through Wine.
 
@@ -231,7 +236,7 @@ x86_64-w64-mingw32-gcc -shared -O2 -o wintab32.dll wintab32.c wintab32_res.o win
 
 # native helper  (needs Xcode command-line tools)
 cd ../wacom-helper
-swiftc -O -o wacom-pressure-helper main.swift
+swiftc -O -o wacom-pressure-helper main.swift PressureCore.swift
 ```
 
 Contributions welcome — especially testing on other tablets and Macs.

@@ -37,7 +37,7 @@ if [ ! -f "$DLL" ]; then
 fi
 if [ ! -x "$HELPER" ]; then
   echo "Note: helper binary not found; attempting to build it..."
-  ( cd "$REPO/wacom-helper" && swiftc -O -o wacom-pressure-helper main.swift ) \
+  ( cd "$REPO/wacom-helper" && swiftc -O -o wacom-pressure-helper main.swift PressureCore.swift ) \
     || { echo "ERROR: could not build the helper (needs Xcode command-line tools)."; exit 1; }
 fi
 

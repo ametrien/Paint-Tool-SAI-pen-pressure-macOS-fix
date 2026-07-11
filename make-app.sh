@@ -14,7 +14,7 @@ VERSION="${VERSION:-0.0.0-dev}"
 echo "Version: $VERSION"
 
 echo "Building helper (with --app support)..."
-( cd "$REPO/wacom-helper" && swiftc -O -o wacom-pressure-helper main.swift )
+( cd "$REPO/wacom-helper" && swiftc -O -o wacom-pressure-helper main.swift PressureCore.swift )
 
 echo "Assembling bundle..."
 rm -rf "$APP"
