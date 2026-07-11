@@ -1,7 +1,7 @@
 # SAI Pen Pressure on macOS
 
 [![build](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/actions/workflows/build.yml/badge.svg)](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/actions/workflows/build.yml)
-[![release](https://img.shields.io/github/v/release/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix)](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/releases/latest)
+[![release](https://img.shields.io/github/v/release/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix?include_prereleases&sort=semver)](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/releases/latest)
 [![downloads](https://img.shields.io/github/downloads/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/total)](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/releases)
 [![license](https://img.shields.io/github/license/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix)](LICENSE)
 
@@ -239,3 +239,15 @@ swiftc -O -o wacom-pressure-helper main.swift PressureCore.swift
 ```
 
 Contributions welcome — especially testing on other tablets and Macs.
+
+---
+
+## License & attribution
+
+This project (the pressure-bridge code — `wintab32.dll` source, the macOS helper, the
+installer and documentation) is released under the **[MIT License](LICENSE)**.
+
+**PaintTool SAI** is proprietary software by SYSTEMAX Software Development (Koji Komatsu).
+This project does **not** include — and must never include — SAI itself, its installer, or
+any license certificate. You obtain those from <https://www.systemax.jp/en/sai/> yourself.
+The MIT license here covers only the bridge code in this repository.

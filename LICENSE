@@ -19,12 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-Note: PaintTool SAI is proprietary software by SYSTEMAX Software Development
-(Koji Komatsu). This project does NOT include, and must never include, SAI
-itself, its installer, or any license certificate — users obtain those from
-https://www.systemax.jp/en/sai/ themselves. This license covers only the
-pressure-bridge code in this repository (wintab32.dll source, the macOS
-helper, installer and documentation).
