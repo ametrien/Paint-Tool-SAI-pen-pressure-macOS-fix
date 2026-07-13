@@ -6,6 +6,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
 ## [Unreleased]
 
 ### Added
+- **Wake SAI** — one-key recovery for the Wine app-switch freeze: **⌃⌥Space** (global
+  hotkey), a **🖊 menu-bar item**, and a setup-window button. Finds the exact process
+  that owns SAI's on-screen window (via `CGWindowList`) and hides+re-activates it — the
+  programmatic equivalent of the manual Space-swipe. No new permission. Also auto-wakes
+  SAI when you return to it via Cmd-Tab.
 - **KNOWN_ISSUES.md** documenting the pen-vs-menu and Wine focus quirks in full —
   cause, what we tried, what didn't work, and the workaround for each.
 - `WT_NO_HOVER=1` diagnostic env flag on the helper (streams presses only, no hover)
