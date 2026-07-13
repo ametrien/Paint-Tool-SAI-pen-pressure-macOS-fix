@@ -20,6 +20,7 @@ import AppKit
 import CoreGraphics
 import Foundation
 import IOKit.hid       // IOHIDCheckAccess/RequestAccess — live Input-Monitoring status
+import Carbon.HIToolbox   // RegisterEventHotKey — global "wake SAI" hotkey (no permission needed)
 
 // --version: print the build's version and exit (useful in bug reports).
 // Packaged app: the version make-app.sh stamped from the git tag. Bare dev
@@ -98,6 +99,17 @@ func osa(_ src: String) -> String? {
     return (s?.isEmpty ?? true) ? nil : s
 }
 func alertUser(_ msg: String) { _ = osa("display dialog \(msg.debugDescription) buttons {\"OK\"} with icon note") }
+
+// Optional diagnostic log for the "wake SAI" feature. Off unless WT_WAKELOG is
+// set, so the release doesn't write to /tmp on every keypress.
+let wakeLogOn = ProcessInfo.processInfo.environment["WT_WAKELOG"] != nil
+func wlog(_ s: String) {
+    guard wakeLogOn else { return }
+    let line = "\(Date()) \(s)\n"
+    let path = "/tmp/sai-wake.log"
+    if let h = FileHandle(forWritingAtPath: path) { h.seekToEndOfFile(); h.write(line.data(using: .utf8)!); try? h.close() }
+    else { try? line.write(toFile: path, atomically: true, encoding: .utf8) }
+}
 
 @discardableResult
 func runProc(_ exe: String, _ args: [String], env: [String: String] = [:], wait: Bool = true) -> Process {
@@ -501,6 +513,132 @@ final class SetupController: NSObject, NSApplicationDelegate {
         // is being interacted with (plain .default timers can stall).
         let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in self?.refresh() }
         RunLoop.main.add(t, forMode: .common)
+
+        // AUTO-ACTIVATE: when the Wine app comes to the foreground, force its
+        // windows to become key. Under Wine on macOS the window often comes back
+        // "greyed"/inactive at the Win32 level after an app switch, so SAI eats
+        // your first click (its WM_MOUSEACTIVATE handler returns MA_NOACTIVATEANDEAT).
+        // Re-activating here is what the manual Space-swipe does — it makes the
+        // window key up front, so the click isn't wasted. Set WT_AUTOACTIVATE=0
+        // to disable. (Needs no extra permission — plain NSRunningApplication API.)
+        if ProcessInfo.processInfo.environment["WT_AUTOACTIVATE"] != "0" {
+            NSWorkspace.shared.notificationCenter.addObserver(
+                self, selector: #selector(appActivated(_:)),
+                name: NSWorkspace.didActivateApplicationNotification, object: nil)
+        }
+
+        // Menu-bar rescue: a always-available "Wake SAI" button. If SAI ever comes
+        // back "stuck"/greyed after an app switch, one click here forces a full
+        // re-activation (what the 3-finger Space-swipe does) without switching
+        // apps. Lives in the menu bar so it's reachable even while SAI is frontmost.
+        setUpStatusItem()
+        setUpWakeHotKey()
+    }
+
+    // Global hotkey for the wake action: Control-Option-Space. Works even while
+    // SAI is frontmost, no permission needed (Carbon RegisterEventHotKey). Plain
+    // Space can't be used — it would swallow the spacebar everywhere and clash
+    // with SAI's own Space = pan.
+    var hotKeyRef: EventHotKeyRef?
+    func setUpWakeHotKey() {
+        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        let ih = InstallEventHandler(GetApplicationEventTarget(), { (_, _, userData) -> OSStatus in
+            if let ud = userData {
+                let c = Unmanaged<SetupController>.fromOpaque(ud).takeUnretainedValue()
+                wlog("hotkey fired")
+                DispatchQueue.main.async { c.wakeSAI() }
+            }
+            return noErr
+        }, 1, &spec, Unmanaged.passUnretained(self).toOpaque(), nil)
+        let id = EventHotKeyID(signature: 0x53414950 /* 'SAIP' */, id: 1)
+        let rk = RegisterEventHotKey(UInt32(kVK_Space), UInt32(controlKey | optionKey), id,
+                                     GetApplicationEventTarget(), 0, &hotKeyRef)
+        wlog("setUpWakeHotKey: InstallEventHandler=\(ih) RegisterEventHotKey=\(rk) (0 = ok)")
+    }
+
+    // Find the running Wine/SAI app (the process SAI runs inside).
+    func wineRunningApp() -> NSRunningApplication? {
+        NSWorkspace.shared.runningApplications.first { app in
+            guard app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return false }
+            let hay = "\(app.bundleIdentifier ?? "") \(app.localizedName ?? "") \(app.executableURL?.path ?? "")".lowercased()
+            return hay.contains("wine") || hay.contains("sai")
+        }
+    }
+
+    // Force SAI's window fully active again. Hiding then re-activating the app is
+    // a full activation cycle — the strongest, permission-free equivalent of the
+    // Space-swipe — so a "stuck"/greyed window becomes key and takes clicks again.
+    // Find the process that owns SAI's biggest ON-SCREEN window. Wine runs as
+    // several processes; only one owns the visible window we need to wake.
+    // CGWindowList gives owner name/pid/bounds with NO permission (only window
+    // TITLES need screen-recording, which we don't read).
+    func saiWindowOwnerPID() -> pid_t {
+        let list = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? []
+        var bestPid: pid_t = 0, bestArea = -1
+        for w in list {
+            let owner = (w[kCGWindowOwnerName as String] as? String ?? "").lowercased()
+            guard owner.contains("wine") || owner.contains("sai") else { continue }
+            let layer = w[kCGWindowLayer as String] as? Int ?? 0
+            let b = w[kCGWindowBounds as String] as? [String: CGFloat] ?? [:]
+            let area = Int((b["Width"] ?? 0) * (b["Height"] ?? 0))
+            let pid = w[kCGWindowOwnerPID as String] as? Int ?? 0
+            wlog("  win owner=\(owner) pid=\(pid) layer=\(layer) \(Int(b["Width"] ?? 0))x\(Int(b["Height"] ?? 0))")
+            if layer == 0 && area > bestArea { bestArea = area; bestPid = pid_t(pid) }
+        }
+        return bestPid
+    }
+
+    @objc func wakeSAI() {
+        wlog("wakeSAI called")
+        let ownerPid = saiWindowOwnerPID()
+        wlog("  SAI window owner pid=\(ownerPid)")
+        let app = (ownerPid != 0 ? NSRunningApplication(processIdentifier: ownerPid) : nil) ?? wineRunningApp()
+        guard let app = app else { wlog("  -> NO app to target"); NSSound.beep(); return }
+        wlog("  -> targeting pid=\(app.processIdentifier) name=\(app.localizedName ?? "?"); hide+reactivate")
+        app.hide()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            app.unhide()
+            app.activate(options: [.activateAllWindows])
+            wlog("  -> hid+reactivated pid=\(app.processIdentifier)")
+        }
+    }
+
+    var lastReactivate = Date.distantPast
+    @objc func appActivated(_ note: Notification) {
+        guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+              app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
+        let hay = "\(app.bundleIdentifier ?? "") \(app.localizedName ?? "") \(app.executableURL?.path ?? "")".lowercased()
+        guard hay.contains("wine") || hay.contains("sai") else { return }
+        // throttle so we don't fight a normal activation into a loop
+        guard Date().timeIntervalSince(lastReactivate) > 0.5 else { return }
+        lastReactivate = Date()
+        // a moment later, force ALL of Wine's windows fully forward/key
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            app.activate(options: [.activateAllWindows])
+        }
+    }
+
+    var statusItem: NSStatusItem?
+    func setUpStatusItem() {
+        let si = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        si.button?.title = "🖊"
+        si.button?.toolTip = "SAI Pen Pressure"
+        let menu = NSMenu()
+        let wake = NSMenuItem(title: "Wake SAI window (if stuck)   ⌃⌥Space", action: #selector(wakeSAI), keyEquivalent: "")
+        wake.target = self
+        menu.addItem(wake)
+        let show = NSMenuItem(title: "Open Setup window", action: #selector(showSetupWindow), keyEquivalent: "")
+        show.target = self
+        menu.addItem(show)
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        si.menu = menu
+        statusItem = si
+    }
+
+    @objc func showSetupWindow() {
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     func applicationDidBecomeActive(_ note: Notification) { refresh() }   // re-check when refocused
@@ -555,9 +693,15 @@ final class SetupController: NSObject, NSApplicationDelegate {
         launchBtn = NSButton(title: "Launch SAI with Pressure", target: self, action: #selector(launchTapped))
         launchBtn.bezelStyle = .rounded; launchBtn.keyEquivalent = "\r"; launchBtn.controlSize = .large
         content.addArrangedSubview(launchBtn)
-        content.addArrangedSubview(lbl("After granting a permission the first time, macOS may ask you to reopen the app.", 10, color: .tertiaryLabelColor))
 
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 400),
+        // Rescue button (mirrors the menu-bar "🖊 → Wake SAI"): if SAI comes back
+        // stuck/greyed after an app switch, force a full re-activation.
+        let wakeBtn = NSButton(title: "Wake SAI window (if stuck)", target: self, action: #selector(wakeSAI))
+        wakeBtn.bezelStyle = .rounded
+        content.addArrangedSubview(wakeBtn)
+        content.addArrangedSubview(lbl("Also on the 🖊 menu-bar icon, or press ⌃⌥Space (Control-Option-Space) anytime.", 10, color: .tertiaryLabelColor))
+
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 440),
                           styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "SAI Pen Pressure"
         window.contentView = content

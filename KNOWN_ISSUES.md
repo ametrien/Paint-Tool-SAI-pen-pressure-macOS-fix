@@ -76,9 +76,18 @@ pressure bridge.
 - **"Update Wine":** already on the newest Gcenx build (**wine-11.10 Staging**). Later
   mainline Wine reworked focus handling; a future Gcenx build may include the fix.
 
-**Workaround.** Switch to a **different Space and back** (three-finger swipe left/right), or
-Cmd-Tab to another app and click SAI's window body — this forces macOS to fully re-activate
-the window. (We're exploring automating this "bounce" in the helper so it's invisible.)
+**Fix (one key).** Press **⌃⌥Space** (Control-Option-Space) — or click the **🖊 menu-bar icon →
+*Wake SAI window*** (also a button in the setup window). This forces a full re-activation of
+SAI's window and it takes input again immediately. No permission needed.
+
+How it works: the helper finds the exact process that owns SAI's on-screen window (via
+`CGWindowList` — Wine runs as several processes, and only one owns the visible window) and
+hides + re-activates it, which is the programmatic equivalent of the manual Space-swipe. The
+earlier naive attempt (activating "a" Wine process, or the whole app) did nothing because it
+poked the wrong process. Returning via **Cmd-Tab** also auto-wakes it (the helper re-activates
+Wine when it comes to the foreground).
+
+**Manual fallback.** Switch to a different Space and back (three-finger swipe left/right).
 
 *Sources: [Wine winemac.drv source](https://github.com/wine-mirror/wine/blob/master/dlls/winemac.drv/macdrv_main.c),
 [winemac input-loss report](https://github.com/Sikarugir-App/Sikarugir/issues/237).*
