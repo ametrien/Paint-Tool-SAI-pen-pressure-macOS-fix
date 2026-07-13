@@ -54,8 +54,7 @@ Starting with nothing but a Mac and a tablet? Follow these in order (~15 min, mo
 5. **Follow the setup window.** It checks everything and fixes each item:
    - **Install Wine** if you don't have it (downloads it, with progress) →
    - **Choose** your SAI folder from step 2 →
-   - **Grant** *Input Monitoring* (and optionally *Accessibility* for Cmd-shortcuts); reopen the
-     app if macOS asks →
+   - **Grant** *Input Monitoring* (the only permission needed); reopen the app if macOS asks →
    - click **Launch SAI with Pressure**.
 6. **Turn on WinTab in SAI:** Others → Options → **Pen Tablet** → **Use WinTab API**, then
    relaunch SAI (reopen the app).
@@ -104,10 +103,9 @@ it all together.
    Wine prefix and installs the bridge.
 3. **Grant Input Monitoring.** On first launch the app asks for **Input Monitoring** — turn on
    **"SAI Pen Pressure"** under System Settings → **Privacy & Security**. This is what reads your
-   tablet's pressure (required).
-   - **Accessibility is optional** — grant it *only* if you want the Cmd→Ctrl shortcut remap, by
-     clicking that row's **Grant…** button in the setup window. Pressure works fine without it.
-4. **⚠️ Quit and reopen the app.** macOS only applies these permissions on a **fresh launch** —
+   tablet's pressure, and it's the **only** permission the app needs. (Mac-style **Cmd+Z / Cmd+S**
+   etc. are handled by Wine itself — no Accessibility permission required.)
+4. **⚠️ Quit and reopen the app.** macOS only applies this permission on a **fresh launch** —
    the first run *won't have pressure* until you restart the app. You only do this once; after
    that, double-clicking the app just works.
 
@@ -145,13 +143,10 @@ here in this repo. Don't run tools you can't inspect.
    DLL override, and generates your personal one-click launcher. It will ask where your SAI
    folder is (or set `SAI2_SRC=/path/to/sai2-folder ./install.sh`).
 
-4. **Grant permissions.** System Settings → **Privacy & Security** → grant your terminal app
-   (Terminal / iTerm) **both**:
-   - **Accessibility**
-   - **Input Monitoring**
-
-   Then fully quit and reopen the terminal. (The helper reads tablet events through these; it
-   captures nothing without them.)
+4. **Grant permission.** System Settings → **Privacy & Security** → grant your terminal app
+   (Terminal / iTerm) **Input Monitoring**, then fully quit and reopen the terminal. (That's the
+   only permission needed; the helper captures nothing without it. Cmd→Ctrl shortcuts are handled
+   by Wine, so no Accessibility permission is required.)
 
 5. **Add your license** (to be able to save): drop your `sai-*.slc` file into the prefix's SAI
    folder — the installer prints the exact path — and restart SAI. SAI reads the license only

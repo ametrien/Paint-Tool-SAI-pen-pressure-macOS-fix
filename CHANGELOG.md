@@ -24,8 +24,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
   a GitHub Release.
 
 ### Changed
-- Setup wizard only auto-prompts for **Input Monitoring** (required);
-  **Accessibility** is optional and prompted only via its own Grant button.
+- **Cmd→Ctrl shortcuts now handled by Wine** (`LeftCommandIsCtrl` registry key),
+  not a CGEventTap in the helper. This fixes the remap producing wrong shortcuts
+  (#7) **and removes the Accessibility permission entirely** — the app now needs
+  only Input Monitoring. The installer/app set the key automatically on launch.
+  Closes #5, #7. (The old event-tap remap + `shouldRemapKey` logic were removed.)
+- Setup wizard now has a single permission row (**Input Monitoring**); the
+  optional Accessibility row is gone.
 - Specific, actionable error messages when the chosen SAI folder is missing,
   has no `sai2.exe`, or the copy into the Wine prefix fails.
 - Pure logic extracted into `wacom-helper/PressureCore.swift` and
