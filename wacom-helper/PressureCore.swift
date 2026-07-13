@@ -40,14 +40,6 @@ enum PressureCore {
         inProximity && lastPressure == 0 && secondsSinceLastSend > 0.05
     }
 
-    /// Cmd->Ctrl remap decision for a keyDown/keyUp: only allowlisted keys,
-    /// only while SAI is frontmost, and only when Cmd is actually held.
-    /// Everything else (incl. Cmd+Tab / Cmd+Space / Cmd+Q) passes through.
-    static func shouldRemapKey(keycode: Int64, hasCommand: Bool,
-                               saiFrontmost: Bool, allowlist: Set<Int64>) -> Bool {
-        hasCommand && saiFrontmost && allowlist.contains(keycode)
-    }
-
     /// Union of all display bounds = the full virtual desktop, in the global
     /// top-left-origin space CGEvent.location uses. The pen position is
     /// reported within THIS combined space so a 2nd monitor maps correctly

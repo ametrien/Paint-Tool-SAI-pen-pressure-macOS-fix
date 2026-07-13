@@ -12,8 +12,9 @@
 //
 // Build:  swiftc -O -o wacom-pressure-helper main.swift
 // Run:    ./wacom-pressure-helper   (from Terminal.app, NOT Claude Code)
-// Needs:  System Settings → Privacy & Security → Accessibility AND
-//         Input Monitoring, both granted to the terminal that runs this.
+// Needs:  System Settings → Privacy & Security → Input Monitoring, granted to
+//         the terminal that runs this. (No Accessibility needed — Cmd->Ctrl is
+//         handled by Wine.)
 
 import AppKit
 import CoreGraphics
@@ -58,7 +59,7 @@ let noHover = ProcessInfo.processInfo.environment["WT_NO_HOVER"] != nil
 // First run: pick the SAI folder, create the Wine prefix, install our DLL.
 // Every run: launch SAI alongside the pressure engine; quit when SAI closes.
 // Run from a terminal WITHOUT --app and none of this happens (dev mode).
-// Permissions (Accessibility / Input Monitoring) attach to the .app itself.
+// The Input Monitoring permission attaches to the .app itself.
 // ============================================================================
 // App mode when launched as the .app bundle (its main executable is THIS binary
 // directly — no launcher script, so downloaded/quarantined apps still open) or
@@ -146,6 +147,20 @@ func ensureSetup(_ saiSrc: String, _ wine: String) -> Bool {
                    "/t", "REG_SZ", "/d", "native,builtin", "/f"], env: env)
     return FileManager.default.fileExists(atPath: saiExe)
 }
+
+// Mac-friendly shortcuts: make WINE map Command -> Control (undo/redo/save/etc.)
+// itself, inside Wine apps only, at the driver level. This replaces an earlier
+// CGEventTap-based remap that synthesized wrong shortcuts and needed the
+// Accessibility permission. Idempotent + fast, so we run it on EVERY launch —
+// existing prefixes (set up before this feature) get the keys too. Cmd+Tab /
+// Cmd+Q etc. are unaffected (those never reach Wine).
+func applyWineShortcutRemap(_ wine: String) {
+    let env = ["WINEPREFIX": appPrefix, "WINEDEBUG": "-all"]
+    for key in ["LeftCommandIsCtrl", "RightCommandIsCtrl"] {
+        runProc(wine, ["reg", "add", "HKCU\\Software\\Wine\\Mac Driver",
+                       "/v", key, "/t", "REG_SZ", "/d", "Y", "/f"], env: env)
+    }
+}
 var g_wine = ""   // resolved during setup; used to launch SAI after the tap is granted
 
 // SETUP ONLY (runs before the pressure tap): resolve Wine, pick the SAI folder,
@@ -180,6 +195,7 @@ func runAppSetup() {
 // LAUNCH (runs only after the pressure tap is active): start SAI; quit the app
 // when SAI closes.
 func launchSAIApp() {
+    applyWineShortcutRemap(g_wine)          // Cmd->Ctrl via Wine (every launch; idempotent)
     let pf = "\(appPrefix)/drive_c/wt_pressure.txt"
     try? "0".write(toFile: pf, atomically: true, encoding: .ascii)
     let p = Process()
@@ -243,7 +259,6 @@ func sendUDP(_ line: String) {
 var seq = 0
 var lastKeyP = -1, lastKeyX = Int.min, lastKeyY = Int.min
 var gTap: CFMachPort?
-var gKeyTap: CFMachPort?
 // KEEPALIVE state: while the pen is in proximity we resend the last sample at a
 // low rate even if it hasn't moved, so SAI keeps thinking a pen is present and
 // keeps the OS arrow cursor hidden (it flickered back during quiet gaps). Cleared
@@ -328,89 +343,13 @@ let tapCallback: CGEventTapCallBack = { _, type, event, _ in
     return Unmanaged.passUnretained(event)
 }
 
-// ============================================================================
-// Cmd -> Ctrl keybinding remap (Mac-friendliness layer)
-// While SAI is the frontmost app, rewrite Cmd+<key> into Ctrl+<key> for the
-// shortcuts SAI expects (SAI uses Windows Ctrl-based shortcuts). Everywhere
-// else, and for keys not in the allowlist, events pass through untouched.
-//
-// TOGGLE (source, for now): set remapCmdToCtrl = false to disable entirely.
-// Edit remapKeys to change which shortcuts are remapped.
-// ============================================================================
-let remapCmdToCtrl = true
-let remapKeys: Set<Int64> = [
-    6,   // Z  – undo
-    16,  // Y  – redo
-    7,   // X  – cut / swap colors
-    8,   // C  – copy
-    9,   // V  – paste
-    0,   // A  – select all
-    2,   // D  – deselect
-    1,   // S  – save
-    45,  // N  – new
-    31,  // O  – open
-    14,  // E
-    17,  // T
-    3,   // F
-    5,   // G
-    32,  // U
-    33,  // [  – brush size down
-    30,  // ]  – brush size up
-]
-// NOT remapped (stay as macOS shortcuts): Q/W/H/M (quit/close/hide/minimise),
-// Tab/Space (app switch / Spotlight), comma, backtick, etc.
-
-func isSAIFrontmost() -> Bool {
-    guard let app = NSWorkspace.shared.frontmostApplication else { return false }
-    let hay = [(app.bundleIdentifier ?? ""), (app.localizedName ?? ""),
-               (app.executableURL?.path ?? "")].joined(separator: " ").lowercased()
-    return hay.contains("wine") || hay.contains("sai")
-}
-
-let kVK_Command = Int64(55), kVK_RightCommand = Int64(54), kVK_Control = Int64(59)
-
-let keyCallback: CGEventTapCallBack = { _, type, event, _ in
-    if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-        if let t = gKeyTap { CGEvent.tapEnable(tap: t, enable: true) }
-        return Unmanaged.passUnretained(event)
-    }
-
-    // The Cmd MODIFIER KEY itself, remapped to Control while SAI is frontmost —
-    // so Wine sees a clean Control held (not the Windows key), and every
-    // subsequent shortcut is a real Ctrl+<key>. Without this, Wine kept seeing
-    // Cmd held and combined it with our rewritten key -> wrong shortcut.
-    if type == .flagsChanged {
-        let kc = event.getIntegerValueField(.keyboardEventKeycode)
-        guard remapCmdToCtrl, (kc == kVK_Command || kc == kVK_RightCommand), isSAIFrontmost() else {
-            return Unmanaged.passUnretained(event)
-        }
-        event.setIntegerValueField(.keyboardEventKeycode, value: kVK_Control)
-        var f = event.flags
-        if f.contains(.maskCommand) { f.remove(.maskCommand); f.insert(.maskControl) }
-        event.flags = f
-        return Unmanaged.passUnretained(event)
-    }
-
-    // keyDown / keyUp: for allowlisted keys pressed with Cmd, swap the modifier
-    // flag Cmd -> Ctrl (Shift/Option preserved). Non-allowlisted keys (incl.
-    // Cmd+Tab / Cmd+Space / Cmd+Q) pass through untouched. Decision logic is
-    // PressureCore.shouldRemapKey (unit-tested).
-    // (cheap checks first: don't query the frontmost app for every keystroke)
-    guard remapCmdToCtrl, event.flags.contains(.maskCommand) else {
-        return Unmanaged.passUnretained(event)
-    }
-    let kc = event.getIntegerValueField(.keyboardEventKeycode)
-    guard remapKeys.contains(kc),
-          PressureCore.shouldRemapKey(keycode: kc, hasCommand: true,
-                                      saiFrontmost: isSAIFrontmost(), allowlist: remapKeys) else {
-        return Unmanaged.passUnretained(event)
-    }
-    var flags = event.flags
-    flags.remove(.maskCommand)
-    flags.insert(.maskControl)
-    event.flags = flags
-    return Unmanaged.passUnretained(event)
-}
+// NOTE: Cmd->Ctrl shortcut remapping (undo/redo/save/etc.) is handled by WINE
+// ITSELF, not this helper. ensureSetup() writes LeftCommandIsCtrl/RightCommandIsCtrl
+// into the prefix's "Mac Driver" registry, so winemac.drv maps Command->Control
+// only inside Wine apps, at the driver level. That's cleaner than synthesizing
+// keyboard events (which produced wrong shortcuts — SAI saw a bare key, not
+// Ctrl+key) AND it needs NO Accessibility permission. Cmd+Tab / Cmd+Q etc. still
+// behave as normal macOS shortcuts. See the project's issue #5 / #7.
 
 // virtual-desktop bounds now + on every display change (monitor plug/unplug)
 refreshVirtualBounds()
@@ -437,19 +376,6 @@ func startPressureEngine() -> Bool {
     let kaTimer = CFRunLoopTimerCreateWithHandler(nil, CFAbsoluteTimeGetCurrent() + 0.04, 0.04, 0, 0) { _ in keepAlive() }
     CFRunLoopAddTimer(CFRunLoopGetCurrent(), kaTimer, .commonModes)
 
-    if remapCmdToCtrl {
-        let keyMask: CGEventMask =
-            (CGEventMask(1) << CGEventType.keyDown.rawValue) |
-            (CGEventMask(1) << CGEventType.keyUp.rawValue)   |
-            (CGEventMask(1) << CGEventType.flagsChanged.rawValue)
-        if let keyTap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
-            eventsOfInterest: keyMask, callback: keyCallback, userInfo: nil) {
-            gKeyTap = keyTap
-            CFRunLoopAddSource(CFRunLoopGetCurrent(), CFMachPortCreateRunLoopSource(kCFAllocatorDefault, keyTap, 0), .commonModes)
-            CGEvent.tapEnable(tap: keyTap, enable: true)
-        }
-    }
     writeFile("0")                      // start pen-up
     return true
 }
@@ -469,10 +395,6 @@ func requestInputMonitoring() {
     _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)     // shows the system prompt
     NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
 }
-func requestAccessibility() {
-    _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
-    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
-}
 func installWineViaTerminal() {
     guard let sh = Bundle.main.resourcePath.map({ "\($0)/install-wine.sh" }), FileManager.default.fileExists(atPath: sh) else {
         NSWorkspace.shared.open(URL(string: "https://github.com/Gcenx/macOS_Wine_builds/releases")!); return
@@ -487,11 +409,8 @@ func saiReady() -> Bool { savedSAIPath() != nil }
 // ============================================================================
 if !isAppMode {
     // Dev / terminal mode: start the engine right away and run.
-    if !AXIsProcessTrusted() {
-        print("WARNING: not trusted for Accessibility — grant this terminal Accessibility + Input Monitoring.")
-    }
     if !startPressureEngine() {
-        print("ERROR: tap failed — grant this terminal Input Monitoring (+ Accessibility), then re-run.")
+        print("ERROR: tap failed — grant this terminal Input Monitoring, then re-run.")
         exit(1)
     }
     signal(SIGINT) { _ in try? "0".write(toFile: outPath, atomically: true, encoding: .ascii); exit(0) }
@@ -569,17 +488,14 @@ final class SetupController: NSObject, NSApplicationDelegate {
                 keepButton: true),
             Req(title: "Input Monitoring permission", detail: "lets the app read your tablet's pressure", fixTitle: "Grant…",
                 ok: { inputMonitoringGranted() }, fix: { requestInputMonitoring() }, required: true),
-            Req(title: "Accessibility permission (optional)", detail: "only for Cmd→Ctrl shortcut remapping", fixTitle: "Grant…",
-                ok: { AXIsProcessTrusted() }, fix: { requestAccessibility() }, required: false),
         ]
         buildWindow()
         refresh()
-        // On launch, actively ask ONLY for Input Monitoring — the permission
-        // pressure actually needs — via the native prompt (with an "Open System
-        // Settings" button), so the user doesn't add the app manually. No-op if
-        // already granted. Accessibility is OPTIONAL (only for the Cmd→Ctrl
-        // remap), so we do NOT prompt for it here — the user grants it only if
-        // they click that row's "Grant…" button.
+        // On launch, actively ask for Input Monitoring — the ONLY permission this
+        // app needs — via the native prompt (with an "Open System Settings"
+        // button), so the user doesn't add the app manually. No-op if already
+        // granted. (Cmd->Ctrl shortcuts are handled by Wine, so there's no
+        // Accessibility permission to ask for anymore.)
         if !inputMonitoringGranted() { _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent) }
         // .common mode so the checklist keeps refreshing even while the window
         // is being interacted with (plain .default timers can stall).
@@ -641,7 +557,7 @@ final class SetupController: NSObject, NSApplicationDelegate {
         content.addArrangedSubview(launchBtn)
         content.addArrangedSubview(lbl("After granting a permission the first time, macOS may ask you to reopen the app.", 10, color: .tertiaryLabelColor))
 
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 448),
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 400),
                           styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "SAI Pen Pressure"
         window.contentView = content

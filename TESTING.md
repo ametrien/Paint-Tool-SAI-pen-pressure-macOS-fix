@@ -73,7 +73,8 @@ connection (USB/BT), SAI version.** Tick each item ✅/❌ and note anything odd
 - [ ] With a 2nd display, there's a **single** cursor that lands where the pen is on both screens.
 
 ### Shortcuts / saving
-- [ ] With Accessibility granted: **Cmd+Z undoes**, Cmd+Y / Cmd+Shift+Z redoes, only inside SAI.
+- [ ] **Cmd+Z undoes**, Cmd+Y / Cmd+Shift+Z redoes, Cmd+S saves — inside SAI (via Wine's
+      built-in Cmd→Ctrl; no Accessibility permission needed).
 - [ ] **Cmd+Tab still switches apps** (not remapped).
 - [ ] With a license in the prefix's `SAI2` folder: **saving works**.
 
