@@ -45,6 +45,10 @@ static void wtc_map_to_out(const WTC_SAMPLE *s,
                            int32_t oX, int32_t oY, int32_t eX, int32_t eY,
                            int32_t in_ext,
                            int32_t *outX, int32_t *outY) {
+    /* Defensive: never divide by a zero extent. Callers only pass has_pos
+     * samples (w>0, h>0), but guard the pure function anyway — a stray w/h of 0
+     * would otherwise be a divide-by-zero crash. Degrade to the origin. */
+    if (s->w <= 0 || s->h <= 0) { *outX = oX; *outY = oY; return; }
     if (!eX) eX = in_ext;
     if (!eY) eY = in_ext;
     *outX = oX + (int32_t)((int64_t)s->x * eX / s->w);
