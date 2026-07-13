@@ -72,6 +72,10 @@ echo "Installing wintab32.dll + override..."
 mkdir -p "$PREFIX/drive_c/windows/system32"
 cp "$DLL" "$PREFIX/drive_c/windows/system32/wintab32.dll"
 "$WINE" reg add "HKCU\\Software\\Wine\\DllOverrides" /v wintab32 /t REG_SZ /d "native,builtin" /f >/dev/null 2>&1
+# Mac-friendly shortcuts: let Wine map Command -> Control inside Wine apps
+# (undo/redo/save/etc.). Driver-level, no Accessibility permission needed.
+"$WINE" reg add "HKCU\\Software\\Wine\\Mac Driver" /v LeftCommandIsCtrl  /t REG_SZ /d Y /f >/dev/null 2>&1
+"$WINE" reg add "HKCU\\Software\\Wine\\Mac Driver" /v RightCommandIsCtrl /t REG_SZ /d Y /f >/dev/null 2>&1
 echo 0 > "$PRESSURE_FILE"
 
 # --- generate a personal one-click launcher ---------------------------------
@@ -101,8 +105,9 @@ cat <<EOF
 
 == Installed. Remaining MANUAL steps ==
 
-1. Permissions: System Settings -> Privacy & Security -> grant your terminal
-   BOTH 'Accessibility' and 'Input Monitoring', then restart the terminal.
+1. Permission: System Settings -> Privacy & Security -> grant your terminal
+   'Input Monitoring', then restart the terminal. (That's the only one needed —
+   Cmd->Ctrl shortcuts are handled by Wine.)
 
 2. License (to save): put your sai-*.slc into:
      $PREFIX/drive_c/SAI2/

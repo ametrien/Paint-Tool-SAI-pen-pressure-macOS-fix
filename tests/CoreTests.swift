@@ -59,16 +59,8 @@ struct CoreTests {
         expect(!PressureCore.keepAliveShouldResend(inProximity: true, lastPressure: 0, secondsSinceLastSend: 0.02),
                "keepalive: not yet idle (<50ms) -> no resend")
 
-        // --- shouldRemapKey ----------------------------------------------------------
-        let allow: Set<Int64> = [6, 16, 1]   // Z, Y, S
-        expect(PressureCore.shouldRemapKey(keycode: 6, hasCommand: true, saiFrontmost: true, allowlist: allow),
-               "remap: Cmd+Z over SAI remaps")
-        expect(!PressureCore.shouldRemapKey(keycode: 6, hasCommand: true, saiFrontmost: false, allowlist: allow),
-               "remap: other app frontmost -> untouched")
-        expect(!PressureCore.shouldRemapKey(keycode: 12, hasCommand: true, saiFrontmost: true, allowlist: allow),
-               "remap: non-allowlisted key (Q) -> untouched")
-        expect(!PressureCore.shouldRemapKey(keycode: 6, hasCommand: false, saiFrontmost: true, allowlist: allow),
-               "remap: no Cmd held -> untouched")
+        // (Cmd->Ctrl remap is now handled by Wine's LeftCommandIsCtrl, not the
+        //  helper, so there's no shouldRemapKey logic to test here anymore.)
 
         // --- virtualUnion ------------------------------------------------------------
         expect(PressureCore.virtualUnion(of: []) == nil, "union: no displays -> nil (caller falls back)")
