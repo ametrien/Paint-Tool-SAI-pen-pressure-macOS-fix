@@ -38,6 +38,13 @@ int main(void) {
            "parse: overshoot clamps to 1023");
     EXPECT(wtc_parse_sample("100 5 5 0 100", &s) == 1 && s.has_pos == 0,
            "parse: zero width -> position ignored (division guard)");
+    EXPECT(wtc_parse_sample("   ", &s) == 0, "parse: whitespace-only rejected");
+    EXPECT(wtc_parse_sample("  300 7 8 640 480", &s) == 1 && s.press == 300 && s.x == 7,
+           "parse: leading whitespace tolerated");
+    EXPECT(wtc_parse_sample("250\n", &s) == 1 && s.press == 250 && s.has_pos == 0,
+           "parse: trailing newline, bare pressure");
+    EXPECT(wtc_parse_sample("100 -50 -20 800 600", &s) == 1 && s.x == -50 && s.y == -20,
+           "parse: negative coords accepted (multi-monitor origins)");
 
     /* --- wtc_map_to_out --------------------------------------------------- */
     int32_t x, y;
@@ -67,6 +74,16 @@ int main(void) {
     WTC_SAMPLE big = { 1, 240000, 120000, 245760, 138240, 1 };
     wtc_map_to_out(&big, 0, 0, 245760, 138240, 32767, &x, &y);
     EXPECT(x == 240000 && y == 120000, "map: large fixed-point values don't overflow");
+
+    /* divide-by-zero guard: w/h of 0 must degrade to the origin, not crash
+     * (UBSan in the test build would trap an actual division by zero). */
+    WTC_SAMPLE zerow = { 512, 100, 200, 0, 800, 1 };
+    x = 999; y = 999;
+    wtc_map_to_out(&zerow, 5, 7, 1000, 800, 32767, &x, &y);
+    EXPECT(x == 5 && y == 7, "map: zero width degrades to origin (no divide-by-zero)");
+    WTC_SAMPLE zeroh = { 512, 100, 200, 800, 0, 1 };
+    wtc_map_to_out(&zeroh, 5, 7, 1000, 800, 32767, &x, &y);
+    EXPECT(x == 5 && y == 7, "map: zero height degrades to origin (no divide-by-zero)");
 
     /* --- wtc_should_post (conflation) -------------------------------------- */
     /* serial=next to assign, fetched=last consumed; window = 3 */

@@ -96,7 +96,7 @@ static BOOL  g_have_ctx;
 static CRITICAL_SECTION g_cs;
 static FILE  *g_log;
 
-static void logf(const char *fmt, ...) {
+static void log_line(const char *fmt, ...) {
     if (!g_log) return;
     va_list ap; va_start(ap, fmt); vfprintf(g_log, fmt, ap); va_end(ap);
     fputc('\n', g_log); fflush(g_log);
@@ -212,7 +212,7 @@ static void emit_sample(const SAMPLE *s) {
 
     int transition = (down != g_was_down);
     if (transition)           /* log tip transitions to investigate stray clicks */
-        logf("PEN %s buttons=%u pk=(%ld,%ld) press=%u t=%lu",
+        log_line("PEN %s buttons=%u pk=(%ld,%ld) press=%u t=%lu",
              down ? "DOWN" : "UP", pk.buttons, (long)pk.x, (long)pk.y, pk.pressure, GetTickCount());
     g_was_down = down;
 
@@ -292,12 +292,12 @@ static DWORD WINAPI producer(LPVOID arg) {
             a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
             a.sin_port = htons(SAMPLE_PORT);
             if (bind(sock, (struct sockaddr*)&a, sizeof(a)) != 0) {
-                logf("producer: UDP bind :%d failed (%d) — file mode only", SAMPLE_PORT, WSAGetLastError());
+                log_line("producer: UDP bind :%d failed (%d) — file mode only", SAMPLE_PORT, WSAGetLastError());
                 closesocket(sock); sock = INVALID_SOCKET;
             } else {
                 DWORD tv = 15;          /* ms; short so pending flush + housekeeping are prompt */
                 setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
-                logf("producer: listening on UDP 127.0.0.1:%d (blocking, immediate post)", SAMPLE_PORT);
+                log_line("producer: listening on UDP 127.0.0.1:%d (blocking, immediate post)", SAMPLE_PORT);
             }
         }
     }
@@ -323,7 +323,7 @@ static DWORD WINAPI producer(LPVOID arg) {
                  * the bottleneck (boxy is its limit); if both high, we can feed
                  * more; if deliver is low, the capture/tap is dropping. */
                 if ((recvCount & 63) == 0)
-                    logf("RATE recv=%lu fetches=%lu gap=%d tick=%lu",
+                    log_line("RATE recv=%lu fetches=%lu gap=%d tick=%lu",
                          recvCount, g_fetch_count, (int)(g_serial - 1 - g_fetched),
                          (unsigned long)GetTickCount());
                 if (lastSeq >= 0 && sq > lastSeq + 1) gaps += (unsigned long)(sq - lastSeq - 1);
@@ -344,7 +344,7 @@ static DWORD WINAPI producer(LPVOID arg) {
         flush_pending();                /* pen still/lifted: deliver the final point */
         if (now - lastBeat > 2000) {
             lastBeat = now;
-            logf("producer: open=%d hwnd=%p posted=%lu recv=%lu gaps=%lu fetched=%u udp=%s",
+            log_line("producer: open=%d hwnd=%p posted=%lu recv=%lu gaps=%lu fetched=%u udp=%s",
                  g_open, g_hwnd, (unsigned long)g_posted, recvCount, gaps, g_fetched,
                  sock == INVALID_SOCKET ? "off" : (now - lastDatagram < 1000 ? "live" : "quiet"));
         }
@@ -357,8 +357,10 @@ static DWORD WINAPI producer(LPVOID arg) {
             static char lastFile[128];
             FILE *f = fopen("C:\\wt_pressure.txt", "rb");
             if (f) {
-                char b[128]; int nb = (int)fread(b, 1, sizeof(b)-1, f); fclose(f);
-                if (nb < 0) nb = 0; b[nb] = 0;
+                char b[128];
+                size_t nb = fread(b, 1, sizeof(b)-1, f);
+                fclose(f);
+                b[nb] = 0;
                 if (strcmp(b, lastFile) != 0) {
                     strcpy(lastFile, b);
                     SAMPLE s;
@@ -374,7 +376,7 @@ static DWORD WINAPI producer(LPVOID arg) {
 /* ---------------- exported WinTab API (only what SAI uses) --------------- */
 
 UINT WINAPI WTInfoW(UINT cat, UINT idx, LPVOID out) {
-    logf("WTInfoW cat=%u idx=%u out=%p", cat, idx, out);
+    log_line("WTInfoW cat=%u idx=%u out=%p", cat, idx, out);
     switch (cat) {
     case 0: return 200;
     case WTI_INTERFACE:
@@ -407,7 +409,7 @@ UINT WINAPI WTInfoW(UINT cat, UINT idx, LPVOID out) {
 }
 
 static void log_ctx(const char *who, const LOGCONTEXTW *lc) {
-    logf("%s: pktData=%#lx pktMode=%#lx moveMask=%#lx opts=%#x msgBase=%#x rate=%u "
+    log_line("%s: pktData=%#lx pktMode=%#lx moveMask=%#lx opts=%#x msgBase=%#x rate=%u "
          "in=(%ld,%ld ext %ld,%ld) out=(%ld,%ld ext %ld,%ld) sys=(%d,%d ext %d,%d) sysMode=%d",
          who, (unsigned long)lc->lcPktData, (unsigned long)lc->lcPktMode,
          (unsigned long)lc->lcMoveMask, lc->lcOptions, lc->lcMsgBase, lc->lcPktRate,
@@ -417,7 +419,7 @@ static void log_ctx(const char *who, const LOGCONTEXTW *lc) {
 }
 
 HANDLE WINAPI WTOpenW(HWND hwnd, LOGCONTEXTW *lc, BOOL enable) {
-    logf("WTOpenW hwnd=%p enable=%d", hwnd, enable);
+    log_line("WTOpenW hwnd=%p enable=%d", hwnd, enable);
     g_hwnd = hwnd;
     g_open = enable ? TRUE : FALSE;
     if (lc) {
@@ -430,7 +432,7 @@ HANDLE WINAPI WTOpenW(HWND hwnd, LOGCONTEXTW *lc, BOOL enable) {
     return (HANDLE)(ULONG_PTR)0xC0FFEE01;
 }
 
-BOOL WINAPI WTClose(HANDLE ctx) { (void)ctx; logf("WTClose"); g_open=FALSE; g_hwnd=NULL; return TRUE; }
+BOOL WINAPI WTClose(HANDLE ctx) { (void)ctx; log_line("WTClose"); g_open=FALSE; g_hwnd=NULL; return TRUE; }
 
 /* SAI polls this to fetch the packet a WT_PACKET message referenced —
  * return the packet MATCHING that serial (from the ring), not just the
@@ -448,20 +450,29 @@ int WINAPI WTPacket(HANDLE ctx, UINT serial, LPVOID buf) {
     LONG n = InterlockedIncrement(&count);
     if (n == 1 || (n & 63) == 0) {      /* log 1st + every 64th fetch */
         DWORD lat = GetTickCount() - g_ring_time[serial % RING_SZ];  /* post->fetch latency */
-        logf("WTPacket #%ld serial=%u x=%ld y=%ld press=%u lat=%lums", n, serial,
+        log_line("WTPacket #%ld serial=%u x=%ld y=%ld press=%u lat=%lums", n, serial,
              (long)pk.x, (long)pk.y, pk.pressure, (unsigned long)lat);
     }
     return 1;
 }
 
-UINT WINAPI WTQueueSizeSet(HANDLE ctx, int n) { logf("WTQueueSizeSet n=%d", n); (void)ctx; (void)n; return 1; }
-BOOL WINAPI WTGetW(HANDLE ctx, LOGCONTEXTW *lc) { logf("WTGetW"); (void)ctx; if(lc) fill_default_context(lc); return TRUE; }
-BOOL WINAPI WTEnable(HANDLE ctx, BOOL enable) { logf("WTEnable enable=%d", enable); (void)ctx; g_open = enable?TRUE:FALSE; return TRUE; }
+UINT WINAPI WTQueueSizeSet(HANDLE ctx, int n) { log_line("WTQueueSizeSet n=%d", n); (void)ctx; (void)n; return 1; }
+BOOL WINAPI WTGetW(HANDLE ctx, LOGCONTEXTW *lc) { log_line("WTGetW"); (void)ctx; if(lc) fill_default_context(lc); return TRUE; }
+BOOL WINAPI WTEnable(HANDLE ctx, BOOL enable) { log_line("WTEnable enable=%d", enable); (void)ctx; g_open = enable?TRUE:FALSE; return TRUE; }
 int  WINAPI WTPacketsGet(HANDLE ctx, int max, LPVOID buf) {
-    logf("WTPacketsGet max=%d", max);
-    (void)ctx; if (max<=0||!buf) return 0;
-    EnterCriticalSection(&g_cs); OURPKT pk=g_last; int have = (read_pressure()>0); LeaveCriticalSection(&g_cs);
-    if (!have) return 0; memcpy(buf,&pk,sizeof(pk)); return 1;
+    log_line("WTPacketsGet max=%d", max);
+    (void)ctx;
+    if (max <= 0 || !buf) return 0;
+    EnterCriticalSection(&g_cs);
+    OURPKT pk = g_last;
+    LeaveCriticalSection(&g_cs);
+    /* read_pressure() does file I/O and only touches g_sample (not g_cs-guarded
+     * state), so keep it OUT of the critical section — don't hold the lock
+     * across blocking I/O. */
+    int have = (read_pressure() > 0);
+    if (!have) return 0;
+    memcpy(buf, &pk, sizeof(pk));
+    return 1;
 }
 
 /* ---- ANSI variants (SAI's "Ver.1 compatible" path may use these) ---------- */
@@ -487,7 +498,7 @@ static void fill_default_context_a(LOGCONTEXTA *lc) {
 }
 
 UINT WINAPI WTInfoA(UINT cat, UINT idx, LPVOID out) {
-    logf("WTInfoA cat=%u idx=%u out=%p", cat, idx, out);
+    log_line("WTInfoA cat=%u idx=%u out=%p", cat, idx, out);
     switch (cat) {
     case 0: return 200;
     case WTI_INTERFACE:
@@ -519,17 +530,17 @@ UINT WINAPI WTInfoA(UINT cat, UINT idx, LPVOID out) {
 }
 
 HANDLE WINAPI WTOpenA(HWND hwnd, LOGCONTEXTA *lc, BOOL enable) {
-    logf("WTOpenA hwnd=%p enable=%d", hwnd, enable);
+    log_line("WTOpenA hwnd=%p enable=%d", hwnd, enable);
     g_hwnd = hwnd;
     g_open = enable ? TRUE : FALSE;
     if (lc) { lc->lcPktData = OUR_PKTDATA; lc->lcMsgBase = WT_DEFBASE; }
     return (HANDLE)(ULONG_PTR)0xC0FFEE01;
 }
 
-BOOL WINAPI WTGetA(HANDLE ctx, LOGCONTEXTA *lc) { logf("WTGetA"); (void)ctx; if(lc) fill_default_context_a(lc); return TRUE; }
-BOOL WINAPI WTSetA(HANDLE ctx, LOGCONTEXTA *lc) { logf("WTSetA"); (void)ctx; (void)lc; return TRUE; }
+BOOL WINAPI WTGetA(HANDLE ctx, LOGCONTEXTA *lc) { log_line("WTGetA"); (void)ctx; if(lc) fill_default_context_a(lc); return TRUE; }
+BOOL WINAPI WTSetA(HANDLE ctx, LOGCONTEXTA *lc) { log_line("WTSetA"); (void)ctx; (void)lc; return TRUE; }
 BOOL WINAPI WTSetW(HANDLE ctx, LOGCONTEXTW *lc) {
-    logf("WTSetW"); (void)ctx;
+    log_line("WTSetW"); (void)ctx;
     if (lc) {
         log_ctx("WTSetW ctx from SAI", lc);
         EnterCriticalSection(&g_cs);
@@ -543,23 +554,23 @@ BOOL WINAPI WTSetW(HANDLE ctx, LOGCONTEXTW *lc) {
  * fails. SAI resolves the whole API up front and aborts with "Windows function
  * call failed" if ANY export is missing — this was the startup crash. -------- */
 
-BOOL WINAPI WTOverlap(HANDLE ctx, BOOL toTop) { logf("WTOverlap %d", toTop); (void)ctx; (void)toTop; return TRUE; }
-BOOL WINAPI WTConfig(HANDLE ctx, HWND hwnd) { logf("WTConfig"); (void)ctx; (void)hwnd; return FALSE; }
-BOOL WINAPI WTExtGet(HANDLE ctx, UINT ext, LPVOID out) { logf("WTExtGet ext=%u", ext); (void)ctx; (void)out; return FALSE; }
-BOOL WINAPI WTExtSet(HANDLE ctx, UINT ext, LPVOID in) { logf("WTExtSet ext=%u", ext); (void)ctx; (void)in; return FALSE; }
-BOOL WINAPI WTSave(HANDLE ctx, LPVOID save) { logf("WTSave"); (void)ctx; (void)save; return FALSE; }
-HANDLE WINAPI WTRestore(HWND hwnd, LPVOID save, BOOL enable) { logf("WTRestore"); (void)hwnd; (void)save; (void)enable; return NULL; }
-int  WINAPI WTPacketsPeek(HANDLE ctx, int max, LPVOID buf) { logf("WTPacketsPeek max=%d", max); return WTPacketsGet(ctx, max, buf); }
-int  WINAPI WTDataGet(HANDLE ctx, UINT b, UINT e, int max, LPVOID buf, LPINT n) { logf("WTDataGet"); (void)ctx;(void)b;(void)e;(void)max;(void)buf; if(n)*n=0; return 0; }
-int  WINAPI WTDataPeek(HANDLE ctx, UINT b, UINT e, int max, LPVOID buf, LPINT n) { logf("WTDataPeek"); (void)ctx;(void)b;(void)e;(void)max;(void)buf; if(n)*n=0; return 0; }
-BOOL WINAPI WTQueuePacketsEx(HANDLE ctx, UINT *o, UINT *n) { logf("WTQueuePacketsEx"); (void)ctx; if(o)*o=0; if(n)*n=0; return FALSE; }
-int  WINAPI WTQueueSizeGet(HANDLE ctx) { logf("WTQueueSizeGet"); (void)ctx; return 32; }
-HANDLE WINAPI WTMgrOpen(HWND hwnd, UINT msgBase) { logf("WTMgrOpen"); (void)hwnd; (void)msgBase; return NULL; }
-BOOL WINAPI WTMgrClose(HANDLE mgr) { logf("WTMgrClose"); (void)mgr; return FALSE; }
-BOOL WINAPI WTMgrContextEnum(HANDLE mgr, LPVOID fn, LPARAM lp) { logf("WTMgrContextEnum"); (void)mgr;(void)fn;(void)lp; return FALSE; }
-HWND WINAPI WTMgrContextOwner(HANDLE mgr, HANDLE ctx) { logf("WTMgrContextOwner"); (void)mgr;(void)ctx; return NULL; }
-HANDLE WINAPI WTMgrDefContext(HANDLE mgr, BOOL sys) { logf("WTMgrDefContext"); (void)mgr;(void)sys; return NULL; }
-HANDLE WINAPI WTMgrDefContextEx(HANDLE mgr, UINT dev, BOOL sys) { logf("WTMgrDefContextEx"); (void)mgr;(void)dev;(void)sys; return NULL; }
+BOOL WINAPI WTOverlap(HANDLE ctx, BOOL toTop) { log_line("WTOverlap %d", toTop); (void)ctx; (void)toTop; return TRUE; }
+BOOL WINAPI WTConfig(HANDLE ctx, HWND hwnd) { log_line("WTConfig"); (void)ctx; (void)hwnd; return FALSE; }
+BOOL WINAPI WTExtGet(HANDLE ctx, UINT ext, LPVOID out) { log_line("WTExtGet ext=%u", ext); (void)ctx; (void)out; return FALSE; }
+BOOL WINAPI WTExtSet(HANDLE ctx, UINT ext, LPVOID in) { log_line("WTExtSet ext=%u", ext); (void)ctx; (void)in; return FALSE; }
+BOOL WINAPI WTSave(HANDLE ctx, LPVOID save) { log_line("WTSave"); (void)ctx; (void)save; return FALSE; }
+HANDLE WINAPI WTRestore(HWND hwnd, LPVOID save, BOOL enable) { log_line("WTRestore"); (void)hwnd; (void)save; (void)enable; return NULL; }
+int  WINAPI WTPacketsPeek(HANDLE ctx, int max, LPVOID buf) { log_line("WTPacketsPeek max=%d", max); return WTPacketsGet(ctx, max, buf); }
+int  WINAPI WTDataGet(HANDLE ctx, UINT b, UINT e, int max, LPVOID buf, LPINT n) { log_line("WTDataGet"); (void)ctx;(void)b;(void)e;(void)max;(void)buf; if(n)*n=0; return 0; }
+int  WINAPI WTDataPeek(HANDLE ctx, UINT b, UINT e, int max, LPVOID buf, LPINT n) { log_line("WTDataPeek"); (void)ctx;(void)b;(void)e;(void)max;(void)buf; if(n)*n=0; return 0; }
+BOOL WINAPI WTQueuePacketsEx(HANDLE ctx, UINT *o, UINT *n) { log_line("WTQueuePacketsEx"); (void)ctx; if(o)*o=0; if(n)*n=0; return FALSE; }
+int  WINAPI WTQueueSizeGet(HANDLE ctx) { log_line("WTQueueSizeGet"); (void)ctx; return 32; }
+HANDLE WINAPI WTMgrOpen(HWND hwnd, UINT msgBase) { log_line("WTMgrOpen"); (void)hwnd; (void)msgBase; return NULL; }
+BOOL WINAPI WTMgrClose(HANDLE mgr) { log_line("WTMgrClose"); (void)mgr; return FALSE; }
+BOOL WINAPI WTMgrContextEnum(HANDLE mgr, LPVOID fn, LPARAM lp) { log_line("WTMgrContextEnum"); (void)mgr;(void)fn;(void)lp; return FALSE; }
+HWND WINAPI WTMgrContextOwner(HANDLE mgr, HANDLE ctx) { log_line("WTMgrContextOwner"); (void)mgr;(void)ctx; return NULL; }
+HANDLE WINAPI WTMgrDefContext(HANDLE mgr, BOOL sys) { log_line("WTMgrDefContext"); (void)mgr;(void)sys; return NULL; }
+HANDLE WINAPI WTMgrDefContextEx(HANDLE mgr, UINT dev, BOOL sys) { log_line("WTMgrDefContextEx"); (void)mgr;(void)dev;(void)sys; return NULL; }
 
 BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID r) {
     (void)h; (void)r;
@@ -572,10 +583,10 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID r) {
         g_virtH = GetSystemMetrics(SM_CYVIRTUALSCREEN);
         if (g_virtW <= 0) g_virtW = g_screenW;
         if (g_virtH <= 0) g_virtH = g_screenH;
-        /* logging is OFF unless WT_DEBUG is set: without a log file, logf() is a
+        /* logging is OFF unless WT_DEBUG is set: without a log file, log_line() is a
          * no-op (g_log stays NULL) so there's zero per-packet fflush overhead. */
         if (getenv("WT_DEBUG")) g_log = fopen("C:\\wtlog.txt", "w");
-        logf("==== OwnTab wintab32.dll loaded; screen %dx%d virtual %dx%d ====",
+        log_line("==== OwnTab wintab32.dll loaded; screen %dx%d virtual %dx%d ====",
              g_screenW, g_screenH, g_virtW, g_virtH);
         CreateThread(NULL, 0, producer, NULL, 0, NULL);
     }
