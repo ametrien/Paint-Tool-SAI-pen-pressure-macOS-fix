@@ -20,7 +20,6 @@ import AppKit
 import CoreGraphics
 import Foundation
 import IOKit.hid       // IOHIDCheckAccess/RequestAccess — live Input-Monitoring status
-import Carbon.HIToolbox   // RegisterEventHotKey — global "wake SAI" hotkey (no permission needed)
 
 // --version: print the build's version and exit (useful in bug reports).
 // Packaged app: the version make-app.sh stamped from the git tag. Bare dev
@@ -326,10 +325,24 @@ func isTabletMouse(_ e: CGEvent) -> Bool {
     return e.getIntegerValueField(.mouseEventSubtype) == 1   // kCGEventMouseSubtypeTabletPoint
 }
 
+// Set by the app's wizard (app mode) to the "wake SAI" action; the event tap
+// calls it when it sees the wake hotkey. nil in dev/terminal mode.
+var g_onWakeHotKey: (() -> Void)?
+
 let tapCallback: CGEventTapCallBack = { _, type, event, _ in
     switch type {
     case .tapDisabledByTimeout, .tapDisabledByUserInput:
         if let t = gTap { CGEvent.tapEnable(tap: t, enable: true) }
+    case .keyDown:
+        // Global "wake SAI" hotkey: ⌃⌥⌘Space. Detected here (listen-only, never
+        // consumed) rather than via Carbon RegisterEventHotKey, which didn't
+        // deliver on this setup. 49 = kVK_Space.
+        if event.getIntegerValueField(.keyboardEventKeycode) == 49 {
+            let f = event.flags
+            if f.contains(.maskControl) && f.contains(.maskAlternate) && f.contains(.maskCommand) {
+                DispatchQueue.main.async { g_onWakeHotKey?() }
+            }
+        }
     case .tabletProximity:
         // pen entering/leaving range drives the keepalive (arrow stays hidden
         // while present, mouse can paint once the pen leaves)
@@ -377,7 +390,8 @@ func startPressureEngine() -> Bool {
         (CGEventMask(1) << CGEventType.leftMouseUp.rawValue)      |
         (CGEventMask(1) << CGEventType.mouseMoved.rawValue)       |
         (CGEventMask(1) << CGEventType.tabletPointer.rawValue)    |
-        (CGEventMask(1) << CGEventType.tabletProximity.rawValue)
+        (CGEventMask(1) << CGEventType.tabletProximity.rawValue)  |
+        (CGEventMask(1) << CGEventType.keyDown.rawValue)              // wake hotkey detection
     guard let tap = CGEvent.tapCreate(
         tap: .cghidEventTap, place: .headInsertEventTap, options: .listenOnly,
         eventsOfInterest: mask, callback: tapCallback, userInfo: nil) else { return false }
@@ -532,28 +546,13 @@ final class SetupController: NSObject, NSApplicationDelegate {
         // re-activation (what the 3-finger Space-swipe does) without switching
         // apps. Lives in the menu bar so it's reachable even while SAI is frontmost.
         setUpStatusItem()
-        setUpWakeHotKey()
-    }
-
-    // Global hotkey for the wake action: Control-Option-Space. Works even while
-    // SAI is frontmost, no permission needed (Carbon RegisterEventHotKey). Plain
-    // Space can't be used — it would swallow the spacebar everywhere and clash
-    // with SAI's own Space = pan.
-    var hotKeyRef: EventHotKeyRef?
-    func setUpWakeHotKey() {
-        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        let ih = InstallEventHandler(GetApplicationEventTarget(), { (_, _, userData) -> OSStatus in
-            if let ud = userData {
-                let c = Unmanaged<SetupController>.fromOpaque(ud).takeUnretainedValue()
-                wlog("hotkey fired")
-                DispatchQueue.main.async { c.wakeSAI() }
-            }
-            return noErr
-        }, 1, &spec, Unmanaged.passUnretained(self).toOpaque(), nil)
-        let id = EventHotKeyID(signature: 0x53414950 /* 'SAIP' */, id: 1)
-        let rk = RegisterEventHotKey(UInt32(kVK_Space), UInt32(controlKey | optionKey), id,
-                                     GetApplicationEventTarget(), 0, &hotKeyRef)
-        wlog("setUpWakeHotKey: InstallEventHandler=\(ih) RegisterEventHotKey=\(rk) (0 = ok)")
+        // The wake HOTKEY (⌃⌥⌘Space) is detected by the pressure event tap (see
+        // g_onWakeHotKey / tapCallback) — the same listen-only tap that reads the
+        // tablet. Carbon's RegisterEventHotKey proved unreliable here (registered
+        // but the event never arrived). The tap uses the Input Monitoring
+        // permission we already have and fires globally, even while SAI is
+        // frontmost. It only OBSERVES the key, so nothing else is affected.
+        g_onWakeHotKey = { [weak self] in self?.wakeSAI() }
     }
 
     // Find the running Wine/SAI app (the process SAI runs inside).
@@ -594,12 +593,19 @@ final class SetupController: NSObject, NSApplicationDelegate {
         wlog("  SAI window owner pid=\(ownerPid)")
         let app = (ownerPid != 0 ? NSRunningApplication(processIdentifier: ownerPid) : nil) ?? wineRunningApp()
         guard let app = app else { wlog("  -> NO app to target"); NSSound.beep(); return }
-        wlog("  -> targeting pid=\(app.processIdentifier) name=\(app.localizedName ?? "?"); hide+reactivate")
-        app.hide()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            app.unhide()
+        // GENTLE by default: just re-activate the CORRECT window-owning process —
+        // no hide. Hiding the whole app un-sticks the window but resets SAI's pen
+        // state (OS arrow everywhere, can't draw until you repeat it). WT_WAKE_HIDE=1
+        // forces the old heavy hide+reactivate if the gentle path isn't enough.
+        if ProcessInfo.processInfo.environment["WT_WAKE_HIDE"] != nil {
+            wlog("  -> hide+reactivate pid=\(app.processIdentifier)")
+            app.hide()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                app.unhide(); app.activate(options: [.activateAllWindows])
+            }
+        } else {
+            wlog("  -> gentle activate pid=\(app.processIdentifier)")
             app.activate(options: [.activateAllWindows])
-            wlog("  -> hid+reactivated pid=\(app.processIdentifier)")
         }
     }
 
@@ -624,7 +630,7 @@ final class SetupController: NSObject, NSApplicationDelegate {
         si.button?.title = "🖊"
         si.button?.toolTip = "SAI Pen Pressure"
         let menu = NSMenu()
-        let wake = NSMenuItem(title: "Wake SAI window (if stuck)   ⌃⌥Space", action: #selector(wakeSAI), keyEquivalent: "")
+        let wake = NSMenuItem(title: "Wake SAI window (if stuck)   ⌃⌥⌘Space", action: #selector(wakeSAI), keyEquivalent: "")
         wake.target = self
         menu.addItem(wake)
         let show = NSMenuItem(title: "Open Setup window", action: #selector(showSetupWindow), keyEquivalent: "")
@@ -699,7 +705,7 @@ final class SetupController: NSObject, NSApplicationDelegate {
         let wakeBtn = NSButton(title: "Wake SAI window (if stuck)", target: self, action: #selector(wakeSAI))
         wakeBtn.bezelStyle = .rounded
         content.addArrangedSubview(wakeBtn)
-        content.addArrangedSubview(lbl("Also on the 🖊 menu-bar icon, or press ⌃⌥Space (Control-Option-Space) anytime.", 10, color: .tertiaryLabelColor))
+        content.addArrangedSubview(lbl("Also on the 🖊 menu-bar icon, or press ⌃⌥⌘Space (Control-Option-Command-Space) anytime.", 10, color: .tertiaryLabelColor))
 
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 440),
                           styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
