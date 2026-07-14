@@ -76,16 +76,18 @@ pressure bridge.
 - **"Update Wine":** already on the newest Gcenx build (**wine-11.10 Staging**). Later
   mainline Wine reworked focus handling; a future Gcenx build may include the fix.
 
-**Fix (one key).** Press **⌃⌥Space** (Control-Option-Space) — or click the **🖊 menu-bar icon →
-*Wake SAI window*** (also a button in the setup window). This forces a full re-activation of
-SAI's window and it takes input again immediately. No permission needed.
+**Fix (one key).** Press **⌃⌥⌘Space** (Control-Option-Command-Space) — or click the **🖊 menu-bar
+icon → *Wake SAI window*** (also a button in the setup window). SAI takes input again
+immediately. No permission needed.
 
-How it works: the helper finds the exact process that owns SAI's on-screen window (via
-`CGWindowList` — Wine runs as several processes, and only one owns the visible window) and
-hides + re-activates it, which is the programmatic equivalent of the manual Space-swipe. The
-earlier naive attempt (activating "a" Wine process, or the whole app) did nothing because it
-poked the wrong process. Returning via **Cmd-Tab** also auto-wakes it (the helper re-activates
-Wine when it comes to the foreground).
+How it works: the helper finds the **exact process that owns SAI's on-screen window** via
+`CGWindowList` (Wine runs as several processes, and only one owns the visible window) and
+re-activates it. Targeting the *right* process is the whole trick — the naive attempts
+(activating "a" Wine process, or the whole app) did nothing. It re-activates *without* hiding
+the app, so SAI's pen state isn't disturbed (`WT_WAKE_HIDE=1` forces the heavier hide+reactivate
+if ever needed). The hotkey is detected by the same listen-only event tap that reads the tablet
+(Carbon's global-hotkey API didn't deliver reliably, and ⌃⌥Space collides with macOS's
+"next input source"). Returning via **Cmd-Tab** also auto-wakes it.
 
 **Manual fallback.** Switch to a different Space and back (three-finger swipe left/right).
 
