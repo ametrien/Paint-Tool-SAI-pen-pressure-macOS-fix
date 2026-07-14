@@ -210,7 +210,7 @@ and [`HANDOVER-START-HERE.md`](HANDOVER-START-HERE.md).
 - **Bluetooth report rate (~130 Hz)** makes fast curves boxy — use USB for ~200 Hz (see Tips).
 - Tilt/rotation are not forwarded (the test tablet has none); pressure only.
 - **SAI's top menu row ("File", …) ignores pen taps** — use the mouse/trackpad for the menu.
-- **SAI can freeze on input after app-switching** — press **⌃⌥Space** (or the 🖊 menu-bar icon → *Wake SAI*) to instantly un-stick it.
+- **SAI can freeze on input after app-switching** — press **⌃⌥⌘Space** (or the 🖊 menu-bar icon → *Wake SAI*) to instantly un-stick it.
 
 The last two are caused by SAI and by Wine's macOS driver (not the pressure bridge). See
 **[KNOWN_ISSUES.md](KNOWN_ISSUES.md)** for the full explanation, what we tried, and what
