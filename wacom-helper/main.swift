@@ -203,6 +203,25 @@ func runAppSetup() {
     guard ensureSetup(saiSrc, wine) else { exit(1) }
 }
 
+// Is any SAI/Wine window still on screen? Used to decide when SAI has really
+// closed (see launchSAIApp's terminationHandler).
+func saiWindowIsOpen() -> Bool {
+    let list = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? []
+    for w in list {
+        let owner = (w[kCGWindowOwnerName as String] as? String ?? "").lowercased()
+        guard owner.contains("wine") || owner.contains("sai") else { continue }
+        if (w[kCGWindowLayer as String] as? Int ?? 0) == 0 { return true }
+    }
+    return false
+}
+
+func pollUntilSAICloses() {
+    let t = Timer(timeInterval: 2.0, repeats: true) { timer in
+        if !saiWindowIsOpen() { timer.invalidate(); exit(0) }
+    }
+    RunLoop.main.add(t, forMode: .common)
+}
+
 // LAUNCH (runs only after the pressure tap is active): start SAI; quit the app
 // when SAI closes.
 func launchSAIApp() {
@@ -216,7 +235,15 @@ func launchSAIApp() {
     e["WINEPREFIX"] = appPrefix; e["WINEDEBUG"] = "-all"
     p.environment = e
     p.terminationHandler = { _ in
-        try? "0".write(toFile: pf, atomically: true, encoding: .ascii); exit(0)
+        try? "0".write(toFile: pf, atomically: true, encoding: .ascii)
+        // The process we spawned exiting does NOT always mean SAI closed — Wine
+        // can hand off to another process and let this one exit immediately,
+        // which used to make us quit while SAI was still on screen. Only exit
+        // once no SAI window is left.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            if !saiWindowIsOpen() { exit(0) }
+            else { pollUntilSAICloses() }
+        }
     }
     try? p.run()                                            // async; quits the app when SAI closes
 }
@@ -289,7 +316,53 @@ func send(_ p: Int, _ xf: Int, _ yf: Int) {
     lastSendMs = CFAbsoluteTimeGetCurrent()
 }
 
+// ---- MENU-STRIP PASSTHROUGH (issue #1) -------------------------------------
+// SAI's top menu row ("File", "Edit", …) ignores pen taps: while our WinTab
+// stream says a pen is present, SAI de-dups and discards the pen's synthesized
+// mouse click there (the menu is driven by mouse clicks, not WinTab packets).
+// Fix: while the pen is over that strip, stream NOTHING. SAI then sees no pen,
+// so the ordinary mouse click gets through and the menu opens. Over the canvas
+// and panels the full pressure stream continues unchanged.
+// Strip = the top `stripH` points of SAI's window (Wine title bar + menu row).
+// Tune with WT_MENU_STRIP=<points>, disable with WT_MENU_STRIP=0.
+let menuStripH: CGFloat = {
+    if let s = ProcessInfo.processInfo.environment["WT_MENU_STRIP"], let v = Double(s) { return CGFloat(v) }
+    return 58        // Wine title bar (~23pt) + menu row (~25pt) + margin
+}()
+var g_saiStrip = CGRect.zero          // in CGEvent.location space (top-left origin)
+var g_saiWindow = CGRect.zero         // SAI's whole window rect (same space)
+var g_lastDrawAt = Date.distantPast   // last time real pressure was emitted
+var g_onMouseDown: ((CGPoint) -> Void)?   // set by the wizard: auto-wake on click
+
+func refreshSAIStrip() {
+    guard menuStripH > 0 else { g_saiStrip = .zero; return }
+    let list = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? []
+    var best = CGRect.zero, bestArea: CGFloat = -1
+    for w in list {
+        let owner = (w[kCGWindowOwnerName as String] as? String ?? "").lowercased()
+        guard owner.contains("wine") || owner.contains("sai") else { continue }
+        guard (w[kCGWindowLayer as String] as? Int ?? 0) == 0 else { continue }
+        let b = w[kCGWindowBounds as String] as? [String: CGFloat] ?? [:]
+        let r = CGRect(x: b["X"] ?? 0, y: b["Y"] ?? 0, width: b["Width"] ?? 0, height: b["Height"] ?? 0)
+        let area = r.width * r.height
+        if area > bestArea { bestArea = area; best = r }
+    }
+    g_saiWindow = best
+    g_saiStrip = best.isEmpty ? .zero
+        : CGRect(x: best.minX, y: best.minY, width: best.width, height: min(menuStripH, best.height))
+}
+
 func emit(pressure: Int, loc: CGPoint) {
+    // Over SAI's menu strip: go silent so SAI treats the pen as a plain mouse.
+    if !g_saiStrip.isEmpty && g_saiStrip.contains(loc) {
+        if lastKeyP > 0 {                      // pen was down -> end the stroke cleanly
+            lastKeyP = 0
+            send(0, lastKeyX, lastKeyY)
+        }
+        inProximity = false                    // stops the hover keepalive too
+        return
+    }
+
     // coordinate mapping + clamp + dedup rules live in PressureCore (unit-tested)
     let p = PressureCore.clampPressure(pressure)
     // WT_NO_HOVER experiment: drop hover samples (p==0) unless they END a
@@ -298,6 +371,7 @@ func emit(pressure: Int, loc: CGPoint) {
     let (xf, yf) = PressureCore.mapToVirtual(locX: loc.x, locY: loc.y, vX: vX, vY: vY, vH: vH)
     if PressureCore.isDuplicate(p: p, xf: xf, yf: yf, lastP: lastKeyP, lastX: lastKeyX, lastY: lastKeyY) { return }
     lastKeyP = p; lastKeyX = xf; lastKeyY = yf
+    if p > 0 { g_lastDrawAt = Date() }        // "SAI is clearly alive" signal for auto-wake
     send(p, xf, yf)
     if verbose && (seq % 100 == 1 || p == 0) {
         print("captured=\(seq) pressure=\(p)/1023")
@@ -308,7 +382,23 @@ func emit(pressure: Int, loc: CGPoint) {
 // during a HOVER with no movement, so the OS cursor stays hidden. ONLY when the
 // last sample was pen-up/hover (lastKeyP == 0): re-sending an actual press
 // (lastKeyP > 0) made SAI register spurious extra clicks / feel glitchy.
+var g_kaTick = 0
+var g_evTabletPtr = 0, g_evTabletMouse = 0, g_evProx = 0, g_evPlainMouse = 0
+var g_lastTabletEvAt = CFAbsoluteTimeGetCurrent()   // last time a real TABLET event arrived
+var g_penEverSeen = false                           // this session uses a pen at all
+let g_demotionWake = ProcessInfo.processInfo.environment["WT_DEMOTION_WAKE"] != nil   // experimental, off
+var g_onStuckDetected: (() -> Void)?                // set by the wizard -> auto-wake
 func keepAlive() {
+    // Revive the tap if macOS ever disabled it (App Nap / timeout / user input).
+    // The disable-event path only fires if our run loop is awake to receive it;
+    // this poll (every 40ms) is the belt-and-suspenders that recovers the pen
+    // stream even if we missed the event — the "recv freezes / no brush dot" bug.
+    let enabled = gTap.map { CGEvent.tapIsEnabled(tap: $0) } ?? false
+    if let t = gTap, !enabled { CGEvent.tapEnable(tap: t, enable: true) }
+    // ~1s heartbeat: is our run loop even ticking, is the tap enabled, and are
+    // we still capturing (seq)? Tells us if the mac tap is what's dying.
+    g_kaTick += 1
+    if g_kaTick % 25 == 0 { wlog("mac keepAlive: tick=\(g_kaTick) tapEnabled=\(enabled) captured(seq)=\(seq) | tabletMouse=\(g_evTabletMouse) PLAINmouse=\(g_evPlainMouse) penSeen=\(g_penEverSeen) saiWin=\(g_saiWindow.isEmpty ? "EMPTY" : "\(Int(g_saiWindow.width))x\(Int(g_saiWindow.height))")") }
     if noHover { return }   // WT_NO_HOVER experiment: no hover keepalive at all
     if PressureCore.keepAliveShouldResend(inProximity: inProximity, lastPressure: lastKeyP,
                                           secondsSinceLastSend: CFAbsoluteTimeGetCurrent() - lastSendMs) {
@@ -330,8 +420,16 @@ func isTabletMouse(_ e: CGEvent) -> Bool {
 var g_onWakeHotKey: (() -> Void)?
 
 let tapCallback: CGEventTapCallBack = { _, type, event, _ in
+    // Auto-wake trigger #2: a click. When SAI is ALREADY frontmost but stuck,
+    // clicking it fires no app-activation notification at all, so the wizard
+    // never hears about it — this is the only signal we get.
+    if type == .leftMouseDown, let cb = g_onMouseDown {
+        let loc = event.location
+        DispatchQueue.main.async { cb(loc) }
+    }
     switch type {
     case .tapDisabledByTimeout, .tapDisabledByUserInput:
+        wlog("MAC TAP DISABLED (\(type == .tapDisabledByTimeout ? "timeout" : "userInput")) -> re-enabling")
         if let t = gTap { CGEvent.tapEnable(tap: t, enable: true) }
     case .keyDown:
         // Global "wake SAI" hotkey: ⌃⌥⌘Space. Detected here (listen-only, never
@@ -344,11 +442,14 @@ let tapCallback: CGEventTapCallBack = { _, type, event, _ in
             }
         }
     case .tabletProximity:
+        g_evProx += 1
         // pen entering/leaving range drives the keepalive (arrow stays hidden
         // while present, mouse can paint once the pen leaves)
         inProximity = event.getIntegerValueField(.tabletProximityEventEnterProximity) != 0
         if !inProximity { emit(pressure: 0, loc: event.location) }
     case .tabletPointer:
+        g_evTabletPtr += 1
+        g_lastTabletEvAt = CFAbsoluteTimeGetCurrent(); g_penEverSeen = true
         inProximity = true
         let pr = event.getDoubleValueField(.tabletEventPointPressure)
         emit(pressure: Int(pr * 1023.0), loc: event.location)
@@ -356,11 +457,29 @@ let tapCallback: CGEventTapCallBack = { _, type, event, _ in
         if isTabletMouse(event) { emit(pressure: 0, loc: event.location) }   // pen tip lift (still hovering)
     case .mouseMoved, .leftMouseDown, .leftMouseDragged:
         if isTabletMouse(event) {
+            g_evTabletMouse += 1
+            g_lastTabletEvAt = CFAbsoluteTimeGetCurrent(); g_penEverSeen = true
             inProximity = true
             let pr = event.getDoubleValueField(.tabletEventPointPressure)
             emit(pressure: Int(pr * 1023.0), loc: event.location)
         } else {
+            g_evPlainMouse += 1
             inProximity = false   // real mouse/trackpad -> pen not in use, let SAI have the mouse
+            // STUCK DETECTION: the Wacom driver demotes the pen to a PLAIN mouse
+            // when SAI's window isn't properly foreground. Signature = plain-mouse
+            // events arriving over SAI's window while the tablet stream (which was
+            // flowing) just went silent. That's the moment to auto-wake.
+            // EXPERIMENTAL, opt-in (WT_DEMOTION_WAKE=1). Detects the stuck state
+            // by the pen being demoted to a plain mouse over SAI's window, then
+            // auto-bounces. It reliably DETECTS, but the bounce doesn't reliably
+            // restore SAI's Win32 foreground, so it's not on by default yet (and
+            // it can false-fire on intentional trackpad use). Manual wake remains
+            // the dependable recovery. See issue #2.
+            if g_demotionWake, g_penEverSeen,
+               CFAbsoluteTimeGetCurrent() - g_lastTabletEvAt > 0.35,
+               !g_saiWindow.isEmpty, g_saiWindow.contains(event.location) {
+                DispatchQueue.main.async { g_onStuckDetected?() }
+            }
         }
     default:
         break
@@ -382,8 +501,19 @@ let reconfigCB: CGDisplayReconfigurationCallBack = { _, _, _ in refreshVirtualBo
 CGDisplayRegisterReconfigurationCallback(reconfigCB, nil)
 
 // ---- the pressure engine: create the taps + timers on the current run loop.
+// Prevent App Nap. While SAI is frontmost our helper is in the background, and
+// macOS throttles background apps — which stalls our run loop and puts the event
+// tap to sleep, so pen samples stop arriving (recv freezes, no brush dot, canvas
+// "stuck"). Holding a user-initiated activity for the whole session stops that.
+var g_noNap: NSObjectProtocol?
+
 // Returns false if the tablet tap can't be created (permission missing). ------
 func startPressureEngine() -> Bool {
+    if g_noNap == nil {
+        g_noNap = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiated, .latencyCritical],
+            reason: "Streaming live tablet pressure to SAI")
+    }
     let mask: CGEventMask =
         (CGEventMask(1) << CGEventType.leftMouseDown.rawValue)    |
         (CGEventMask(1) << CGEventType.leftMouseDragged.rawValue) |
@@ -401,6 +531,13 @@ func startPressureEngine() -> Bool {
 
     let kaTimer = CFRunLoopTimerCreateWithHandler(nil, CFAbsoluteTimeGetCurrent() + 0.04, 0.04, 0, 0) { _ in keepAlive() }
     CFRunLoopAddTimer(CFRunLoopGetCurrent(), kaTimer, .commonModes)
+
+    // Keep SAI's menu-strip rect fresh (window moves/resizes) — see emit().
+    if menuStripH > 0 {
+        refreshSAIStrip()
+        let stripTimer = CFRunLoopTimerCreateWithHandler(nil, CFAbsoluteTimeGetCurrent() + 1.0, 1.0, 0, 0) { _ in refreshSAIStrip() }
+        CFRunLoopAddTimer(CFRunLoopGetCurrent(), stripTimer, .commonModes)
+    }
 
     writeFile("0")                      // start pen-up
     return true
@@ -546,6 +683,11 @@ final class SetupController: NSObject, NSApplicationDelegate {
         // re-activation (what the 3-finger Space-swipe does) without switching
         // apps. Lives in the menu bar so it's reachable even while SAI is frontmost.
         setUpStatusItem()
+        checkForUpdates()
+        // Auto-wake driven by the REAL stuck signal (see the tap's plain-mouse
+        // branch): the pen got demoted to a plain mouse over SAI's window while
+        // the tablet stream went silent. Throttled + gated by the same toggle.
+        g_onStuckDetected = { [weak self] in self?.autoWakeStuck() }
         // The wake HOTKEY (⌃⌥⌘Space) is detected by the pressure event tap (see
         // g_onWakeHotKey / tapCallback) — the same listen-only tap that reads the
         // tablet. Carbon's RegisterEventHotKey proved unreliable here (registered
@@ -589,6 +731,7 @@ final class SetupController: NSObject, NSApplicationDelegate {
 
     @objc func wakeSAI() {
         wlog("wakeSAI called")
+        bumpWin32Wake()
         let ownerPid = saiWindowOwnerPID()
         wlog("  SAI window owner pid=\(ownerPid)")
         let app = (ownerPid != 0 ? NSRunningApplication(processIdentifier: ownerPid) : nil) ?? wineRunningApp()
@@ -609,19 +752,129 @@ final class SetupController: NSObject, NSApplicationDelegate {
         }
     }
 
+    // AUTO-WAKE (issue #2): whenever Wine/SAI comes to the front, re-activate the
+    // process that actually OWNS SAI's on-screen window.
+    // Why this used to fail: Wine runs as several processes. The activation
+    // notification hands us the *registered* wine app (e.g. pid 40099), but the
+    // visible window belongs to a different pid (e.g. 40101). Activating the
+    // notified one does nothing — which is exactly why the manual button (which
+    // resolves the owner via CGWindowList) works and the old auto path didn't.
+    // Toggle live from the 🖊 menu; WT_NO_AUTOWAKE=1 starts it off.
+    var autoWake = ProcessInfo.processInfo.environment["WT_NO_AUTOWAKE"] == nil
+    var bouncing = false          // true while WE are re-activating (ignore our own events)
     var lastReactivate = Date.distantPast
     @objc func appActivated(_ note: Notification) {
-        guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+        guard autoWake, !bouncing,
+              let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
               app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
         let hay = "\(app.bundleIdentifier ?? "") \(app.localizedName ?? "") \(app.executableURL?.path ?? "")".lowercased()
         guard hay.contains("wine") || hay.contains("sai") else { return }
-        // throttle so we don't fight a normal activation into a loop
-        guard Date().timeIntervalSince(lastReactivate) > 0.5 else { return }
+        guard Date().timeIntervalSince(lastReactivate) > 0.6 else { return }   // no feedback loop
         lastReactivate = Date()
-        // a moment later, force ALL of Wine's windows fully forward/key
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            app.activate(options: [.activateAllWindows])
+        // Let macOS finish its own activation first, then nudge the real owner.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            guard let self = self, self.autoWake else { return }
+            let owner = self.saiWindowOwnerPID()
+            guard owner != 0, let target = NSRunningApplication(processIdentifier: owner) else { return }
+            wlog("autoWake(activate): notified pid=\(app.processIdentifier) windowOwner pid=\(owner)")
+            self.bounceToSAI(target)
         }
+    }
+
+    // THE BOUNCE. Plain activate() is a no-op when macOS already thinks Wine is
+    // frontmost, so the window stays stuck. The manual menu-bar button only works
+    // because clicking the menu bar makes THIS app active first, making the
+    // following activate() a real transition. So do that deliberately: take
+    // activation for a moment, then hand it straight back to the window's real
+    // owner. Our own window is minimized while you draw, so it's a brief blink.
+    // Ask our DLL (which runs INSIDE SAI) to restore SAI's Win32 foreground/active
+    // window. macOS-side activation alone doesn't do it: Wine can leave the Win32
+    // state stale, and SAI then eats every canvas click (MA_NOACTIVATEANDEAT) so
+    // the canvas is dead to pen AND mouse while the menu bar still works.
+    var wakeSeq = 0
+    func bumpWin32Wake() {
+        wakeSeq += 1
+        try? "\(wakeSeq)".write(toFile: "\(appPrefix)/drive_c/wt_wake.txt", atomically: true, encoding: .ascii)
+    }
+
+    func bounceToSAI(_ target: NSRunningApplication) {
+        bouncing = true
+        bumpWin32Wake()
+        // Step 1: take activation AWAY from SAI. Prefer bouncing off ANOTHER Wine
+        // process — Wine runs several, and switching between two of them keeps the
+        // menu bar showing "Wine", so the bounce is invisible. Falling back to our
+        // own app works too but blinks the menu bar.
+        if let other = wineRunningApp(), other.processIdentifier != target.processIdentifier {
+            wlog("  bounce via wine pid=\(other.processIdentifier)")
+            other.activate(options: [])
+        } else {
+            wlog("  bounce via self (no second wine process)")
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        // Step 2: hand activation back to the process that owns SAI's window.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            target.activate(options: [.activateAllWindows])
+            wlog("  -> re-activated owner pid=\(target.processIdentifier)")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.bouncing = false }
+        }
+    }
+
+    // Auto-wake trigger #2: a click inside SAI's window. Fires ONLY when you
+    // haven't drawn for a few seconds — if pressure is flowing, SAI is obviously
+    // not stuck, so we never bounce mid-drawing. Covers the case the activation
+    // notification can't: SAI already frontmost, stuck, and you click it again.
+    func autoWakeOnClick(at loc: CGPoint) {
+        guard autoWake, !bouncing else { return }
+        // Don't touch clicks on the menu strip — a bounce there would dismiss the
+        // menu the click just opened.
+        if !g_saiStrip.isEmpty && g_saiStrip.contains(loc) { return }
+        // Look at the result of the click a moment LATER. If it produced drawing,
+        // SAI is obviously alive -> do nothing. If nothing happened and Wine is
+        // (still) frontmost, that was a dead click -> un-stick it. This also
+        // covers clicking Wine's "exec" Dock tile, which fires no activation
+        // notification when Wine is already frontmost.
+        let insideSAI = !g_saiWindow.isEmpty && g_saiWindow.contains(loc)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            guard let self = self, self.autoWake, !self.bouncing else { return }
+            let now = Date()
+            guard now.timeIntervalSince(g_lastDrawAt) > 1.0,      // nothing was drawn by that click
+                  now.timeIntervalSince(self.lastReactivate) > 2.0,
+                  let front = NSWorkspace.shared.frontmostApplication,
+                  let target = self.saiTarget() else { return }
+            let hay = "\(front.bundleIdentifier ?? "") \(front.localizedName ?? "") \(front.executableURL?.path ?? "")".lowercased()
+            let frontIsSAI = hay.contains("wine") || hay.contains("sai")
+            if frontIsSAI {
+                // On SAI, but the click drew nothing -> dead click, un-stick it.
+                self.lastReactivate = now
+                wlog("autoWake(click/dead): front=\(front.processIdentifier) owner=\(target.processIdentifier)")
+                self.bounceToSAI(target)
+            } else if insideSAI {
+                // Clicked SAI's window but another app is STILL frontmost — the
+                // click didn't even raise it (SAI behind another window). Coming
+                // from a different app is already a real transition, so a plain
+                // activate is enough; no bounce needed.
+                self.lastReactivate = now
+                wlog("autoWake(click/raise): front=\(front.localizedName ?? "?") -> owner=\(target.processIdentifier)")
+                self.bumpWin32Wake()
+                target.activate(options: [.activateAllWindows])
+            }
+        }
+    }
+
+    @objc func toggleAutoWake(_ sender: NSMenuItem) {
+        autoWake.toggle()
+        sender.state = autoWake ? .on : .off
+    }
+
+    // Fired when the tap detects the pen was demoted to a plain mouse (the real
+    // "SAI stuck" signature). Un-stick it — same bounce the button uses.
+    func autoWakeStuck() {
+        guard autoWake, !bouncing,
+              Date().timeIntervalSince(lastReactivate) > 1.5,
+              let target = saiTarget() else { return }
+        lastReactivate = Date()
+        wlog("autoWake(demotion): owner pid=\(target.processIdentifier)")
+        bounceToSAI(target)
     }
 
     var statusItem: NSStatusItem?
@@ -633,6 +886,11 @@ final class SetupController: NSObject, NSApplicationDelegate {
         let wake = NSMenuItem(title: "Wake SAI window (if stuck)   ⌃⌥⌘Space", action: #selector(wakeSAI), keyEquivalent: "")
         wake.target = self
         menu.addItem(wake)
+        let auto = NSMenuItem(title: "Auto-wake when returning to SAI", action: #selector(toggleAutoWake(_:)), keyEquivalent: "")
+        auto.target = self
+        auto.state = autoWake ? .on : .off
+        menu.addItem(auto)
+        menu.addItem(.separator())
         let show = NSMenuItem(title: "Open Setup window", action: #selector(showSetupWindow), keyEquivalent: "")
         show.target = self
         menu.addItem(show)
@@ -647,7 +905,122 @@ final class SetupController: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    // Right-click on our Dock icon (only visible before SAI is launched — see
+    // hideFromDock()). Left-click focuses SAI; the useful actions live here.
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        let m = NSMenu()
+        let wake = NSMenuItem(title: "Wake SAI window (if stuck)", action: #selector(wakeSAI), keyEquivalent: "")
+        wake.target = self; m.addItem(wake)
+        let setup = NSMenuItem(title: "Open Setup window", action: #selector(showSetupWindow), keyEquivalent: "")
+        setup.target = self; m.addItem(setup)
+        return m
+    }
+
+
     func applicationDidBecomeActive(_ note: Notification) { refresh() }   // re-check when refocused
+
+    // ---- version / update check -----------------------------------------------
+    var versionLabel: NSTextField!
+    var updateLabel: NSTextField!
+    var updateBtn: NSButton!
+    var latestTag: String?
+    var latestNotes: String = ""
+    let repoSlug = "ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix"
+
+    func currentVersion() -> String {
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0.0.0"
+    }
+
+    /// true if a > b, comparing dotted numeric versions ("0.1.4" > "0.1.3")
+    func isNewer(_ a: String, than b: String) -> Bool {
+        func parts(_ s: String) -> [Int] {
+            s.trimmingCharacters(in: CharacterSet(charactersIn: "vV ")).split(separator: ".").map { Int($0.prefix(while: \.isNumber)) ?? 0 }
+        }
+        let x = parts(a), y = parts(b)
+        for i in 0..<max(x.count, y.count) {
+            let l = i < x.count ? x[i] : 0, r = i < y.count ? y[i] : 0
+            if l != r { return l > r }
+        }
+        return false
+    }
+
+    // Ask GitHub for the newest release. Read-only, anonymous, ~1 request per
+    // launch; silently does nothing if offline.
+    func checkForUpdates() {
+        guard let url = URL(string: "https://api.github.com/repos/\(repoSlug)/releases/latest") else { return }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 8
+        req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
+            guard let self = self, let d = data,
+                  let j = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any],
+                  let tag = j["tag_name"] as? String else { return }
+            let notes = (j["body"] as? String) ?? ""
+            DispatchQueue.main.async { self.showUpdateStatus(tag: tag, notes: notes) }
+        }.resume()
+    }
+
+    func showUpdateStatus(tag: String, notes: String) {
+        latestTag = tag; latestNotes = notes
+        guard updateLabel != nil else { return }
+        if isNewer(tag, than: currentVersion()) {
+            // first meaningful line of the release notes, as a teaser
+            let first = notes.split(separator: "\n")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .first { !$0.isEmpty && !$0.hasPrefix("#") && !$0.hasPrefix(">") } ?? ""
+            let teaser = first.count > 60 ? String(first.prefix(60)) + "…" : first
+            updateLabel.stringValue = "· Update available: \(tag)" + (teaser.isEmpty ? "" : " — \(teaser)")
+            updateLabel.textColor = .controlAccentColor
+            updateBtn.isHidden = false
+        } else {
+            updateLabel.stringValue = "· up to date"
+            updateLabel.textColor = .tertiaryLabelColor
+            updateBtn.isHidden = true
+        }
+    }
+
+    @objc func openReleasePage() {
+        let s = latestTag.map { "https://github.com/\(repoSlug)/releases/tag/\($0)" }
+            ?? "https://github.com/\(repoSlug)/releases/latest"
+        if let u = URL(string: s) { NSWorkspace.shared.open(u) }
+    }
+
+    // The process that owns SAI's on-screen window (see saiWindowOwnerPID).
+    func saiTarget() -> NSRunningApplication? {
+        let owner = saiWindowOwnerPID()
+        return owner != 0 ? NSRunningApplication(processIdentifier: owner) : nil
+    }
+
+    // Clicking our Dock icon should bring SAI forward — people think of this as
+    // "the app I run SAI with", so focusing our (usually minimized) setup window
+    // instead is surprising. The 🖊 menu bar still opens Settings any time.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if running, let target = saiTarget() {
+            wlog("dock reopen -> focusing SAI pid=\(target.processIdentifier)")
+            bounceToSAI(target)
+            return false
+        }
+        window.makeKeyAndOrderFront(nil)
+        return true
+    }
+
+    // Auto-wake trigger #3: we just LOST focus to SAI (e.g. you had our Settings
+    // window open and clicked back onto SAI). The activation notification alone
+    // doesn't reliably un-stick that hand-off, so nudge it from our side too.
+    func applicationDidResignActive(_ note: Notification) {
+        guard autoWake, running else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self = self, !self.bouncing,
+                  Date().timeIntervalSince(self.lastReactivate) > 0.6,
+                  let front = NSWorkspace.shared.frontmostApplication else { return }
+            let hay = "\(front.bundleIdentifier ?? "") \(front.localizedName ?? "") \(front.executableURL?.path ?? "")".lowercased()
+            guard hay.contains("wine") || hay.contains("sai") else { return }
+            guard let target = self.saiTarget() else { return }
+            self.lastReactivate = Date()
+            wlog("autoWake(resign): owner pid=\(target.processIdentifier)")
+            self.bounceToSAI(target)
+        }
+    }
 
     func buildWindow() {
         let content = NSStackView()
@@ -706,6 +1079,19 @@ final class SetupController: NSObject, NSApplicationDelegate {
         wakeBtn.bezelStyle = .rounded
         content.addArrangedSubview(wakeBtn)
         content.addArrangedSubview(lbl("Also on the 🖊 menu-bar icon, or press ⌃⌥⌘Space (Control-Option-Command-Space) anytime.", 10, color: .tertiaryLabelColor))
+
+        // --- version + update check ------------------------------------------
+        let verRow = NSStackView(); verRow.orientation = .horizontal; verRow.alignment = .centerY; verRow.spacing = 8
+        versionLabel = lbl("Version \(currentVersion())", 10, color: .tertiaryLabelColor)
+        updateLabel = lbl("", 10, color: .secondaryLabelColor)
+        updateBtn = NSButton(title: "What's new / Update…", target: self, action: #selector(openReleasePage))
+        updateBtn.bezelStyle = .rounded
+        updateBtn.controlSize = .small
+        updateBtn.isHidden = true
+        verRow.addArrangedSubview(versionLabel)
+        verRow.addArrangedSubview(updateLabel)
+        verRow.addArrangedSubview(updateBtn)
+        content.addArrangedSubview(verRow)
 
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 440),
                           styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)

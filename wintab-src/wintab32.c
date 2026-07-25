@@ -263,6 +263,65 @@ static void flush_pending(void) {
     if (post) { PostMessageW(g_hwnd, WT_PACKET, ser, (LPARAM)0xC0FFEE01); g_posted++; }
 }
 
+/* ---- WIN32 WAKE ------------------------------------------------------------
+ * After an app switch Wine sometimes fails to restore the Win32 foreground /
+ * active window, even though macOS shows SAI as the active app. SAI's own
+ * WM_MOUSEACTIVATE handler returns MA_NOACTIVATEANDEAT, so in that state every
+ * click on the canvas is swallowed as an "activating click" and the canvas
+ * looks dead to BOTH pen and mouse — while the menu bar (a different code path)
+ * still responds. macOS-side re-activation can't fix that; but this DLL lives
+ * INSIDE SAI's process, so it can restore the Win32 state directly.
+ * The mac helper bumps C:\wt_wake.txt to ask for it. Disable: WT_NO_WIN32_WAKE. */
+typedef struct { HWND h; LONG area; } BESTWND;
+
+static BOOL CALLBACK find_main_window(HWND h, LPARAM lp) {
+    DWORD pid = 0;
+    GetWindowThreadProcessId(h, &pid);
+    if (pid != GetCurrentProcessId()) return TRUE;
+    if (!IsWindowVisible(h) || GetWindow(h, GW_OWNER)) return TRUE;
+    RECT r;
+    if (!GetWindowRect(h, &r)) return TRUE;
+    LONG area = (r.right - r.left) * (r.bottom - r.top);
+    BESTWND *b = (BESTWND *)lp;
+    if (area > b->area) { b->area = area; b->h = h; }
+    return TRUE;
+}
+
+static void win32_wake(void) {
+    BESTWND best = { NULL, 0 };
+    EnumWindows(find_main_window, (LPARAM)&best);
+    HWND w = best.h ? best.h : (g_hwnd ? GetAncestor(g_hwnd, GA_ROOT) : NULL);
+    if (!w) { log_line("win32_wake: no window found"); return; }
+    log_line("win32_wake: activating hwnd=%p", w);
+    /* Only cross-thread-safe calls here. SetActiveWindow/SetFocus are
+     * THREAD-LOCAL: calling them from this producer thread would target our own
+     * (message-less) thread, not SAI's UI thread, and disturbed SAI's input. */
+    BringWindowToTop(w);
+    SetForegroundWindow(w);
+}
+
+/* poll the wake marker (cheap, ~6x/sec) */
+static void check_win32_wake(DWORD now) {
+    static DWORD lastCheck;
+    static char lastVal[32];
+    /* OPT-IN: set WT_WIN32_WAKE=1 to enable. Off by default until it's proven —
+     * an earlier version of this (wrong thread) disturbed SAI's input state. */
+    if (!getenv("WT_WIN32_WAKE")) return;
+    if (now - lastCheck < 150) return;
+    lastCheck = now;
+    FILE *f = fopen("C:\\wt_wake.txt", "rb");
+    if (!f) return;
+    char b[32];
+    size_t n = fread(b, 1, sizeof(b) - 1, f);
+    fclose(f);
+    b[n] = 0;
+    if (strcmp(b, lastVal) != 0) {
+        int first = (lastVal[0] == 0);
+        strcpy(lastVal, b);
+        if (!first) win32_wake();       /* skip the value we see on startup */
+    }
+}
+
 /* parse "p [x y w h]" into a SAMPLE (pure logic lives in wintab_core.h) */
 static int parse_sample(const char *buf, SAMPLE *out) { return wtc_parse_sample(buf, out); }
 
@@ -341,6 +400,7 @@ static DWORD WINAPI producer(LPVOID arg) {
 
         /* recv timed out (idle) or no socket -> housekeeping */
         DWORD now = GetTickCount();
+        check_win32_wake(now);          /* helper asked us to restore Win32 focus? */
         flush_pending();                /* pen still/lifted: deliver the final point */
         if (now - lastBeat > 2000) {
             lastBeat = now;

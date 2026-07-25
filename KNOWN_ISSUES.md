@@ -10,86 +10,56 @@ otherwise are very welcome.
 
 ---
 
-## 1. Pen taps don't work on SAI's top menu row ("File", "Edit", …)
+## 1. Pen taps on SAI's top menu row ("File", "Edit", …) — ✅ FIXED (v0.1.4)
 
-**Symptom.** While the pen is in range, tapping SAI's **top menu bar** does nothing. The
-canvas, tool panels, brush list and sliders all respond to the pen normally. The
-mouse/trackpad clicks the menu fine.
+**Was:** while the pen was in range, tapping SAI's top menu bar did nothing (the canvas and
+panels worked; the mouse clicked the menu fine).
 
-**Cause.** SAI de-duplicates pen-vs-mouse input. When our WinTab stream tells SAI a pen is
-present, SAI discards the pen's *synthesized mouse click* on the menu (it expects the "real"
-input to arrive as a WinTab packet instead). SAI's menu bar is driven by mouse clicks, not
-WinTab packets — so the click is dropped. The canvas and panels are driven by the WinTab
-packets themselves, so they're unaffected. With the bridge **off**, the pen is an ordinary
-mouse and the menu works — which confirms our stream is the trigger.
+**Cause.** SAI de-duplicates pen-vs-mouse input. While our WinTab stream told SAI a pen was
+present, SAI discarded the pen's *synthesized mouse click* on the menu — the menu bar is
+driven by mouse clicks, not WinTab packets, so the click was dropped. (Advertising the context
+as `CXO_SYSTEM` made SAI take the click but then double-fire it, opening-and-closing the menu,
+because Wine's mouse events lack the `GetMessageExtraInfo == 0xFF515700` pen signature Windows
+apps use to de-dup — so that route was a dead end.)
 
-**What we tried**
-
-- **Advertised the context as `CXO_SYSTEM` (0x0001) alongside `CXO_MESSAGES`**, exactly like
-  a real Wacom driver (it declares the system cursor is integrated with the pen). Result: SAI
-  *does* accept the mouse click on the menu — but it then processes **both** the mouse click
-  **and** our `buttons=1` WinTab packet, so menus **open and instantly close** (a double
-  click). Real Windows drivers avoid this because Windows tags pen-synthesized mouse events
-  with a signature (`GetMessageExtraInfo` == `0xFF515700`) so apps can recognise and drop the
-  duplicate; Wine's `winemac.drv` mouse events carry no such tag, so SAI can't tell the two
-  events are the same tap. **Reverted** — the double-click is worse than the dead menu.
-- Confirmed it's **not** our refactor: the behaviour is identical with the pre-refactor DLL.
-
-**Not yet explored (help welcome)**
-
-- Whether the trigger is specifically the **continuous hover stream** (vs. the tap's own
-  packets). The helper has a diagnostic flag for exactly this: run it with **`WT_NO_HOVER=1`**
-  (streams only presses — no hover/keepalive) and see whether menu taps start working:
-  ```bash
-  WT_NO_HOVER=1 WT_PRESSURE_FILE="$HOME/SAI2-pressure/drive_c/wt_pressure.txt" \
-    ./wacom-helper/wacom-pressure-helper &
-  bash launch-sai2-pressure.sh
-  ```
-  - If the menu **works** in this mode → the hover stream is the trigger, and a targeted fix
-    becomes possible: keep hover streaming everywhere **except** when the pen is over SAI's
-    menu strip (the helper can read SAI's window rect and suppress hover there). The cost is
-    slightly laggier hover near the top of the window.
-  - If the menu **still fails** → the tap's own packets trigger it, and there is no
-    bridge-side fix.
-- Injecting the Windows pen signature into the mouse event's ExtraInfo would fix it globally,
-  but that's a change in **Wine** (`winemac.drv`), not in this project.
-
-**Workaround.** Use the mouse/trackpad for the top menu. Everything else takes the pen.
+**Fix.** The helper reads the pen's screen position *and* SAI's window rectangle (via
+`CGWindowList`). While the pen is over the **top menu strip** of SAI's window, the helper
+streams **nothing** — no hover, no pressure — so SAI sees no pen there and the pen's ordinary
+mouse click gets through and opens the menu. Over the canvas and panels, the full pressure
+stream continues unchanged. Strip height is tunable with `WT_MENU_STRIP=<points>` (0 disables).
 
 ---
 
-## 2. SAI stops responding to input after switching apps
+## 2. SAI freezes on input after switching apps (still open — manual recovery works)
 
 **Symptom.** After switching to another macOS app and back, SAI's window *looks* focused but
-ignores all clicks and keys.
+the **canvas ignores both pen and mouse** (no brush dot, nothing draws). The top menu row
+still responds.
 
-**Cause.** A known **`winemac.drv`** (Wine's macOS driver) bug: on re-activation the window
-regains focus visually but Wine never re-attaches the window's input queue. Unrelated to the
-pressure bridge.
+**Confirmed root cause** (via extensive logging — see
+[issue #2](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/2)):
+SAI's window loses its **Win32 foreground/active** status (a `winemac.drv` focus bug — Wine
+doesn't restore Win32 activation even though macOS shows SAI as active). That single state
+causes both symptoms: SAI's window proc eats clicks when inactive (`WM_MOUSEACTIVATE` →
+`MA_NOACTIVATEANDEAT`), *and* the Wacom driver demotes the pen to a plain mouse (no pressure)
+because the target window isn't foreground. The menu works because it's a separate hit-path.
 
-**What we tried / researched**
+**Ruled out with logs:** App Nap / our helper freezing (its heartbeat keeps ticking); the
+event tap dying (`tapEnabled=true` throughout); SAI disabling our WinTab context (`open=1`);
+the DLL/pipeline. Input *does* still reach us while stuck — it's just demoted to plain mouse.
 
-- **No registry switch fixes it.** We went through the full list of Mac-driver options in
-  Wine's source (`dlls/winemac.drv/macdrv_main.c`) — window float, fullscreen capture, cursor
-  clipping, Retina, etc. None touch activation / input-queue reattachment. Forum-cited keys
-  like `UseTakeFocus` / `GrabFullscreen` are **X11-only** and ignored by the Mac driver.
-- **"Update Wine":** already on the newest Gcenx build (**wine-11.10 Staging**). Later
-  mainline Wine reworked focus handling; a future Gcenx build may include the fix.
+**Recovery (reliable, manual).** Press **⌃⌥⌘Space** (Control-Option-Command-Space), or click
+the **🖊 menu-bar icon → *Wake SAI window*** (also a setup-window button). It finds the exact
+process that owns SAI's window (via `CGWindowList`) and re-activates it, restoring foreground —
+which fixes both the mouse and the pen at once. Returning via **Cmd-Tab** usually auto-wakes it.
 
-**Fix (one key).** Press **⌃⌥⌘Space** (Control-Option-Command-Space) — or click the **🖊 menu-bar
-icon → *Wake SAI window*** (also a button in the setup window). SAI takes input again
-immediately. No permission needed.
+**Not yet solved: fully automatic recovery.** Detecting the stuck state is doable (the
+pen-demotion is a clean signal; opt-in `WT_DEMOTION_WAKE=1`), but the macOS-side re-activation
+doesn't *reliably* restore Win32 foreground on its own. The promising next lever is calling
+`SetForegroundWindow` from **inside SAI on its UI thread** (our DLL is in-process). Help welcome.
 
-How it works: the helper finds the **exact process that owns SAI's on-screen window** via
-`CGWindowList` (Wine runs as several processes, and only one owns the visible window) and
-re-activates it. Targeting the *right* process is the whole trick — the naive attempts
-(activating "a" Wine process, or the whole app) did nothing. It re-activates *without* hiding
-the app, so SAI's pen state isn't disturbed (`WT_WAKE_HIDE=1` forces the heavier hide+reactivate
-if ever needed). The hotkey is detected by the same listen-only event tap that reads the tablet
-(Carbon's global-hotkey API didn't deliver reliably, and ⌃⌥Space collides with macOS's
-"next input source"). Returning via **Cmd-Tab** also auto-wakes it.
-
-**Manual fallback.** Switch to a different Space and back (three-finger swipe left/right).
+**Manual fallback if the wake ever misses:** switch to a different Space and back (three-finger
+swipe left/right).
 
 *Sources: [Wine winemac.drv source](https://github.com/wine-mirror/wine/blob/master/dlls/winemac.drv/macdrv_main.c),
 [winemac input-loss report](https://github.com/Sikarugir-App/Sikarugir/issues/237).*
