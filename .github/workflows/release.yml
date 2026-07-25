@@ -32,7 +32,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --generate-notes \
-            "dist/SAI-Pen-Pressure-${GITHUB_REF_NAME}.zip" \
-          || gh release upload "$GITHUB_REF_NAME" \
-            "dist/SAI-Pen-Pressure-${GITHUB_REF_NAME}.zip" --clobber
+          ZIP="dist/SAI-Pen-Pressure-${GITHUB_REF_NAME}.zip"
+          # One-line summary for the release = the annotated tag's message.
+          # Cut releases with:  git tag -a vX.Y.Z -m "Short: what changed"
+          SUMMARY="$(git tag -l --format='%(contents:subject)' "$GITHUB_REF_NAME")"
+          gh release create "$GITHUB_REF_NAME" --generate-notes "$ZIP" \
+            || gh release upload "$GITHUB_REF_NAME" "$ZIP" --clobber
+          # Prepend the summary sentence above the auto-generated notes.
+          if [ -n "$SUMMARY" ]; then
+            BODY="$(gh release view "$GITHUB_REF_NAME" --json body --jq .body)"
+            printf '**%s**\n\n---\n\n%s' "$SUMMARY" "$BODY" \
+              | gh release edit "$GITHUB_REF_NAME" --notes-file -
+          fi
