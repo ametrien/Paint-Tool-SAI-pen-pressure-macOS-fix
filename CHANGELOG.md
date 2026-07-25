@@ -6,6 +6,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
 ## [Unreleased]
 
 ### Added
+- **Pen taps now work on SAI's top menu row** (File/Edit/Canvas/…) — fixes #1. While the pen
+  is over SAI's menu strip the helper streams nothing, so SAI takes the pen's plain mouse
+  click and the menu opens. Canvas/pressure unchanged. Tune with `WT_MENU_STRIP=<points>`.
+- **Version + update check** in the setup window — shows the current version and, on launch,
+  whether a newer GitHub release exists, with a "What's new / Update…" link to the notes.
+- **Auto-wake when returning to SAI** (experimental, toggle in the 🖊 menu) — re-activates the
+  correct Wine window-owner process on app-switch return. Helps but doesn't fully solve the
+  freeze (#2, still open); the manual Wake remains the reliable recovery.
+
+### Known / unresolved
+- **App-switch freeze (#2)** is now root-caused (SAI loses Win32 foreground → canvas dead to
+  pen *and* mouse; Wacom demotes the pen to a plain mouse) but only has a **manual** recovery
+  (⌃⌥⌘Space / 🖊 Wake). Full auto-recovery is still open — details in KNOWN_ISSUES / issue #2.
+
+### Added (earlier)
 - **Wake SAI** — one-key recovery for the Wine app-switch freeze: **⌃⌥⌘Space** (global
   hotkey), a **🖊 menu-bar item**, and a setup-window button. Finds the exact process
   that owns SAI's on-screen window (via `CGWindowList`) and re-activates it — no hide, so
