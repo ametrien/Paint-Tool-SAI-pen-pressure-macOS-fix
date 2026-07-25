@@ -95,6 +95,9 @@ static LOGCONTEXTW g_ctx;      /* the context SAI asked for in WTOpenW/WTSetW */
 static BOOL  g_have_ctx;
 static CRITICAL_SECTION g_cs;
 static FILE  *g_log;
+static volatile DWORD g_last_tip_tick;   /* GetTickCount of the last pen-tip
+                                            transition; opens the click de-dup
+                                            window (see CLICK DE-DUP below) */
 
 static void log_line(const char *fmt, ...) {
     if (!g_log) return;
@@ -211,9 +214,11 @@ static void emit_sample(const SAMPLE *s) {
     /* else: keep pk.x/pk.y from g_last (position-less pen-up) */
 
     int transition = (down != g_was_down);
-    if (transition)           /* log tip transitions to investigate stray clicks */
+    if (transition) {         /* log tip transitions to investigate stray clicks */
+        g_last_tip_tick = GetTickCount();   /* opens the click de-dup window */
         log_line("PEN %s buttons=%u pk=(%ld,%ld) press=%u t=%lu",
              down ? "DOWN" : "UP", pk.buttons, (long)pk.x, (long)pk.y, pk.pressure, GetTickCount());
+    }
     g_was_down = down;
 
     /* CONFLATION: always keep g_last fresh, but only PostMessage a new WT_PACKET
@@ -271,8 +276,92 @@ static void flush_pending(void) {
  * looks dead to BOTH pen and mouse — while the menu bar (a different code path)
  * still responds. macOS-side re-activation can't fix that; but this DLL lives
  * INSIDE SAI's process, so it can restore the Win32 state directly.
- * The mac helper bumps C:\wt_wake.txt to ask for it. Disable: WT_NO_WIN32_WAKE. */
+ * The mac helper bumps C:\wt_wake.txt to ask for it. Disable: WT_NO_WIN32_WAKE.
+ *
+ * SetActiveWindow/SetFocus are THREAD-LOCAL: they must run on SAI's UI thread,
+ * not our producer thread (from here they'd target our message-less thread and
+ * earlier attempts disturbed SAI's input). We marshal onto the UI thread with a
+ * thread-scoped WH_GETMESSAGE hook: the hook proc is our own code but Windows
+ * runs it on the HOOKED thread whenever that thread pulls a message — SAI's UI
+ * thread keeps pumping while stuck (the menu row still works), so posting any
+ * message guarantees a prompt tick. Fallback: AttachThreadInput, which shares
+ * the input state so the calls apply from this thread. */
 typedef struct { HWND h; LONG area; } BESTWND;
+
+static volatile HWND  g_wake_target;   /* window the hook should activate */
+static volatile LONG  g_wake_done;
+static HHOOK          g_wake_hook;
+
+/* Wake diagnostics are ALWAYS logged (separate file, append) — wakes are rare
+ * (user-triggered) so there's no per-packet cost, and field reports without
+ * WT_DEBUG were blind exactly when we needed data. See issue #2. */
+static void wake_log(const char *fmt, ...) {
+    FILE *f = fopen("C:\\wt_wakelog.txt", "a");
+    if (!f) return;
+    fprintf(f, "[%lu] ", (unsigned long)GetTickCount());
+    va_list ap; va_start(ap, fmt); vfprintf(f, fmt, ap); va_end(ap);
+    fputc('\n', f); fclose(f);
+}
+
+/* runs ON SAI'S UI THREAD (thread-scoped hook) — the only place the two broken
+ * layers can BOTH be repaired (verified live against a stuck SAI, issue #2):
+ *
+ * 1. WINESERVER FOREGROUND can be parked on another process's window (seen:
+ *    the desktop window, class #32769). Wine enforces the Windows foreground
+ *    lock: SetForegroundWindow from a non-foreground process fails with
+ *    ERROR_ACCESS_DENIED (5). Classic bypass, confirmed working under this
+ *    Wine: AttachThreadInput to the CURRENT foreground owner's thread, which
+ *    makes our input state count as foreground, then retry.
+ *
+ * 2. THE COCOA KEY WINDOW: winemac.drv only makes the Mac window key on a
+ *    focus CHANGE. After the bug the Win32 state can already read "correct"
+ *    (focus==w) so a plain SetFocus(w) no-ops at win32u level and the driver
+ *    is never called — the Mac window stays non-key and every click becomes a
+ *    swallowed "activating click". Toggling focus through NULL forces the
+ *    driver call. Driver entry points run in the CALLING process, so this is
+ *    only effective from inside SAI — exactly here. */
+static LRESULT CALLBACK wake_hook_proc(int code, WPARAM wp, LPARAM lp) {
+    if (code >= 0 && g_wake_target && !g_wake_done) {
+        HWND w = g_wake_target;
+        InterlockedExchange(&g_wake_done, 1);   /* once per request */
+        HWND fgBefore = GetForegroundWindow();
+        BOOL bypass = FALSE;
+        BringWindowToTop(w);
+        SetLastError(0);
+        BOOL ok = SetForegroundWindow(w);
+        DWORD err = GetLastError();
+        if (!ok || GetForegroundWindow() != w) {
+            DWORD fgTid = fgBefore ? GetWindowThreadProcessId(fgBefore, NULL) : 0;
+            if (fgTid && fgTid != GetCurrentThreadId() &&
+                AttachThreadInput(GetCurrentThreadId(), fgTid, TRUE)) {
+                bypass = TRUE;
+                SetLastError(0);
+                ok = SetForegroundWindow(w);
+                err = GetLastError();
+                AttachThreadInput(GetCurrentThreadId(), fgTid, FALSE);
+            }
+        }
+        SetActiveWindow(w);
+        SetFocus(NULL);       /* force the focus change through the driver */
+        SetFocus(w);
+        /* 3rd broken layer (the one that finally matched the field logs): SAI
+         * keeps its OWN "am I active" flag, set only by activation MESSAGES.
+         * Wine can restore the activation state without a state CHANGE, so no
+         * message is ever generated and SAI's flag stays stale — canvas clicks
+         * keep getting eaten even with fg/active/focus all correct (observed
+         * live: 6 perfectly healthy wakes on a still-stuck SAI). Synthesize the
+         * sequence a real activation would deliver; we're ON the UI thread, so
+         * these are direct window-proc calls. */
+        SendMessageW(w, WM_NCACTIVATE, TRUE, 0);
+        SendMessageW(w, WM_ACTIVATEAPP, TRUE, 0);
+        SendMessageW(w, WM_ACTIVATE, MAKEWPARAM(WA_ACTIVE, 0), 0);
+        wake_log("hook: target=%p fgBefore=%p sfw=%d err=%lu bypass=%d "
+                 "fg=%p active=%p focus=%p (activation msgs sent)",
+                 w, fgBefore, ok, (unsigned long)err, bypass,
+                 GetForegroundWindow(), GetActiveWindow(), GetFocus());
+    }
+    return CallNextHookEx(g_wake_hook, code, wp, lp);
+}
 
 static BOOL CALLBACK find_main_window(HWND h, LPARAM lp) {
     DWORD pid = 0;
@@ -287,26 +376,62 @@ static BOOL CALLBACK find_main_window(HWND h, LPARAM lp) {
     return TRUE;
 }
 
+/* marshal one wake onto the UI thread; returns 1 if the hook ran */
+static int run_wake_hook(HWND w, DWORD tid) {
+    g_wake_target = w;
+    InterlockedExchange(&g_wake_done, 0);
+    g_wake_hook = SetWindowsHookExW(WH_GETMESSAGE, wake_hook_proc, NULL, tid);
+    if (!g_wake_hook) {
+        wake_log("win32_wake: SetWindowsHookEx failed (%lu)", (unsigned long)GetLastError());
+        g_wake_target = NULL;
+        return 0;
+    }
+    /* poke the UI thread so the hook fires now; WM_NULL is a no-op to SAI */
+    PostMessageW(w, WM_NULL, 0, 0);
+    for (int i = 0; i < 40 && !g_wake_done; i++) Sleep(5);   /* <=200 ms */
+    UnhookWindowsHookEx(g_wake_hook);
+    g_wake_hook = NULL;
+    g_wake_target = NULL;
+    if (!g_wake_done) wake_log("win32_wake: hook never ticked");
+    return g_wake_done != 0;
+}
+
 static void win32_wake(void) {
     BESTWND best = { NULL, 0 };
     EnumWindows(find_main_window, (LPARAM)&best);
     HWND w = best.h ? best.h : (g_hwnd ? GetAncestor(g_hwnd, GA_ROOT) : NULL);
-    if (!w) { log_line("win32_wake: no window found"); return; }
-    log_line("win32_wake: activating hwnd=%p", w);
-    /* Only cross-thread-safe calls here. SetActiveWindow/SetFocus are
-     * THREAD-LOCAL: calling them from this producer thread would target our own
-     * (message-less) thread, not SAI's UI thread, and disturbed SAI's input. */
-    BringWindowToTop(w);
-    SetForegroundWindow(w);
+    if (!w) { wake_log("win32_wake: no window found"); return; }
+
+    DWORD tid = GetWindowThreadProcessId(w, NULL);
+    wake_log("win32_wake: target=%p uiThread=%lu fg=%p", w, (unsigned long)tid,
+             GetForegroundWindow());
+
+    run_wake_hook(w, tid);
+
+    /* VERIFY it took (and stuck): a sibling Wine process — e.g. the one the
+     * helper's macOS-side bounce activates — can steal wineserver foreground
+     * right back. Identify the thief for the log and retry once, again via
+     * the UI thread (a naked call from this thread hits the foreground lock). */
+    Sleep(250);
+    HWND fgNow = GetForegroundWindow();
+    if (fgNow == w) { wake_log("win32_wake: OK, foreground is ours"); return; }
+    DWORD thiefPid = 0;
+    if (fgNow) GetWindowThreadProcessId(fgNow, &thiefPid);
+    wake_log("win32_wake: fg=%p ownerPid=%lu (we are pid %lu) — retrying",
+             fgNow, (unsigned long)thiefPid, (unsigned long)GetCurrentProcessId());
+    run_wake_hook(w, tid);
+    Sleep(150);
+    fgNow = GetForegroundWindow();
+    wake_log("win32_wake: after retry fg=%p (%s)", fgNow, fgNow == w ? "ok" : "STILL LOST");
 }
 
 /* poll the wake marker (cheap, ~6x/sec) */
 static void check_win32_wake(DWORD now) {
     static DWORD lastCheck;
     static char lastVal[32];
-    /* OPT-IN: set WT_WIN32_WAKE=1 to enable. Off by default until it's proven —
-     * an earlier version of this (wrong thread) disturbed SAI's input state. */
-    if (!getenv("WT_WIN32_WAKE")) return;
+    /* ON by default (the wake now runs on SAI's UI thread via the hook, so the
+     * earlier wrong-thread hazard is gone). Opt out with WT_NO_WIN32_WAKE=1. */
+    if (getenv("WT_NO_WIN32_WAKE")) return;
     if (now - lastCheck < 150) return;
     lastCheck = now;
     FILE *f = fopen("C:\\wt_wake.txt", "rb");
@@ -320,6 +445,69 @@ static void check_win32_wake(DWORD now) {
         strcpy(lastVal, b);
         if (!first) win32_wake();       /* skip the value we see on startup */
     }
+}
+
+/* ---- CLICK DE-DUP (pen tap = double click bug) -----------------------------
+ * Every physical pen tap reaches SAI TWICE: once as our WinTab packet
+ * (buttons=1, which drives the canvas and the tool panels) and once as the
+ * mouse click Wine synthesizes from the same tap. Real Windows drivers tag
+ * their synthesized mouse events so apps can de-dup; Wine's carry no tag, and
+ * SAI's own heuristic misses often enough that a single pen tap on a brush
+ * slot could register as TWO clicks and pop the double-click Property dialog
+ * (field logs showed one clean DOWN/UP pair per tap — the duplicate is the
+ * mouse click, not our stream). So we de-dup for SAI: a permanent
+ * WH_GETMESSAGE hook on its UI thread rewrites left-button messages to
+ * WM_NULL when they arrive within CLICK_DEDUP_MS of a pen-tip transition.
+ * Scope:
+ *   - main window only (GA_ROOT match): dialogs are separate windows and may
+ *     be mouse-driven — never touched.
+ *   - client-area messages only: the menu bar is WM_NCLBUTTONDOWN, so the
+ *     issue-#1 menu-strip fix is unaffected.
+ *   - only within CLICK_DEDUP_MS of a REAL tip transition from our stream; a
+ *     human can't switch pen->mouse that fast, so real mouse clicks pass.
+ * Disable: WT_NO_CLICK_DEDUP=1. */
+#define CLICK_DEDUP_MS 400
+static HHOOK g_click_hook;
+static unsigned long g_clicks_eaten;
+
+static LRESULT CALLBACK click_hook_proc(int code, WPARAM wp, LPARAM lp) {
+    MSG *m = (MSG *)lp;
+    (void)wp;
+    if (code >= 0 && m && g_hwnd &&
+        (m->message == WM_LBUTTONDOWN || m->message == WM_LBUTTONUP ||
+         m->message == WM_LBUTTONDBLCLK)) {
+        DWORD dt = GetTickCount() - g_last_tip_tick;
+        if (dt < CLICK_DEDUP_MS &&
+            GetAncestor(m->hwnd, GA_ROOT) == GetAncestor(g_hwnd, GA_ROOT)) {
+            log_line("CLICK dedup: ate msg=%#x hwnd=%p dt=%lums total=%lu",
+                     m->message, (void *)m->hwnd, (unsigned long)dt, ++g_clicks_eaten);
+            m->message = WM_NULL;
+            m->wParam = 0;
+            m->lParam = 0;
+        } else {
+            /* diagnosis aid: a click we saw and let PASS — tells us whether
+             * Wine mouse clicks exist at all and why they were skipped
+             * (too late after the tip, or aimed at another root window) */
+            log_line("CLICK seen: msg=%#x hwnd=%p root=%p (main=%p) dt=%lums",
+                     m->message, (void *)m->hwnd,
+                     (void *)GetAncestor(m->hwnd, GA_ROOT),
+                     (void *)(g_hwnd ? GetAncestor(g_hwnd, GA_ROOT) : NULL),
+                     (unsigned long)dt);
+        }
+    }
+    return CallNextHookEx(g_click_hook, code, wp, lp);
+}
+
+/* install once SAI's window exists (cheap; called from producer housekeeping) */
+static void ensure_click_dedup(void) {
+    if (g_click_hook || !g_hwnd) return;
+    if (getenv("WT_NO_CLICK_DEDUP")) return;
+    HWND root = GetAncestor(g_hwnd, GA_ROOT);
+    DWORD tid = GetWindowThreadProcessId(root ? root : g_hwnd, NULL);
+    if (!tid) return;
+    g_click_hook = SetWindowsHookExW(WH_GETMESSAGE, click_hook_proc, NULL, tid);
+    log_line("click dedup: hook %s on thread %lu",
+             g_click_hook ? "installed" : "FAILED", (unsigned long)tid);
 }
 
 /* parse "p [x y w h]" into a SAMPLE (pure logic lives in wintab_core.h) */
@@ -400,6 +588,7 @@ static DWORD WINAPI producer(LPVOID arg) {
 
         /* recv timed out (idle) or no socket -> housekeeping */
         DWORD now = GetTickCount();
+        ensure_click_dedup();           /* pen-tap double-click fix, once hwnd exists */
         check_win32_wake(now);          /* helper asked us to restore Win32 focus? */
         flush_pending();                /* pen still/lifted: deliver the final point */
         if (now - lastBeat > 2000) {
@@ -634,6 +823,10 @@ HANDLE WINAPI WTMgrDefContextEx(HANDLE mgr, UINT dev, BOOL sys) { log_line("WTMg
 
 BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID r) {
     (void)h; (void)r;
+    if (reason == DLL_PROCESS_DETACH && g_click_hook) {
+        UnhookWindowsHookEx(g_click_hook);
+        g_click_hook = NULL;
+    }
     if (reason == DLL_PROCESS_ATTACH) {
         InitializeCriticalSection(&g_cs);
         g_screenW = GetSystemMetrics(SM_CXSCREEN);

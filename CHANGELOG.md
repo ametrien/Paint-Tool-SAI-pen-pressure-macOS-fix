@@ -5,6 +5,38 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
 
 ## [Unreleased]
 
+## [0.1.5] — 2026-07-25
+
+### Fixed
+- **The app-switch freeze auto-recovers — for real this time** (#2). Live-debugging a stuck
+  SAI showed *three* stacked breakages, and the wake now repairs all of them from inside
+  SAI's process, on its UI thread (marshalled via a thread-scoped `WH_GETMESSAGE` hook):
+  1. wineserver **foreground** parked on the desktop window, with Wine's foreground lock
+     refusing `SetForegroundWindow` from a non-foreground process (`AttachThreadInput`
+     bypass, then retry);
+  2. the **Mac key window** — `winemac.drv` only informs macOS on a focus *change*, so the
+     wake toggles focus through NULL to force the driver call;
+  3. **SAI's own "am I active" flag** — set only by `WM_ACTIVATE`/`WM_ACTIVATEAPP`
+     *messages*, which Wine never sends when it restores state without a change; the wake
+     synthesizes the real activation message sequence. This was the decisive layer.
+  Triggered automatically on returning to SAI (plus a second wake ~0.6 s after the
+  transition settles), on dead-canvas clicks, and manually via ⌃⌥⌘Space / 🖊 / the setup
+  window. Wake attempts always log to `C:\wt_wakelog.txt` and `/tmp/sai-wake.log`.
+  Opt out: `WT_NO_WIN32_WAKE=1`.
+- **Single pen tap on a brush slot no longer opens the double-click Property dialog** (#8).
+  The tablet can report one physical touch as two (pressure dips through zero and back —
+  field log: re-touch at the same spot 72 ms later). A **pen-up latch** holds each pen-up
+  for 150 ms (`WT_UP_LATCH=<ms>`, 0 disables) and absorbs same-spot re-touches; human
+  double-taps still pass. Plus a safety net: the DLL eats Wine's synthesized left-clicks
+  arriving within 400 ms of a real pen-tip transition (main window client area only —
+  dialogs and the menu bar untouched; `WT_NO_CLICK_DEDUP=1` disables).
+- **No cursor lag after strokes**: the latch releases hover tracking the moment the pen
+  moves past the absorb radius, so the brush cursor chases the pen immediately.
+- **Setup window**: the "Update available" line no longer overflows — the release-notes
+  teaser moved into a tooltip and the label truncates gracefully.
+
+## [0.1.4] — 2026-07-25
+
 ### Added
 - **Pen taps now work on SAI's top menu row** (File/Edit/Canvas/…) — fixes #1. While the pen
   is over SAI's menu strip the helper streams nothing, so SAI takes the pen's plain mouse

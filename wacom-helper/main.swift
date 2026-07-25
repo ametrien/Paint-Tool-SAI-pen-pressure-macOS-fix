@@ -99,11 +99,12 @@ func osa(_ src: String) -> String? {
 }
 func alertUser(_ msg: String) { _ = osa("display dialog \(msg.debugDescription) buttons {\"OK\"} with icon note") }
 
-// Optional diagnostic log for the "wake SAI" feature. Off unless WT_WAKELOG is
-// set, so the release doesn't write to /tmp on every keypress.
+// Diagnostic log for the "wake SAI" feature. Wake EVENTS are rare
+// (user/return-triggered) so they're always logged — field debugging of
+// issue #2 was blind without them. The chatty per-second keepAlive lines
+// stay opt-in behind WT_WAKELOG.
 let wakeLogOn = ProcessInfo.processInfo.environment["WT_WAKELOG"] != nil
 func wlog(_ s: String) {
-    guard wakeLogOn else { return }
     let line = "\(Date()) \(s)\n"
     let path = "/tmp/sai-wake.log"
     if let h = FileHandle(forWritingAtPath: path) { h.seekToEndOfFile(); h.write(line.data(using: .utf8)!); try? h.close() }
@@ -352,9 +353,32 @@ func refreshSAIStrip() {
         : CGRect(x: best.minX, y: best.minY, width: best.width, height: min(menuStripH, best.height))
 }
 
+// PEN-UP LATCH state (see PressureCore.upLatchAbsorbs): a pen-up is HELD for a
+// short window instead of being sent immediately, so a pressure dip through
+// zero (one physical touch reported as two) collapses back into one touch.
+// (x, y) is where the pen went up; `at` when. Flushed by the timer, by the pen
+// leaving proximity (no re-touch can follow), or by a genuine new touch.
+var g_pendingUp: (x: Int, y: Int, at: CFAbsoluteTime)?
+// latch window, tunable: WT_UP_LATCH=<ms> (default 150; 0 disables). Raise it
+// if single taps still double occasionally; lower it if fast intentional
+// double-taps get absorbed. Above ~200ms you enter human double-tap
+// territory — a re-touch that slow is indistinguishable from intent.
+let upLatchS: Double = {
+    if let s = ProcessInfo.processInfo.environment["WT_UP_LATCH"], let v = Double(s) { return v / 1000 }
+    return 0.15
+}()
+
+func flushPendingUp() {
+    guard let up = g_pendingUp else { return }
+    g_pendingUp = nil
+    lastKeyP = 0; lastKeyX = up.x; lastKeyY = up.y
+    send(0, up.x, up.y)
+}
+
 func emit(pressure: Int, loc: CGPoint) {
     // Over SAI's menu strip: go silent so SAI treats the pen as a plain mouse.
     if !g_saiStrip.isEmpty && g_saiStrip.contains(loc) {
+        g_pendingUp = nil                      // strip ends the touch right here
         if lastKeyP > 0 {                      // pen was down -> end the stroke cleanly
             lastKeyP = 0
             send(0, lastKeyX, lastKeyY)
@@ -369,6 +393,39 @@ func emit(pressure: Int, loc: CGPoint) {
     // stroke (previous sample was a press) — see the flag's comment up top.
     if noHover && p == 0 && lastKeyP <= 0 { return }
     let (xf, yf) = PressureCore.mapToVirtual(locX: loc.x, locY: loc.y, vX: vX, vY: vY, vH: vH)
+
+    // --- pen-up latch ---------------------------------------------------------
+    if p == 0 {
+        if upLatchS > 0, lastKeyP > 0, g_pendingUp == nil {
+            // pen just left the surface: HOLD the up; flush when the latch
+            // window passes without a bounce. lastKeyP stays >0 so the stream
+            // reads "still touching" until the up is actually sent.
+            let up = (x: xf, y: yf, at: CFAbsoluteTimeGetCurrent())
+            g_pendingUp = up
+            DispatchQueue.main.asyncAfter(deadline: .now() + upLatchS + 0.01) {
+                if let cur = g_pendingUp, cur.at == up.at { flushPendingUp() }
+            }
+        }
+        // While a hold is pending, hover samples NEAR the tap spot stay
+        // swallowed (that's the latch). But the moment the pen MOVES AWAY,
+        // holding is pointless — a re-touch there wouldn't be absorbed — and
+        // swallowing hover froze the brush cursor after every stroke, which
+        // read as "drawing got laggier". Flush and resume live hover tracking.
+        if let up = g_pendingUp {
+            if abs(xf - up.x) <= 48 && abs(yf - up.y) <= 48 { return }   // same radius as upLatchAbsorbs
+            flushPendingUp()
+            // fall through: this sample continues as a normal hover packet
+        }
+    } else if let up = g_pendingUp {
+        if PressureCore.upLatchAbsorbs(secondsSincePenUp: CFAbsoluteTimeGetCurrent() - up.at,
+                                       xf: xf, yf: yf, upX: up.x, upY: up.y,
+                                       latch: upLatchS) {
+            g_pendingUp = nil                  // bounce: same touch continues
+        } else {
+            flushPendingUp()                   // genuine new touch: end the old one first
+        }
+    }
+
     if PressureCore.isDuplicate(p: p, xf: xf, yf: yf, lastP: lastKeyP, lastX: lastKeyX, lastY: lastKeyY) { return }
     lastKeyP = p; lastKeyX = xf; lastKeyY = yf
     if p > 0 { g_lastDrawAt = Date() }        // "SAI is clearly alive" signal for auto-wake
@@ -398,7 +455,7 @@ func keepAlive() {
     // ~1s heartbeat: is our run loop even ticking, is the tap enabled, and are
     // we still capturing (seq)? Tells us if the mac tap is what's dying.
     g_kaTick += 1
-    if g_kaTick % 25 == 0 { wlog("mac keepAlive: tick=\(g_kaTick) tapEnabled=\(enabled) captured(seq)=\(seq) | tabletMouse=\(g_evTabletMouse) PLAINmouse=\(g_evPlainMouse) penSeen=\(g_penEverSeen) saiWin=\(g_saiWindow.isEmpty ? "EMPTY" : "\(Int(g_saiWindow.width))x\(Int(g_saiWindow.height))")") }
+    if wakeLogOn, g_kaTick % 25 == 0 { wlog("mac keepAlive: tick=\(g_kaTick) tapEnabled=\(enabled) captured(seq)=\(seq) | tabletMouse=\(g_evTabletMouse) PLAINmouse=\(g_evPlainMouse) penSeen=\(g_penEverSeen) saiWin=\(g_saiWindow.isEmpty ? "EMPTY" : "\(Int(g_saiWindow.width))x\(Int(g_saiWindow.height))")") }
     if noHover { return }   // WT_NO_HOVER experiment: no hover keepalive at all
     if PressureCore.keepAliveShouldResend(inProximity: inProximity, lastPressure: lastKeyP,
                                           secondsSinceLastSend: CFAbsoluteTimeGetCurrent() - lastSendMs) {
@@ -446,7 +503,10 @@ let tapCallback: CGEventTapCallBack = { _, type, event, _ in
         // pen entering/leaving range drives the keepalive (arrow stays hidden
         // while present, mouse can paint once the pen leaves)
         inProximity = event.getIntegerValueField(.tabletProximityEventEnterProximity) != 0
-        if !inProximity { emit(pressure: 0, loc: event.location) }
+        if !inProximity {
+            emit(pressure: 0, loc: event.location)
+            flushPendingUp()   // pen left range: no bounce can follow, end the touch now
+        }
     case .tabletPointer:
         g_evTabletPtr += 1
         g_lastTabletEvAt = CFAbsoluteTimeGetCurrent(); g_penEverSeen = true
@@ -471,10 +531,11 @@ let tapCallback: CGEventTapCallBack = { _, type, event, _ in
             // flowing) just went silent. That's the moment to auto-wake.
             // EXPERIMENTAL, opt-in (WT_DEMOTION_WAKE=1). Detects the stuck state
             // by the pen being demoted to a plain mouse over SAI's window, then
-            // auto-bounces. It reliably DETECTS, but the bounce doesn't reliably
-            // restore SAI's Win32 foreground, so it's not on by default yet (and
-            // it can false-fire on intentional trackpad use). Manual wake remains
-            // the dependable recovery. See issue #2.
+            // auto-bounces. Recovery is solid now (the DLL restores Win32
+            // foreground from SAI's UI thread on every bumpWin32Wake), but this
+            // TRIGGER can false-fire on intentional trackpad use over SAI's
+            // window, so it stays opt-in. The default triggers (app-switch
+            // return, dead click) cover the common paths. See issue #2.
             if g_demotionWake, g_penEverSeen,
                CFAbsoluteTimeGetCurrent() - g_lastTabletEvAt > 0.35,
                !g_saiWindow.isEmpty, g_saiWindow.contains(event.location) {
@@ -750,6 +811,11 @@ final class SetupController: NSObject, NSApplicationDelegate {
             wlog("  -> gentle activate pid=\(app.processIdentifier)")
             app.activate(options: [.activateAllWindows])
         }
+        // post-transition wake, once macOS has settled (see bounceToSAI)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            wlog("  -> post-wakeSAI wake bump")
+            self.bumpWin32Wake()
+        }
     }
 
     // AUTO-WAKE (issue #2): whenever Wine/SAI comes to the front, re-activate the
@@ -816,6 +882,16 @@ final class SetupController: NSObject, NSApplicationDelegate {
             target.activate(options: [.activateAllWindows])
             wlog("  -> re-activated owner pid=\(target.processIdentifier)")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.bouncing = false }
+            // Bump AGAIN once the transition has settled: the bump at bounce
+            // start can fire the DLL's wake MID-bounce (while the OTHER wine
+            // process is still the active Cocoa app), and winemac.drv ignores
+            // key-window changes for an inactive app — a wasted wake. This one
+            // runs with SAI properly active, so the driver-level focus refresh
+            // actually takes. See issue #2.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                wlog("  -> post-bounce wake bump")
+                self.bumpWin32Wake()
+            }
         }
     }
 
@@ -857,6 +933,11 @@ final class SetupController: NSObject, NSApplicationDelegate {
                 wlog("autoWake(click/raise): front=\(front.localizedName ?? "?") -> owner=\(target.processIdentifier)")
                 self.bumpWin32Wake()
                 target.activate(options: [.activateAllWindows])
+                // post-transition wake, once macOS has settled (see bounceToSAI)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    wlog("autoWake(click/raise): post bump")
+                    self.bumpWin32Wake()
+                }
             }
         }
     }
@@ -964,16 +1045,21 @@ final class SetupController: NSObject, NSApplicationDelegate {
         latestTag = tag; latestNotes = notes
         guard updateLabel != nil else { return }
         if isNewer(tag, than: currentVersion()) {
-            // first meaningful line of the release notes, as a teaser
+            // Keep the label SHORT — a release-notes teaser here overflowed the
+            // row. The first meaningful line goes in the tooltip instead (with
+            // markdown markers stripped); full notes are behind the button.
             let first = notes.split(separator: "\n")
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .first { !$0.isEmpty && !$0.hasPrefix("#") && !$0.hasPrefix(">") } ?? ""
-            let teaser = first.count > 60 ? String(first.prefix(60)) + "…" : first
-            updateLabel.stringValue = "· Update available: \(tag)" + (teaser.isEmpty ? "" : " — \(teaser)")
+            let teaser = first.replacingOccurrences(of: "**", with: "")
+                .replacingOccurrences(of: "`", with: "")
+            updateLabel.stringValue = "· Update available: \(tag)"
+            updateLabel.toolTip = teaser.isEmpty ? nil : teaser
             updateLabel.textColor = .controlAccentColor
             updateBtn.isHidden = false
         } else {
             updateLabel.stringValue = "· up to date"
+            updateLabel.toolTip = nil
             updateLabel.textColor = .tertiaryLabelColor
             updateBtn.isHidden = true
         }
@@ -1084,6 +1170,10 @@ final class SetupController: NSObject, NSApplicationDelegate {
         let verRow = NSStackView(); verRow.orientation = .horizontal; verRow.alignment = .centerY; verRow.spacing = 8
         versionLabel = lbl("Version \(currentVersion())", 10, color: .tertiaryLabelColor)
         updateLabel = lbl("", 10, color: .secondaryLabelColor)
+        // if the label ever gets long again, truncate it with "…" instead of
+        // stretching the row / squeezing the button off the window
+        updateLabel.lineBreakMode = .byTruncatingTail
+        updateLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         updateBtn = NSButton(title: "What's new / Update…", target: self, action: #selector(openReleasePage))
         updateBtn.bezelStyle = .rounded
         updateBtn.controlSize = .small

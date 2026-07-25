@@ -59,6 +59,19 @@ struct CoreTests {
         expect(!PressureCore.keepAliveShouldResend(inProximity: true, lastPressure: 0, secondsSinceLastSend: 0.02),
                "keepalive: not yet idle (<50ms) -> no resend")
 
+        // --- upLatchAbsorbs ----------------------------------------------------------
+        // Pen-tap bounce fix: a pressure dip through zero at ~the same spot within
+        // the latch window is ONE physical touch, not two (single tap on a brush
+        // slot opened SAI's double-click Property dialog).
+        expect(PressureCore.upLatchAbsorbs(secondsSincePenUp: 0.072, xf: 2368, yf: 4892, upX: 2360, upY: 4896),
+               "latch: 72ms same-spot retouch is a bounce (field log case)")
+        expect(!PressureCore.upLatchAbsorbs(secondsSincePenUp: 0.2, xf: 2368, yf: 4892, upX: 2360, upY: 4896),
+               "latch: slow retouch (200ms) is a real double-tap")
+        expect(!PressureCore.upLatchAbsorbs(secondsSincePenUp: 0.05, xf: 2368, yf: 4892, upX: 3000, upY: 4896),
+               "latch: fast retouch far away is a real new touch")
+        expect(PressureCore.upLatchAbsorbs(secondsSincePenUp: 0.119, xf: 100, yf: 100, upX: 100 + 48, upY: 100),
+               "latch: edge of window+radius still absorbs")
+
         // (Cmd->Ctrl remap is now handled by Wine's LeftCommandIsCtrl, not the
         //  helper, so there's no shouldRemapKey logic to test here anymore.)
 

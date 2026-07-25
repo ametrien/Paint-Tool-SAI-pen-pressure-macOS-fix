@@ -40,6 +40,22 @@ enum PressureCore {
         inProximity && lastPressure == 0 && secondsSinceLastSend > 0.05
     }
 
+    /// PEN-UP LATCH (pen tap = double click bug): a light tap, or lifting away
+    /// but staying near the surface, can make the tablet's pressure dip through
+    /// zero and back — one physical touch reported as TWO (field log: DOWN/UP
+    /// then DOWN again at the same spot 72 ms later). So a pen-up is not sent
+    /// immediately: it is held for `latch` seconds, and if pressure returns
+    /// within that window CLOSE to where the pen went up, the dip is absorbed
+    /// and the touch continues as one. Returns true when the returning press is
+    /// that same touch (bounce), false when it is a genuine new touch.
+    /// Coordinates are in the 8x fixed-point wire format; `radiusF` 48 = 6 pt (field-log bounces re-touch within ~2 pt).
+    /// Human double-taps run slower than `latch`, so they still pass.
+    static func upLatchAbsorbs(secondsSincePenUp: Double, xf: Int, yf: Int,
+                               upX: Int, upY: Int,
+                               latch: Double = 0.15, radiusF: Int = 48) -> Bool {
+        secondsSincePenUp < latch && abs(xf - upX) <= radiusF && abs(yf - upY) <= radiusF
+    }
+
     /// Union of all display bounds = the full virtual desktop, in the global
     /// top-left-origin space CGEvent.location uses. The pen position is
     /// reported within THIS combined space so a 2nd monitor maps correctly
