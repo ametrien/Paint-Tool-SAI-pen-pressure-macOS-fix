@@ -165,15 +165,33 @@ func slcFiles(in dir: String) -> [String] {
     (((try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? [])
         .filter { $0.lowercased().hasSuffix(".slc") }).sorted()
 }
-func installedLicenseName() -> String? { slcFiles(in: prefixSAIDir).first }
+
+// WHERE SAI LOOKS FOR THE CERTIFICATE CHANGED BETWEEN BUILDS:
+//   - older Ver.2 builds read it from the folder holding sai2.exe;
+//   - the 2026-07-12 "Technical Preview Major Renovated" build reads it from a
+//     `settings` folder instead (the renovation moved config/licence paths).
+// Guessing wrong looks exactly like an invalid licence — SAI just refuses to
+// save, with no hint that the file is in the wrong folder. A certificate is
+// 128 bytes, so write BOTH and let whichever build you run find its own.
+var licenseDirs: [String] { [prefixSAIDir, "\(prefixSAIDir)/settings"] }
+
+func installedLicenseName() -> String? {
+    for d in licenseDirs { if let f = slcFiles(in: d).first { return f } }
+    return nil
+}
 
 @discardableResult
 func installLicenseFile(_ src: String) -> Bool {
     let name = (src as NSString).lastPathComponent
-    try? FileManager.default.createDirectory(atPath: prefixSAIDir, withIntermediateDirectories: true)
-    let dst = "\(prefixSAIDir)/\(name)"
-    try? FileManager.default.removeItem(atPath: dst)
-    do { try FileManager.default.copyItem(atPath: src, toPath: dst) } catch { return false }
+    var wroteAny = false
+    for dir in licenseDirs {
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let dst = "\(dir)/\(name)"
+        if dst == src { wroteAny = true; continue }        // already in place
+        try? FileManager.default.removeItem(atPath: dst)
+        if (try? FileManager.default.copyItem(atPath: src, toPath: dst)) != nil { wroteAny = true }
+    }
+    guard wroteAny else { return false }
     let stash = "\(licenseStashDir())/\(name)"                  // survive a rebuild
     try? FileManager.default.removeItem(atPath: stash)
     try? FileManager.default.copyItem(atPath: src, toPath: stash)
@@ -185,11 +203,8 @@ func installLicenseFile(_ src: String) -> Bool {
 func restoreStashedLicenses() {
     let stash = licenseStashDir()
     guard !slcFiles(in: stash).isEmpty else { return }
-    try? FileManager.default.createDirectory(atPath: prefixSAIDir, withIntermediateDirectories: true)
     for f in slcFiles(in: stash) {
-        let dst = "\(prefixSAIDir)/\(f)"
-        guard !FileManager.default.fileExists(atPath: dst) else { continue }
-        try? FileManager.default.copyItem(atPath: "\(stash)/\(f)", toPath: dst)
+        installLicenseFile("\(stash)/\(f)")      // writes every location SAI might read
     }
 }
 

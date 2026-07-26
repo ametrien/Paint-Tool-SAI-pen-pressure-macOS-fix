@@ -5,6 +5,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
 
 ## [Unreleased]
 
+### Fixed
+- **The license now works on the new "Major Renovated" SAI build too.** Where SAI reads the
+  `.slc` changed between builds: older Ver.2 builds read it from the folder holding `sai2.exe`,
+  the **2026-07-12 Technical Preview Major Renovated** build reads it from a **`settings`**
+  folder. Putting it in the wrong one is indistinguishable from an invalid license — SAI just
+  refuses to save, with no hint that the file is merely misplaced. The certificate is 128 bytes,
+  so the app and `install.sh` now write **both** locations (and restore both after a rebuild),
+  so whichever build you run finds its own.
+
+### Added
+- README documents both downloads on <https://www.systemax.jp/en/sai/devdept.html> — the
+  newest **2026-07-12 Major Renovated** preview (which has a **dark theme**:
+  *Window → Window Color → Dark Colors*) and the older Technical Preview Stable Version —
+  and explains the license-location difference between them.
+
 ## [0.1.6] — 2026-07-26
 
 ### Fixed

@@ -39,10 +39,15 @@ Starting with nothing but a Mac and a tablet? Follow these in order (~15 min, mo
 
 1. **Install your tablet's macOS driver** (e.g. Wacom's driver from wacom.com). Check the pen
    moves the cursor in any app before continuing.
-2. **Download PaintTool SAI Ver.2** from https://www.systemax.jp/en/sai/devdept.html — under *"Download
-   PaintTool SAI Ver.2 Technical Preview Stable Version"*, get the **SAI Ver.2 64bit … Technical
-   Preview** ZIP (~3 MB). Unzip it; the folder contains `sai2.exe`. *(You can draw and test
-   pressure for free — a license is only needed to save; see step 7.)*
+2. **Download PaintTool SAI Ver.2** from https://www.systemax.jp/en/sai/devdept.html.
+   Unzip it; the folder contains `sai2.exe`. *(You can draw and test pressure for free — a
+   license is only needed to save; see step 7.)* Two builds are offered:
+   - **SAI Ver.2 64bit — 2026-07-12 Technical Preview *Major Renovated*** (ZIP, ~3.3 MB) —
+     the newest. **It has a dark theme:** *Window → Window Color → Dark Colors*. ⚠️ It also
+     changed where the license certificate is read from — see step 7.
+   - **Technical Preview Stable Version** — the older, more conservative build.
+
+   Either works with this bridge; the app handles the license difference for you.
 3. **Download the app** — no terminal needed. From the
    [**latest release**](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/releases/latest),
    download **`SAI-Pen-Pressure-….zip`** and double-click it to unzip → you get
@@ -66,10 +71,19 @@ Starting with nothing but a Mac and a tablet? Follow these in order (~15 min, mo
    - Go to https://www.systemax.jp/en/license.html, enter the License Number, password, and your
      **System ID**, and download the `.slc` certificate.
    - In the setup app, click **Install…** on the **SAI license** row and pick that `.slc` — it's
-     copied into `~/SAI2-pressure/drive_c/SAI2/` (the folder SAI actually reads) automatically,
-     and a copy is kept so a reinstall restores it. Then quit SAI completely and relaunch — it
-     reads the license only at startup.
+     copied into the folder SAI actually reads, and a copy is kept so a reinstall restores it.
+     Then quit SAI completely and relaunch — it reads the license only at startup.
      *(Command line: `./install.sh --install-license`.)*
+   - **Why we copy it to two places.** Where SAI looks for the certificate changed between
+     builds: older Ver.2 builds read it from the folder holding `sai2.exe`, while the
+     **2026-07-12 Major Renovated** preview reads it from a **`settings`** folder. Getting it
+     wrong looks *exactly* like an invalid license — SAI simply refuses to save, with no hint
+     that the file is merely in the wrong folder. A certificate is 128 bytes, so the app writes
+     both and whichever build you run finds its own:
+     ```
+     ~/SAI2-pressure/drive_c/SAI2/sai-….slc
+     ~/SAI2-pressure/drive_c/SAI2/settings/sai-….slc
+     ```
    - Dropping the `.slc` into **your own** SAI folder does nothing — that folder is only a
      source that gets copied in at install time. *(The certificate is tied to your System ID; if
      you rebuild the Wine prefix and the ID changes, re-download it from the same page.)*
