@@ -75,10 +75,17 @@ install_license() {
     *) echo "ERROR: not a .slc certificate: $picked"; return 1 ;;
   esac
   if [ ! -f "$picked" ]; then echo "ERROR: no such file: $picked"; return 1; fi
-  mkdir -p "$PREFIX_SAI" "$SUPPORT/license"
+  # Where SAI reads the certificate changed between builds: older Ver.2 builds
+  # look next to sai2.exe, the 2026-07-12 "Major Renovated" preview looks in a
+  # `settings` folder. Guessing wrong is indistinguishable from an invalid
+  # licence — SAI just won't save. It's 128 bytes; write both.
+  mkdir -p "$PREFIX_SAI" "$PREFIX_SAI/settings" "$SUPPORT/license"
   cp "$picked" "$PREFIX_SAI/"
+  cp "$picked" "$PREFIX_SAI/settings/"
   cp "$picked" "$SUPPORT/license/"          # so --rebuild can put it back
-  echo "License installed: $PREFIX_SAI/$(basename "$picked")"
+  echo "License installed (both locations, for old and new SAI builds):"
+  echo "  $PREFIX_SAI/$(basename "$picked")"
+  echo "  $PREFIX_SAI/settings/$(basename "$picked")"
   echo "Quit SAI completely and relaunch for it to take effect."
 }
 
@@ -87,8 +94,9 @@ restore_licenses() {
   shopt -s nullglob
   local f found=0
   for f in "$SUPPORT/license"/*.slc "$SUPPORT/license"/*.SLC; do
-    mkdir -p "$PREFIX_SAI"
-    [ -e "$PREFIX_SAI/$(basename "$f")" ] || cp "$f" "$PREFIX_SAI/"
+    mkdir -p "$PREFIX_SAI" "$PREFIX_SAI/settings"      # old + new build locations
+    [ -e "$PREFIX_SAI/$(basename "$f")" ]          || cp "$f" "$PREFIX_SAI/"
+    [ -e "$PREFIX_SAI/settings/$(basename "$f")" ] || cp "$f" "$PREFIX_SAI/settings/"
     found=1
   done
   shopt -u nullglob
