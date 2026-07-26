@@ -58,15 +58,21 @@ Starting with nothing but a Mac and a tablet? Follow these in order (~15 min, mo
    - click **Launch SAI with Pressure**.
 6. **Turn on WinTab in SAI:** Others → Options → **Pen Tablet** → **Use WinTab API**, then
    relaunch SAI (reopen the app).
-7. **Draw — you've got pressure!** *To save your work* you need a SAI license:
+7. **Draw — you've got pressure!** *To save your work* you need a SAI license. SAI is
+   commercial software by SYSTEMAX; this project is unaffiliated and cannot supply a license.
    - Buy one, and you'll get an email titled *"Information About Your Software License"* with a
      **License Number** and a **Certificate Download Password**.
    - In SAI, open **Others → System ID** and note the ID it shows.
    - Go to https://www.systemax.jp/en/license.html, enter the License Number, password, and your
      **System ID**, and download the `.slc` certificate.
-   - Drop that `.slc` into `~/SAI2-pressure/drive_c/SAI2/` and restart SAI (it reads the license
-     only at startup). *(The certificate is tied to that System ID — if you ever rebuild the Wine
-     prefix and the ID changes, just re-download it from the same page.)*
+   - In the setup app, click **Install…** on the **SAI license** row and pick that `.slc` — it's
+     copied into `~/SAI2-pressure/drive_c/SAI2/` (the folder SAI actually reads) automatically,
+     and a copy is kept so a reinstall restores it. Then quit SAI completely and relaunch — it
+     reads the license only at startup.
+     *(Command line: `./install.sh --install-license`.)*
+   - Dropping the `.slc` into **your own** SAI folder does nothing — that folder is only a
+     source that gets copied in at install time. *(The certificate is tied to your System ID; if
+     you rebuild the Wine prefix and the ID changes, re-download it from the same page.)*
 
 That's it. The sections below explain the pieces, the manual (command-line) route, and options.
 
