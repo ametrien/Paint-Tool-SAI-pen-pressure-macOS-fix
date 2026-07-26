@@ -12,8 +12,44 @@ import Foundation
 
 enum PressureCore {
 
-    /// Tablet pressure is carried as 0...1023 end-to-end (WinTab convention).
-    static func clampPressure(_ raw: Int) -> Int { max(0, min(1023, raw)) }
+    /// Full-scale pressure carried on the wire.
+    ///
+    /// Tried 8191 for issue #21 (Wacom hardware reports 8192 levels) and BACKED
+    /// IT OUT: `isDuplicate` only drops a sample when pressure is exactly equal,
+    /// so 1024-level quantisation was silently filtering sensor jitter. At 8192
+    /// every micro-fluctuation became a distinct packet, and stroke width
+    /// visibly wobbled. More resolution needs a smoothing/deadband strategy
+    /// first — the raw number is not the hard part.
+    ///
+    /// MUST equal `WTC_MAX_PRESS` in wintab-src/wintab_core.h — the two form a
+    /// wire protocol with no version field, and a mismatched pair fails badly:
+    /// a helper scaling to 8191 against a DLL clamping at 1023 pins every
+    /// stroke at full pressure. `ensureBridgeUpToDate()` keeps the installed
+    /// DLL in step with the app so that pairing can't happen in practice.
+    /// Hard ceiling of the wire format (matches WTC_MAX_PRESS). The ACTIVE
+    /// full-scale value is chosen by the user at runtime — see `maxPressure`.
+    static let maxPressureCeiling = 8191
+
+    /// Levels offered in the setup window. 1024 is the long-standing default and
+    /// stays first for a reason: it is the quietest.
+    static let pressureChoices = [1023, 4095, 8191]
+
+    /// Active full-scale pressure. Settable so the user can trade resolution
+    /// against jitter; both halves of the bridge read the same stored value.
+    static var maxPressure = 1023
+
+    static func clampPressure(_ raw: Int) -> Int { max(0, min(maxPressure, raw)) }
+
+    /// Minimum pressure change worth sending, in wire units.
+    ///
+    /// This is the piece that was missing when 8192 levels first went in: with
+    /// exact-equality de-duplication, quantising to 1024 was silently filtering
+    /// sensor jitter, and removing it made stroke width visibly wobble. So the
+    /// deadband scales with the chosen resolution — one 1024th of full scale,
+    /// i.e. the same noise rejection as the old default, at any setting. Real
+    /// pressure changes still arrive at the finer resolution; only sub-threshold
+    /// jitter is dropped.
+    static var pressureDeadband: Int { max(1, maxPressure / 1024) }
 
     /// Map a global mac cursor location (top-left origin, y-down, points) to
     /// the wire format: position RELATIVE to the virtual-desktop origin,
@@ -28,6 +64,23 @@ enum PressureCore {
     static func isDuplicate(p: Int, xf: Int, yf: Int,
                             lastP: Int, lastX: Int, lastY: Int) -> Bool {
         p == lastP && xf == lastX && yf == lastY
+    }
+
+    /// Should this sample be skipped? Exact duplicates always; plus, when the
+    /// pen hasn't MOVED, pressure wobble smaller than the deadband.
+    ///
+    /// Tip transitions are never swallowed: a sample where either side is 0 is
+    /// a pen-down or pen-up, and dropping one would lose a stroke boundary.
+    /// Movement always passes too — position is what draws the line; only
+    /// stationary pressure noise is filtered.
+    static func shouldSkip(p: Int, xf: Int, yf: Int,
+                           lastP: Int, lastX: Int, lastY: Int,
+                           deadband: Int) -> Bool {
+        if isDuplicate(p: p, xf: xf, yf: yf, lastP: lastP, lastX: lastX, lastY: lastY) { return true }
+        guard deadband > 1 else { return false }
+        guard xf == lastX, yf == lastY else { return false }   // moved: always send
+        guard p > 0, lastP > 0 else { return false }           // tip transition: always send
+        return abs(p - lastP) < deadband
     }
 
     /// KEEPALIVE rule: while the pen hovers in range with no movement, resend

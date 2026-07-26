@@ -34,7 +34,7 @@ int main(void) {
     EXPECT(wtc_parse_sample("-3", &s) == 0, "parse: negative pressure rejected");
     EXPECT(s.press == 0, "parse: rejected input leaves sample untouched");
 
-    EXPECT(wtc_parse_sample("9999", &s) == 1 && s.press == WTC_MAX_PRESS,
+    EXPECT(wtc_parse_sample("99999", &s) == 1 && s.press == WTC_MAX_PRESS,
            "parse: overshoot clamps to 1023");
     EXPECT(wtc_parse_sample("100 5 5 0 100", &s) == 1 && s.has_pos == 0,
            "parse: zero width -> position ignored (division guard)");
