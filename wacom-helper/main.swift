@@ -123,9 +123,101 @@ func wineBin() -> String? {
     if let e = ProcessInfo.processInfo.environment["WINE"], FileManager.default.isExecutableFile(atPath: e) { return e }
     return nil
 }
-func ensureSetup(_ saiSrc: String, _ wine: String) -> Bool {
-    let saiExe = "\(appPrefix)/drive_c/SAI2/sai2.exe"
-    if FileManager.default.fileExists(atPath: saiExe) { return true }        // already set up
+// ============================================================================
+// THE PREFIX. SAI is COPIED into a Wine prefix and run from THERE — the folder
+// you pick is a source, not a live dependency. Everything that actually runs
+// lives under these paths.
+// ============================================================================
+let prefixSAIDir = "\(appPrefix)/drive_c/SAI2"
+let prefixSAIExe = "\(prefixSAIDir)/sai2.exe"
+
+func saiInstalledInPrefix() -> Bool { FileManager.default.fileExists(atPath: prefixSAIExe) }
+
+// The source folder the prefix was LAST BUILT FROM. Comparing it against the
+// currently-chosen folder is what makes "Change…" mean something: if they
+// disagree, the prefix is stale and must be re-copied (issue #11).
+func installedSrcPath() -> String? {
+    guard let s = try? String(contentsOfFile: appSupport() + "/installed-src.txt", encoding: .utf8) else { return nil }
+    let p = s.trimmingCharacters(in: .whitespacesAndNewlines); return p.isEmpty ? nil : p
+}
+func setInstalledSrcPath(_ p: String) {
+    try? p.write(toFile: appSupport() + "/installed-src.txt", atomically: true, encoding: .utf8)
+}
+/// true when what's installed doesn't match what's selected, so Launch must re-copy.
+/// Upgrades from older versions have no marker yet — treat those as NOT stale so
+/// nobody gets a surprise reinstall on first run of this build.
+func prefixIsStale() -> Bool {
+    guard saiInstalledInPrefix() else { return true }
+    guard let want = savedSAIPath(), let have = installedSrcPath() else { return false }
+    return want != have
+}
+
+// ---- licence (.slc) --------------------------------------------------------
+// SAI reads its certificate from the folder it RUNS in, i.e. inside the prefix.
+// Dropping it into your own SAI folder does nothing (issue #13). We also keep a
+// stashed copy so a full prefix rebuild can put it back automatically.
+func licenseStashDir() -> String {
+    let d = appSupport() + "/license"
+    try? FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true)
+    return d
+}
+func slcFiles(in dir: String) -> [String] {
+    (((try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? [])
+        .filter { $0.lowercased().hasSuffix(".slc") }).sorted()
+}
+func installedLicenseName() -> String? { slcFiles(in: prefixSAIDir).first }
+
+@discardableResult
+func installLicenseFile(_ src: String) -> Bool {
+    let name = (src as NSString).lastPathComponent
+    try? FileManager.default.createDirectory(atPath: prefixSAIDir, withIntermediateDirectories: true)
+    let dst = "\(prefixSAIDir)/\(name)"
+    try? FileManager.default.removeItem(atPath: dst)
+    do { try FileManager.default.copyItem(atPath: src, toPath: dst) } catch { return false }
+    let stash = "\(licenseStashDir())/\(name)"                  // survive a rebuild
+    try? FileManager.default.removeItem(atPath: stash)
+    try? FileManager.default.copyItem(atPath: src, toPath: stash)
+    return true
+}
+/// Put every stashed certificate back after a rebuild. Best-effort and silent:
+/// a rebuilt prefix has a new System ID, so the old cert may no longer validate —
+/// the UI says so rather than pretending the restore guarantees activation.
+func restoreStashedLicenses() {
+    let stash = licenseStashDir()
+    guard !slcFiles(in: stash).isEmpty else { return }
+    try? FileManager.default.createDirectory(atPath: prefixSAIDir, withIntermediateDirectories: true)
+    for f in slcFiles(in: stash) {
+        let dst = "\(prefixSAIDir)/\(f)"
+        guard !FileManager.default.fileExists(atPath: dst) else { continue }
+        try? FileManager.default.copyItem(atPath: "\(stash)/\(f)", toPath: dst)
+    }
+}
+
+// ---- setup / repair / rebuild ----------------------------------------------
+enum SetupMode {
+    case ensure     // install only if nothing usable is there (or the source changed)
+    case repair     // re-copy SAI + the bridge over the existing prefix; keep licence
+    case rebuild    // delete the whole prefix and build it from scratch; restore licence
+}
+
+/// Install the pressure bridge (our DLL + the registry overrides) into the prefix.
+/// Split out so repair can redo it without touching SAI itself.
+func installBridge(_ wine: String) {
+    let env = ["WINEPREFIX": appPrefix, "WINEDEBUG": "-all"]
+    if let res = Bundle.main.resourcePath {
+        let sys = "\(appPrefix)/drive_c/windows/system32"
+        try? FileManager.default.createDirectory(atPath: sys, withIntermediateDirectories: true)
+        try? FileManager.default.removeItem(atPath: "\(sys)/wintab32.dll")
+        try? FileManager.default.copyItem(atPath: "\(res)/wintab32.dll", toPath: "\(sys)/wintab32.dll")
+    }
+    runProc(wine, ["reg", "add", "HKCU\\Software\\Wine\\DllOverrides", "/v", "wintab32",
+                   "/t", "REG_SZ", "/d", "native,builtin", "/f"], env: env)
+}
+
+@discardableResult
+func performSetup(_ saiSrc: String, _ wine: String, mode: SetupMode = .ensure, quiet: Bool = false) -> Bool {
+    if mode == .ensure, saiInstalledInPrefix(), !prefixIsStale() { return true }
+
     // Fail fast (before the ~1-minute wineboot) with a SPECIFIC message if the
     // chosen SAI folder is gone or doesn't actually contain sai2.exe — e.g. the
     // user moved/deleted it after picking it, or picked the wrong level.
@@ -140,24 +232,44 @@ func ensureSetup(_ saiSrc: String, _ wine: String) -> Bool {
         try? FileManager.default.removeItem(atPath: appSupport() + "/config.txt")
         return false
     }
-    alertUser("Setting up SAI for the first time — this takes about a minute after you click OK. Please wait for SAI to appear.")
+
+    if !quiet {
+        let what = mode == .rebuild ? "Rebuilding the Wine prefix from scratch"
+                 : (saiInstalledInPrefix() ? "Reinstalling SAI into the Wine prefix"
+                                           : "Setting up SAI for the first time")
+        alertUser("\(what) — this takes about a minute after you click OK. Please wait for SAI to appear.")
+    }
+
     let env = ["WINEPREFIX": appPrefix, "WINEDEBUG": "-all"]
+    if mode == .rebuild {
+        // The whole point of a rebuild: nothing from the old prefix survives.
+        // The licence is restored afterwards from our own stash, not from here.
+        try? FileManager.default.removeItem(atPath: appPrefix)
+    }
     runProc(wine, ["wineboot", "-u"], env: env)
-    let dst = "\(appPrefix)/drive_c/SAI2"
-    try? FileManager.default.createDirectory(atPath: dst, withIntermediateDirectories: true)
-    runProc("/bin/cp", ["-R", "\(saiSrc)/.", dst])
-    guard FileManager.default.fileExists(atPath: saiExe) else {
+
+    // Re-copy SAI. For repair/rebuild the destination is cleared first, so files
+    // deleted from the source don't linger and a broken install can't survive.
+    if mode != .ensure, FileManager.default.fileExists(atPath: prefixSAIDir) {
+        // keep any certificate that's already in there
+        for f in slcFiles(in: prefixSAIDir) { installLicenseFile("\(prefixSAIDir)/\(f)") }
+        try? FileManager.default.removeItem(atPath: prefixSAIDir)
+    }
+    try? FileManager.default.createDirectory(atPath: prefixSAIDir, withIntermediateDirectories: true)
+    runProc("/bin/cp", ["-R", "\(saiSrc)/.", prefixSAIDir])
+    guard saiInstalledInPrefix() else {
         alertUser("Something went wrong copying SAI into the Wine prefix. Check that you have free disk space and that the SAI folder is readable, then reopen the app and try again."); return false
     }
-    if let res = Bundle.main.resourcePath {
-        let sys = "\(appPrefix)/drive_c/windows/system32"
-        try? FileManager.default.createDirectory(atPath: sys, withIntermediateDirectories: true)
-        try? FileManager.default.removeItem(atPath: "\(sys)/wintab32.dll")
-        try? FileManager.default.copyItem(atPath: "\(res)/wintab32.dll", toPath: "\(sys)/wintab32.dll")
-    }
-    runProc(wine, ["reg", "add", "HKCU\\Software\\Wine\\DllOverrides", "/v", "wintab32",
-                   "/t", "REG_SZ", "/d", "native,builtin", "/f"], env: env)
-    return FileManager.default.fileExists(atPath: saiExe)
+
+    installBridge(wine)
+    restoreStashedLicenses()
+    setInstalledSrcPath(saiSrc)          // the prefix now matches this source
+    return saiInstalledInPrefix()
+}
+
+/// Back-compat entry point used by the launch path.
+func ensureSetup(_ saiSrc: String, _ wine: String) -> Bool {
+    performSetup(saiSrc, wine, mode: .ensure)
 }
 
 // Mac-friendly shortcuts: make WINE map Command -> Control (undo/redo/save/etc.)
@@ -204,13 +316,26 @@ func runAppSetup() {
     guard ensureSetup(saiSrc, wine) else { exit(1) }
 }
 
+// OUR OWN app is called "SAI Pen Pressure", which contains "sai" — so every
+// window scan that looks for SAI by owner name was also matching our setup
+// window. It was decided purely by area: Wine's window (1007x554) beat ours
+// (726x760) by about 1%, so resizing our window was enough to make the app
+// treat ITSELF as SAI — wrong wake target, wrong menu strip, wrong "is SAI
+// still open". Always exclude our own process.
+let g_myPID = ProcessInfo.processInfo.processIdentifier
+func isForeignSAIWindow(_ w: [String: Any]) -> Bool {
+    let owner = (w[kCGWindowOwnerName as String] as? String ?? "").lowercased()
+    guard owner.contains("wine") || owner.contains("sai") else { return false }
+    let pid = pid_t(w[kCGWindowOwnerPID as String] as? Int ?? 0)
+    return pid != g_myPID
+}
+
 // Is any SAI/Wine window still on screen? Used to decide when SAI has really
 // closed (see launchSAIApp's terminationHandler).
 func saiWindowIsOpen() -> Bool {
     let list = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? []
     for w in list {
-        let owner = (w[kCGWindowOwnerName as String] as? String ?? "").lowercased()
-        guard owner.contains("wine") || owner.contains("sai") else { continue }
+        guard isForeignSAIWindow(w) else { continue }
         if (w[kCGWindowLayer as String] as? Int ?? 0) == 0 { return true }
     }
     return false
@@ -340,8 +465,7 @@ func refreshSAIStrip() {
     let list = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? []
     var best = CGRect.zero, bestArea: CGFloat = -1
     for w in list {
-        let owner = (w[kCGWindowOwnerName as String] as? String ?? "").lowercased()
-        guard owner.contains("wine") || owner.contains("sai") else { continue }
+        guard isForeignSAIWindow(w) else { continue }
         guard (w[kCGWindowLayer as String] as? Int ?? 0) == 0 else { continue }
         let b = w[kCGWindowBounds as String] as? [String: CGFloat] ?? [:]
         let r = CGRect(x: b["X"] ?? 0, y: b["Y"] ?? 0, width: b["Width"] ?? 0, height: b["Height"] ?? 0)
@@ -670,6 +794,12 @@ final class SetupController: NSObject, NSApplicationDelegate {
         var dynamicDetail: (() -> String)? = nil   // recomputed each refresh (e.g. show the chosen path)
         var keepButton: Bool = false               // keep the button visible even when satisfied (e.g. "Change…")
         var keepButtonTitle: String = "Change…"    // button label when satisfied (e.g. "Uninstall…" for Wine)
+        // Order matters: our bridge is installed INTO the Wine prefix, so the
+        // prefix step is meaningless until Wine exists and a source is chosen.
+        // Steps that can't be done yet are greyed out with a reason instead of
+        // offering a button that would just error.
+        var enabledIf: (() -> Bool)? = nil
+        var blockedHint: String = ""
     }
     var reqs: [Req] = []
     var window: NSWindow!
@@ -689,6 +819,29 @@ final class SetupController: NSObject, NSApplicationDelegate {
     var testing = false
     var testTimer: Timer?
 
+    // ---- window layout tiers -------------------------------------------------
+    // SIMPLE (default): only what needs your attention, plus Launch. Once
+    // everything is green this collapses to a title, a line of status and one
+    // big button — which is all a returning user wants.
+    // SETTINGS (disclosure): the full checklist — source / installed / licence —
+    // plus the explanatory footers.
+    // DEVELOPER (checkbox inside Settings): logs, prefix, diagnostics, console.
+    var content: NSStackView!
+    var rowViews: [NSStackView] = []
+    var footerLabels: [NSTextField] = []
+    var settingsOnlyViews: [NSView] = []
+    var advanced = false
+    var advancedBtn: NSButton!
+    var allSetLabel: NSTextField!
+    var autoBtn: NSButton!
+    var autoRunning = false
+    var secondaryRow: NSStackView!
+    var devSection: NSStackView!
+    var devCheck: NSButton!
+    var console: NSTextView!
+    var consoleScroll: NSScrollView!
+    let rowWidth: CGFloat = 500
+
     func lbl(_ s: String, _ size: CGFloat, bold: Bool = false, color: NSColor = .labelColor) -> NSTextField {
         let l = NSTextField(labelWithString: s)
         l.font = bold ? .boldSystemFont(ofSize: size) : .systemFont(ofSize: size)
@@ -702,16 +855,51 @@ final class SetupController: NSObject, NSApplicationDelegate {
             Req(title: "Wine (runs SAI on Mac)", detail: "Gcenx Wine Staging in /Applications", fixTitle: "Install Wine…",
                 ok: { wineBin() != nil },
                 fix: { [weak self] in
-                    if wineBin() == nil { installWineViaTerminal() } else { self?.uninstallWine() }
+                    // In-app install with a live progress bar (markWineInstalledByUs
+                    // is set inside, so "Reset everything" can tell our Wine from
+                    // one the user keeps for other Windows apps).
+                    if wineBin() == nil { self?.installWineInApp() } else { self?.uninstallWine() }
                 }, required: true,
                 keepButton: true, keepButtonTitle: "Uninstall…"),
-            Req(title: "PaintTool SAI folder", detail: "No folder chosen yet — click Choose.", fixTitle: "Choose…",
+            // SOURCE vs INSTALLED are two separate rows on purpose (issue #18).
+            // SAI is COPIED out of the folder you pick; it then runs from the
+            // Wine prefix. Showing only "Using: <your folder>" made people edit
+            // that folder (e.g. drop the .slc in) and wonder why nothing changed.
+            Req(title: "PaintTool SAI folder (source)", detail: "No folder chosen yet — click Choose.", fixTitle: "Choose…",
                 ok: { saiReady() }, fix: { [weak self] in self?.chooseSAI() }, required: true,
-                dynamicDetail: { savedSAIPath().map { "Using: \(($0 as NSString).abbreviatingWithTildeInPath)" }
+                dynamicDetail: { savedSAIPath().map { "Copied from: \(($0 as NSString).abbreviatingWithTildeInPath)" }
                                  ?? "No folder chosen yet — click Choose." },
                 keepButton: true),
+            Req(title: "Installed in Wine (what actually runs)", detail: "Not installed yet.", fixTitle: "Install…",
+                ok: { saiInstalledInPrefix() && !prefixIsStale() },
+                fix: { [weak self] in self?.reinstallMenu() }, required: true,
+                dynamicDetail: {
+                    let where_ = (prefixSAIDir as NSString).abbreviatingWithTildeInPath
+                    if !saiInstalledInPrefix() { return "Not installed yet — will be created on Launch." }
+                    if prefixIsStale() { return "OUT OF DATE — source folder changed. Reinstall to apply." }
+                    return where_
+                },
+                keepButton: true, keepButtonTitle: "Reinstall…",
+                enabledIf: { wineBin() != nil && saiReady() },
+                blockedHint: "Needs Wine and a SAI folder first — SAI is installed INTO the Wine prefix."),
+            // Optional (⚪️ not ❌): SAI launches without a licence, you just
+            // can't save. Lives next to the INSTALLED row because that's the
+            // folder it has to land in.
+            // OPTIONAL, and deliberately not a blocker: SAI installs, launches and
+            // draws without a licence — it just can't save. Marked ⚪️, never ❌.
+            Req(title: "SAI license (.slc) — optional", detail: "Your own license from SYSTEMAX — only needed to save.", fixTitle: "Install…",
+                ok: { installedLicenseName() != nil },
+                fix: { [weak self] in self?.chooseLicense() }, required: false,
+                dynamicDetail: {
+                    if let n = installedLicenseName() { return "Installed: \(n)" }
+                    if !slcFiles(in: licenseStashDir()).isEmpty {
+                        return "Saved copy will be restored when SAI is installed."
+                    }
+                    return "Not installed — SAI still runs and draws, but can't save."
+                },
+                keepButton: true),
             Req(title: "Input Monitoring permission", detail: "lets the app read your tablet's pressure", fixTitle: "Grant…",
-                ok: { inputMonitoringGranted() }, fix: { requestInputMonitoring() }, required: true),
+                ok: { inputMonitoringGranted() }, fix: { [weak self] in self?.grantInputMonitoring() }, required: true),
         ]
         buildWindow()
         refresh()
@@ -961,41 +1149,86 @@ final class SetupController: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
     func setUpStatusItem() {
         let si = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        si.button?.title = "🖊"
+        // ICON: an SF Symbol TEMPLATE image, not the old "🖊" emoji title.
+        // U+1F58A renders as a dark-grey pen — near-invisible on a dark menu bar
+        // (and it's a colour glyph, so it can't adapt). A template image is
+        // recoloured by AppKit to match the menu bar in both light and dark.
+        if let base = NSImage(systemSymbolName: "applepencil", accessibilityDescription: "SAI Pen Pressure"),
+           let img = base.withSymbolConfiguration(.init(pointSize: 15, weight: .regular)) {
+            img.isTemplate = true
+            si.button?.image = img
+        } else {
+            si.button?.title = "✏️"     // high-contrast fallback (older macOS)
+        }
         si.button?.toolTip = "SAI Pen Pressure"
-        let menu = NSMenu()
-        let wake = NSMenuItem(title: "Wake SAI window (if stuck)   ⌃⌥⌘Space", action: #selector(wakeSAI), keyEquivalent: "")
-        wake.target = self
-        menu.addItem(wake)
-        let auto = NSMenuItem(title: "Auto-wake when returning to SAI", action: #selector(toggleAutoWake(_:)), keyEquivalent: "")
-        auto.target = self
-        auto.state = autoWake ? .on : .off
-        menu.addItem(auto)
-        menu.addItem(.separator())
-        let show = NSMenuItem(title: "Open Setup window", action: #selector(showSetupWindow), keyEquivalent: "")
-        show.target = self
-        menu.addItem(show)
-        menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
-        si.menu = menu
+        // Give the item a STABLE identity. Without one, AppKit derives the
+        // menu-bar slot from the app's code-signing identity — and make-app.sh
+        // signs ad-hoc, so every rebuild looks like a brand-new app and gets no
+        // allocated slot (it landed at x=1321, underneath the clock, invisible).
+        si.autosaveName = "SAIPenPressureStatusItem"
+        si.isVisible = true
+        // Diagnostic: where did macOS actually put us? A menu bar with no room
+        // left (long app menus + the notch) silently drops the item, which looks
+        // exactly like "the icon vanished". Logged so field reports can tell the
+        // two apart. See wlog() — always on, cheap, fires once at startup.
+        for t in [1.5, 5.0, 12.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + t) { [weak si] in
+                guard let si = si else { wlog("statusItem@\(t)s: DEALLOCATED"); return }
+                let f = si.button?.window?.frame
+                wlog("statusItem@\(t)s: visible=\(si.isVisible) len=\(si.length) frame=\(f.map { "\($0)" } ?? "nil")")
+            }
+        }
+        si.menu = makeMenu()
         statusItem = si
     }
+
+    /// Rebuild both menus after something that changes their contents (dev mode).
+    func rebuildMenus() { statusItem?.menu = makeMenu() }
+
+    /// One menu definition shared by the 🖊 menu-bar item and the right-click
+    /// Dock menu, so the two can't drift apart.
+    func makeMenu() -> NSMenu {
+        let menu = NSMenu()
+        func add(_ title: String, _ sel: Selector, state: NSControl.StateValue? = nil, indent: Int = 0) {
+            let it = NSMenuItem(title: title, action: sel, keyEquivalent: "")
+            it.target = self
+            it.indentationLevel = indent
+            if let s = state { it.state = s }
+            menu.addItem(it)
+        }
+        add("Wake SAI window (if stuck)   ⌃⌥⌘Space", #selector(wakeSAI))
+        add("Auto-wake when returning to SAI", #selector(toggleAutoWake(_:)), state: autoWake ? .on : .off)
+        menu.addItem(.separator())
+        add("Open Setup window", #selector(showSetupWindow))
+        add("Reinstall / Repair…", #selector(reinstallTapped))
+        add("Install License (.slc)…", #selector(licenseTapped))
+        menu.addItem(.separator())
+        // Dev mode: a checkbox that reveals the diagnostic items beneath it.
+        add("Developer mode", #selector(toggleDevMode(_:)), state: devMode ? .on : .off)
+        if devMode {
+            add("Copy diagnostics", #selector(copyDiagnostics), indent: 1)
+            add("Reveal Wine prefix in Finder", #selector(revealPrefix), indent: 1)
+            add("Open helper log", #selector(openHelperLog), indent: 1)
+            add("Open wake log", #selector(openWakeLog), indent: 1)
+            add("Open DLL log", #selector(openDLLLog), indent: 1)
+        }
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        return menu
+    }
+
+    @objc func reinstallTapped() { showSetupWindow(); reinstallMenu() }
+    @objc func licenseTapped()   { showSetupWindow(); chooseLicense() }
 
     @objc func showSetupWindow() {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    // Right-click on our Dock icon (only visible before SAI is launched — see
-    // hideFromDock()). Left-click focuses SAI; the useful actions live here.
-    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
-        let m = NSMenu()
-        let wake = NSMenuItem(title: "Wake SAI window (if stuck)", action: #selector(wakeSAI), keyEquivalent: "")
-        wake.target = self; m.addItem(wake)
-        let setup = NSMenuItem(title: "Open Setup window", action: #selector(showSetupWindow), keyEquivalent: "")
-        setup.target = self; m.addItem(setup)
-        return m
-    }
+    // Right-click on our Dock icon. Left-click focuses SAI; the useful actions —
+    // including the Developer-mode toggle — live here, which is the second place
+    // (besides the menu-bar item) you can reach them.
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? { makeMenu() }
 
 
     func applicationDidBecomeActive(_ note: Notification) { refresh() }   // re-check when refocused
@@ -1109,9 +1342,12 @@ final class SetupController: NSObject, NSApplicationDelegate {
     }
 
     func buildWindow() {
-        let content = NSStackView()
-        content.orientation = .vertical; content.alignment = .leading; content.spacing = 12
-        content.edgeInsets = NSEdgeInsets(top: 20, left: 24, bottom: 20, right: 24)
+        // NOTE: assigns the PROPERTY, not a local — applyLayout() needs it later
+        // to measure fittingSize. A `let content = …` here shadows the property
+        // and leaves self.content nil.
+        content = NSStackView()
+        content.orientation = .vertical; content.alignment = .leading; content.spacing = 10
+        content.edgeInsets = NSEdgeInsets(top: 18, left: 24, bottom: 18, right: 24)
         content.translatesAutoresizingMaskIntoConstraints = false
         content.addArrangedSubview(lbl("SAI Pen Pressure Setup", 18, bold: true))
         subtitle = lbl("Let's get everything ready.", 12, color: .secondaryLabelColor)
@@ -1119,52 +1355,160 @@ final class SetupController: NSObject, NSApplicationDelegate {
 
         for (i, r) in reqs.enumerated() {
             let row = NSStackView(); row.orientation = .horizontal; row.alignment = .centerY; row.spacing = 10
-            let status = lbl("…", 15, bold: true)
-            status.widthAnchor.constraint(equalToConstant: 22).isActive = true
+            let status = lbl("…", 13, bold: true)
+            status.widthAnchor.constraint(equalToConstant: 18).isActive = true
             statusFields.append(status)
-            let col = NSStackView(); col.orientation = .vertical; col.alignment = .leading; col.spacing = 1
-            col.addArrangedSubview(lbl(r.title, 13, bold: true))
-            let detail = lbl(r.detail, 11, color: .secondaryLabelColor)
+            let col = NSStackView(); col.orientation = .vertical; col.alignment = .leading; col.spacing = 0
+            col.addArrangedSubview(lbl(r.title, 12, bold: true))
+            let detail = lbl(r.detail, 10, color: .secondaryLabelColor)
             detailFields.append(detail)
             col.addArrangedSubview(detail)
             let btn = NSButton(title: r.fixTitle, target: self, action: #selector(fixTapped(_:)))
-            btn.tag = i; btn.bezelStyle = .rounded
+            btn.tag = i; btn.bezelStyle = .rounded; btn.controlSize = .small
             btn.setContentHuggingPriority(.required, for: .horizontal)
             fixButtons.append(btn)
             let spacer = NSView()
             spacer.widthAnchor.constraint(greaterThanOrEqualToConstant: 16).isActive = true
             row.addArrangedSubview(status); row.addArrangedSubview(col); row.addArrangedSubview(spacer); row.addArrangedSubview(btn)
-            row.widthAnchor.constraint(equalToConstant: 472).isActive = true
+            row.widthAnchor.constraint(equalToConstant: rowWidth).isActive = true
+            rowViews.append(row)
             content.addArrangedSubview(row)
         }
 
-        // --- Test tablet pressure (optional; confirm the pen before Launch) ---
-        testBtn = NSButton(title: "Test Tablet Pressure", target: self, action: #selector(testTapped))
-        testBtn.bezelStyle = .rounded
-        content.addArrangedSubview(testBtn)
-        testHint = lbl("Now press your pen on the tablet — the bar should move.", 11, color: .secondaryLabelColor)
+        // --- "all set" summary -------------------------------------------------
+        // Simple mode hides satisfied rows, so a finished setup left a blank gap
+        // above Launch. Replace it with a compact green confirmation of exactly
+        // what's ready, so the space reads as reassurance rather than absence.
+        allSetLabel = lbl("", 11, color: .secondaryLabelColor)
+        content.addArrangedSubview(allSetLabel)
+
+        // --- automatic setup: the one button that does the whole checklist ----
+        autoBtn = NSButton(title: "Set up everything automatically", target: self, action: #selector(autoSetup))
+        autoBtn.bezelStyle = .rounded; autoBtn.controlSize = .large
+        content.addArrangedSubview(autoBtn)
+
+        // Live Wine download progress, piped from install-wine.sh's curl.
+        wineRow = NSStackView(); wineRow.orientation = .horizontal
+        wineRow.alignment = .centerY; wineRow.spacing = 10
+        wineBar = PressureBar()
+        wineBar.widthAnchor.constraint(equalToConstant: 200).isActive = true
+        wineBar.heightAnchor.constraint(equalToConstant: 12).isActive = true
+        wineLabel = lbl("", 11, color: .secondaryLabelColor)
+        wineRow.addArrangedSubview(wineBar); wineRow.addArrangedSubview(wineLabel)
+        wineRow.isHidden = true
+        content.addArrangedSubview(wineRow)
+
+        // --- primary action ---------------------------------------------------
+        launchBtn = NSButton(title: "Launch SAI with Pressure", target: self, action: #selector(launchTapped))
+        launchBtn.bezelStyle = .rounded; launchBtn.keyEquivalent = "\r"; launchBtn.controlSize = .large
+        content.addArrangedSubview(launchBtn)
+
+        // --- secondary actions, side by side instead of stacked ---------------
+        testBtn = NSButton(title: "Test pen", target: self, action: #selector(testTapped))
+        testBtn.bezelStyle = .rounded; testBtn.controlSize = .small
+        let wakeBtn = NSButton(title: "Wake SAI (if stuck)", target: self, action: #selector(wakeSAI))
+        wakeBtn.bezelStyle = .rounded; wakeBtn.controlSize = .small
+        advancedBtn = NSButton(title: "Settings ⌄", target: self, action: #selector(toggleAdvanced))
+        advancedBtn.bezelStyle = .rounded; advancedBtn.controlSize = .small
+        secondaryRow = NSStackView(); secondaryRow.orientation = .horizontal
+        secondaryRow.alignment = .centerY; secondaryRow.spacing = 8
+        secondaryRow.addArrangedSubview(testBtn)
+        secondaryRow.addArrangedSubview(wakeBtn)
+        secondaryRow.addArrangedSubview(advancedBtn)
+        content.addArrangedSubview(secondaryRow)
+
+        testHint = lbl("Press your pen on the tablet — the bar should move.", 10, color: .secondaryLabelColor)
         testHint.isHidden = true
         content.addArrangedSubview(testHint)
         barRow = NSStackView(); barRow.orientation = .horizontal; barRow.alignment = .centerY; barRow.spacing = 10
         pressureBar = PressureBar()
         pressureBar.widthAnchor.constraint(equalToConstant: 240).isActive = true
-        pressureBar.heightAnchor.constraint(equalToConstant: 14).isActive = true
-        pressureLabel = lbl("0%", 12, bold: true)
-        pressureLabel.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        pressureBar.heightAnchor.constraint(equalToConstant: 12).isActive = true
+        pressureLabel = lbl("0%", 11, bold: true)
+        pressureLabel.widthAnchor.constraint(equalToConstant: 40).isActive = true
         barRow.addArrangedSubview(pressureBar); barRow.addArrangedSubview(pressureLabel)
         barRow.isHidden = true
         content.addArrangedSubview(barRow)
 
-        launchBtn = NSButton(title: "Launch SAI with Pressure", target: self, action: #selector(launchTapped))
-        launchBtn.bezelStyle = .rounded; launchBtn.keyEquivalent = "\r"; launchBtn.controlSize = .large
-        content.addArrangedSubview(launchBtn)
+        // --- one-button recovery, in Settings ---------------------------------
+        // The whole point: a single obvious action that rebuilds everything, for
+        // when the prefix is broken and you don't want to reason about which
+        // half is at fault.
+        let scratchRow = NSStackView(); scratchRow.orientation = .horizontal; scratchRow.spacing = 8
+        let scratchBtn = NSButton(title: "Reset everything & reinstall…", target: self, action: #selector(installFromScratch))
+        scratchBtn.bezelStyle = .rounded; scratchBtn.controlSize = .small
+        scratchRow.addArrangedSubview(scratchBtn)
+        let uninstallBtn = NSButton(title: "Uninstall…", target: self, action: #selector(uninstallEverything))
+        uninstallBtn.bezelStyle = .rounded; uninstallBtn.controlSize = .small
+        scratchRow.addArrangedSubview(uninstallBtn)
+        let scratchHint = lbl("Your SAI folder and license are kept.", 10, color: .tertiaryLabelColor)
+        scratchRow.addArrangedSubview(scratchHint)
+        // NOT appended to rowViews — that array is index-locked to `reqs` and an
+        // extra entry would desync applyLayout()'s loop. It's Settings-only.
+        settingsOnlyViews.append(scratchRow)
+        content.addArrangedSubview(scratchRow)
 
-        // Rescue button (mirrors the menu-bar "🖊 → Wake SAI"): if SAI comes back
-        // stuck/greyed after an app switch, force a full re-activation.
-        let wakeBtn = NSButton(title: "Wake SAI window (if stuck)", target: self, action: #selector(wakeSAI))
-        wakeBtn.bezelStyle = .rounded
-        content.addArrangedSubview(wakeBtn)
-        content.addArrangedSubview(lbl("Also on the 🖊 menu-bar icon, or press ⌃⌥⌘Space (Control-Option-Command-Space) anytime.", 10, color: .tertiaryLabelColor))
+        // --- footers: explanation, only in Settings ---------------------------
+        // Kept to ONE line each — these wrapped to two and made the window tall.
+        for s in ["Wake: menu-bar pen icon, Dock right-click, or ⌃⌥⌘Space.",
+                  "SAI runs from a copy in \(( appPrefix as NSString).abbreviatingWithTildeInPath); the source folder is only needed to (re)install.",
+                  "PaintTool SAI © SYSTEMAX — unaffiliated fix, bring your own license (systemax.jp)."] {
+            let l = lbl(s, 10, color: .tertiaryLabelColor)
+            l.preferredMaxLayoutWidth = rowWidth
+            l.lineBreakMode = .byWordWrapping
+            l.usesSingleLineMode = false
+            footerLabels.append(l)
+            content.addArrangedSubview(l)
+        }
+
+        // --- developer section (inside Settings) ------------------------------
+        devSection = NSStackView(); devSection.orientation = .vertical
+        devSection.alignment = .leading; devSection.spacing = 6
+        devCheck = NSButton(checkboxWithTitle: "Developer mode", target: self, action: #selector(toggleDevCheck))
+        devSection.addArrangedSubview(devCheck)
+        // Folders first — "where did my SAI actually go?" is the question the
+        // whole copy-into-the-prefix model raises, so answer it with a button.
+        let devFolders = NSStackView(); devFolders.orientation = .horizontal; devFolders.spacing = 6
+        for (t, s) in [("SAI in Wine ▸", #selector(openSAIInWine)),
+                       ("Wine prefix ▸", #selector(openWinePrefix)),
+                       ("App data ▸", #selector(openAppSupport))] {
+            let b = NSButton(title: t, target: self, action: s)
+            b.bezelStyle = .rounded; b.controlSize = .small
+            devFolders.addArrangedSubview(b)
+        }
+        devSection.addArrangedSubview(devFolders)
+        let devBtns = NSStackView(); devBtns.orientation = .horizontal; devBtns.spacing = 6
+        for (t, s) in [("Diagnostics", #selector(copyDiagnostics)),
+                       ("Helper log", #selector(openHelperLog)),
+                       ("Wake log", #selector(openWakeLog)),
+                       ("DLL log", #selector(openDLLLog))] {
+            let b = NSButton(title: t, target: self, action: s)
+            b.bezelStyle = .rounded; b.controlSize = .small
+            devBtns.addArrangedSubview(b)
+        }
+        devSection.addArrangedSubview(devBtns)
+        let devTools = NSStackView(); devTools.orientation = .horizontal; devTools.spacing = 6
+        recBtn = NSButton(title: "● Record session", target: self, action: #selector(toggleRecord))
+        recBtn.bezelStyle = .rounded; recBtn.controlSize = .small
+        devTools.addArrangedSubview(recBtn)
+        let hc = NSButton(title: "Health check", target: self, action: #selector(healthCheckTapped))
+        hc.bezelStyle = .rounded; hc.controlSize = .small
+        devTools.addArrangedSubview(hc)
+        devSection.addArrangedSubview(devTools)
+        // Live console: the tail of the wake log, so you can watch auto-wake and
+        // setup decisions without leaving the window.
+        consoleScroll = NSScrollView()
+        consoleScroll.hasVerticalScroller = true
+        consoleScroll.borderType = .bezelBorder
+        consoleScroll.widthAnchor.constraint(equalToConstant: rowWidth).isActive = true
+        consoleScroll.heightAnchor.constraint(equalToConstant: 130).isActive = true
+        console = NSTextView()
+        console.isEditable = false
+        console.font = .monospacedSystemFont(ofSize: 9, weight: .regular)
+        console.autoresizingMask = [.width]
+        consoleScroll.documentView = console
+        devSection.addArrangedSubview(consoleScroll)
+        content.addArrangedSubview(devSection)
 
         // --- version + update check ------------------------------------------
         let verRow = NSStackView(); verRow.orientation = .horizontal; verRow.alignment = .centerY; verRow.spacing = 8
@@ -1183,21 +1527,98 @@ final class SetupController: NSObject, NSApplicationDelegate {
         verRow.addArrangedSubview(updateBtn)
         content.addArrangedSubview(verRow)
 
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 440),
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: rowWidth + 48, height: 400),
                           styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "SAI Pen Pressure"
         window.contentView = content
         window.isReleasedWhenClosed = false
+        applyLayout()               // sizes the window to whichever tier is showing
         window.center()
         window.makeKeyAndOrderFront(nil)
     }
 
-    func refresh() {
-        if running { return }
+    @objc func toggleAdvanced() {
+        advanced.toggle()
+        if !advanced { stopTest() }
+        applyLayout()
+    }
+    @objc func toggleDevCheck() {
+        devMode = (devCheck.state == .on)      // persists + rebuilds the menus
+        applyLayout()
+    }
+
+    /// Show only what the current tier needs, then shrink/grow the window to fit.
+    /// Simple mode hides any requirement that's already satisfied — a finished
+    /// setup collapses to a title, one status line and the Launch button.
+    func applyLayout() {
         for (i, r) in reqs.enumerated() {
             let ok = r.ok()
-            statusFields[i].stringValue = ok ? "✅" : (r.required ? "❌" : "⚪️")
-            if let dd = r.dynamicDetail { detailFields[i].stringValue = dd() }   // e.g. show the chosen folder
+            rowViews[i].isHidden = advanced ? false : ok
+        }
+        // In Simple mode a finished setup hides every row, which left a blank
+        // gap. Fill it with an explicit green confirmation of what's ready.
+        let done = reqs.filter { $0.ok() }.count
+        // The automatic path is only worth offering while something is missing.
+        let needsWork = reqs.contains { $0.required && !$0.ok() }
+        autoBtn.isHidden = !needsWork || autoRunning
+        launchBtn.isHidden = needsWork && !autoRunning
+        if !advanced && done == reqs.count {
+            allSetLabel.stringValue = "✅ Wine · SAI installed · License · Input Monitoring — all ready"
+            allSetLabel.isHidden = false
+        } else if !advanced && done > 0 {
+            allSetLabel.stringValue = "✅ \(done) of \(reqs.count) ready"
+            allSetLabel.isHidden = false
+        } else {
+            allSetLabel.isHidden = true
+        }
+        footerLabels.forEach { $0.isHidden = !advanced }
+        settingsOnlyViews.forEach { $0.isHidden = !advanced }
+        devSection.isHidden = !advanced
+        devCheck.state = devMode ? .on : .off
+        consoleScroll.isHidden = !devMode
+        devSection.arrangedSubviews.forEach { if $0 !== devCheck { $0.isHidden = !devMode } }
+        advancedBtn.title = advanced ? "Settings ⌃" : "Settings ⌄"
+        if devMode && advanced { updateConsole() }
+        window.layoutIfNeeded()
+        let fit = content.fittingSize
+        let want = NSSize(width: max(rowWidth + 48, fit.width), height: fit.height)
+        // Only resize on a real change — applyLayout() runs from the 1s refresh
+        // timer, and setting the same size every tick makes the window shimmer.
+        if abs(window.contentLayoutRect.height - want.height) > 0.5
+            || abs(window.contentLayoutRect.width - want.width) > 0.5 {
+            window.setContentSize(want)
+        }
+    }
+
+    /// Tail of the wake log — the one that records setup, wake and auto-wake.
+    func updateConsole() {
+        guard let s = try? String(contentsOfFile: "/tmp/sai-wake.log", encoding: .utf8) else {
+            console.string = "(no log yet — it appears once SAI is launched or a wake fires)"; return
+        }
+        let tail = s.split(separator: "\n").suffix(150).joined(separator: "\n")
+        guard tail != console.string else { return }
+        console.string = tail
+        console.scrollToEndOfDocument(nil)
+    }
+
+    func refresh() {
+        // The STATUS ROWS always update, even while SAI is running (issue #12).
+        // They used to be skipped entirely once `running` was set, so changing
+        // the SAI folder or installing a licence mid-session showed no change at
+        // all. Only the subtitle and the Launch button are frozen while running.
+        for (i, r) in reqs.enumerated() {
+            let ok = r.ok()
+            // A step whose prerequisites aren't met is shown greyed with the
+            // reason, rather than offering a button that could only fail.
+            let enabled = r.enabledIf?() ?? true
+            statusFields[i].stringValue = ok ? "✅" : (enabled ? (r.required ? "❌" : "⚪️") : "⏳")
+            if !enabled && !ok {
+                detailFields[i].stringValue = r.blockedHint
+            } else if let dd = r.dynamicDetail {
+                detailFields[i].stringValue = dd()                              // e.g. show the chosen folder
+            }
+            rowViews[i].alphaValue = enabled ? 1.0 : 0.45
+            fixButtons[i].isEnabled = enabled
             if r.keepButton {                       // stays visible so you can change/uninstall it
                 fixButtons[i].isHidden = false
                 fixButtons[i].title = ok ? r.keepButtonTitle : r.fixTitle
@@ -1205,6 +1626,8 @@ final class SetupController: NSObject, NSApplicationDelegate {
                 fixButtons[i].isHidden = ok
             }
         }
+        applyLayout()                           // rows appear/vanish as state changes
+        guard !running else { return }          // SAI is up; leave the CTA alone
         // Launch needs Wine + SAI; Input Monitoring is verified for real by
         // actually creating the tap on Launch (the permission check can read
         // ❌ even when the tap will work), so it doesn't hard-block here.
@@ -1224,18 +1647,764 @@ final class SetupController: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self.refresh() }
     }
 
+    /// Find folders that actually contain sai2.exe, so we can OFFER the right
+    /// one instead of dropping the user into a blank file picker and hoping they
+    /// remember where they unzipped it. Spotlight first (instant, whole disk),
+    /// with a shallow scan of the usual places as a fallback when Spotlight is
+    /// disabled or the folder isn't indexed.
+    func findSAIFolders() -> [String] {
+        var out: [String] = []
+        func consider(_ dir: String) {
+            guard FileManager.default.fileExists(atPath: "\(dir)/sai2.exe") else { return }
+            guard !dir.hasPrefix(appPrefix) else { return }     // our own copy: a destination, not a source
+            guard !out.contains(dir) else { return }
+            out.append(dir)
+        }
+        for line in runCapture("/usr/bin/mdfind", ["kMDItemFSName == 'sai2.exe'"]).split(separator: "\n") {
+            consider((String(line) as NSString).deletingLastPathComponent)
+        }
+        if out.isEmpty {
+            let home = NSHomeDirectory()
+            let roots = ["\(home)/Documents", "\(home)/Downloads", "\(home)/Desktop",
+                         "\(home)/Applications", "/Applications"]
+            for root in roots {
+                consider(root)
+                for sub in ((try? FileManager.default.contentsOfDirectory(atPath: root)) ?? []) {
+                    consider("\(root)/\(sub)")
+                }
+            }
+        }
+        return out
+    }
+
     func chooseSAI() {
+        // Suggest what we found before opening a picker.
+        let found = findSAIFolders()
+        if let best = found.first {
+            let shown = (best as NSString).abbreviatingWithTildeInPath
+            if found.count == 1 {
+                let c = osa("button returned of (display dialog \"Found SAI here:\n\n\(shown)\n\nUse this folder?\" buttons {\"Choose another…\", \"Use this folder\"} default button \"Use this folder\" with icon note)")
+                if c == "Use this folder" { adoptSAIFolder(best); return }
+            } else {
+                // several installs — let the user pick which one
+                let items = found.map { "\"\(($0 as NSString).abbreviatingWithTildeInPath)\"" }.joined(separator: ", ")
+                if let picked = osa("choose from list {\(items)} with prompt \"Found more than one SAI folder — pick the one to use:\" OK button name \"Use this folder\" cancel button name \"Choose another…\""),
+                   picked != "false" {
+                    let full = found.first { ($0 as NSString).abbreviatingWithTildeInPath == picked }
+                    if let f = full { adoptSAIFolder(f); return }
+                }
+            }
+        }
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true; panel.canChooseFiles = false
-        panel.prompt = "Choose"; panel.message = "Select your SAI Ver.2 folder (the one containing sai2.exe)"
+        // Open the picker somewhere useful rather than at the last-used folder.
+        panel.directoryURL = URL(fileURLWithPath: (found.first as NSString?)?.deletingLastPathComponent
+                                 ?? savedSAIPath().map { ($0 as NSString).deletingLastPathComponent }
+                                 ?? NSHomeDirectory() + "/Documents")
+        panel.prompt = "Choose"
+        panel.message = found.isEmpty
+            ? "Select your SAI Ver.2 folder — the one that directly contains sai2.exe"
+            : "Select your SAI Ver.2 folder (we found one at \((found[0] as NSString).abbreviatingWithTildeInPath))"
         if panel.runModal() == .OK, let url = panel.url {
             if FileManager.default.fileExists(atPath: url.appendingPathComponent("sai2.exe").path) {
-                saveSAIPath(url.path)
+                adoptSAIFolder(url.path)
             } else {
                 alertUser("That folder doesn't contain sai2.exe. Pick the folder that directly contains sai2.exe.")
             }
         }
         refresh()
+    }
+
+    /// Record a chosen source folder and, if the prefix already holds a
+    /// different build, offer to apply it now. Picking a folder used to change
+    /// nothing but a label (issue #11).
+    func adoptSAIFolder(_ path: String) {
+        saveSAIPath(path)
+        if saiInstalledInPrefix() && prefixIsStale() {
+            let c = osa("button returned of (display dialog \"Copy this SAI into the Wine prefix now?\n\nSAI runs from a copy inside \(( prefixSAIDir as NSString).abbreviatingWithTildeInPath). Until it's copied, SAI will keep running the previous version.\" buttons {\"Later\", \"Reinstall now\"} default button \"Reinstall now\" with icon note)")
+            if c == "Reinstall now" { doReinstall(mode: .repair) }
+        }
+        refresh()
+    }
+
+    /// Granting Input Monitoring means finding this app in a file picker, which
+    /// is the fiddliest step in the whole setup. Do the finding FOR the user:
+    /// open the right Settings pane, reveal the app in Finder so it can be
+    /// dragged straight in, and put its path on the clipboard to paste.
+    @objc func grantInputMonitoring() {
+        _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)      // native prompt, if it still applies
+        let appPath = Bundle.main.bundlePath
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(appPath, forType: .string)
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: appPath)])
+        alertUser("""
+        Turn ON "SAI Pen Pressure" in the list that just opened.
+
+        If it isn't listed, click + and either:
+          • drag "SAI Pen Pressure" from the Finder window that just opened, or
+          • press ⇧⌘G and paste (⌘V) — the path is already on your clipboard.
+
+        This app's path:
+        \(appPath)
+
+        Tip: if you see several "SAI Pen Pressure" entries from older builds, turn off or remove the old ones — only the one at the path above is this build.
+        """)
+    }
+
+    // ---- licence ------------------------------------------------------------
+    // This project does NOT supply, generate or resell licences and has no
+    // connection to SYSTEMAX. All it does is copy a certificate the user
+    // already bought into the folder SAI actually reads. Say so plainly, in
+    // the UI, before the file picker — not just in the README.
+    static let saiOfficialURL = "https://www.systemax.jp/en/sai/"
+
+    @objc func openOfficialSAISite() {
+        if let u = URL(string: SetupController.saiOfficialURL) { NSWorkspace.shared.open(u) }
+    }
+
+    func chooseLicense() {
+        if installedLicenseName() == nil {
+            let c = osa("button returned of (display dialog \"You need your own SAI license certificate (.slc).\n\nPaintTool SAI is commercial software by SYSTEMAX. Buy a license and download your .slc from the official site — this app is NOT affiliated with SYSTEMAX, and it cannot supply, generate or activate a license for you.\n\nIt only copies a .slc you already own into the folder SAI reads.\" buttons {\"Cancel\", \"Open official site\", \"I have my .slc\"} default button \"I have my .slc\" with icon note)")
+            if c == "Open official site" { openOfficialSAISite(); return }
+            if c != "I have my .slc" { return }
+        }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false; panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Install"
+        panel.message = "Select your SAI license certificate (.slc)"
+        // .slc isn't a registered system type, so filter loosely and validate the
+        // extension ourselves — a hard UTType filter can grey out the real file.
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard url.pathExtension.lowercased() == "slc" else {
+            alertUser("That isn't a .slc certificate:\n\n\(url.lastPathComponent)\n\nPick the sai-*.slc file you downloaded from SYSTEMAX.")
+            return
+        }
+        if installLicenseFile(url.path) {
+            alertUser("License installed into:\n\n\(( prefixSAIDir as NSString).abbreviatingWithTildeInPath)\n\nQuit SAI completely and relaunch it for the license to take effect (closing the window isn't enough).")
+        } else {
+            alertUser("Couldn't copy the license into the Wine prefix. Check that \(( prefixSAIDir as NSString).abbreviatingWithTildeInPath) is writable, then try again.")
+        }
+        refresh()
+    }
+
+    // ---- reinstall / repair (issue #10) -------------------------------------
+    func reinstallMenu() {
+        guard let wine = wineBin() else {
+            alertUser("Wine isn't installed yet — install it first (top row)."); return
+        }
+        guard savedSAIPath() != nil else { chooseSAI(); return }
+        _ = wine
+        let c = osa("button returned of (display dialog \"How much do you want to reinstall?\n\n• Repair — copy SAI and the pressure bridge back into the existing Wine prefix. Keeps your license and Wine settings. Try this first.\n\n• Full rebuild — delete \(( appPrefix as NSString).abbreviatingWithTildeInPath) entirely and build it from scratch. Use this if the prefix is damaged. Your license is saved and put back automatically.\" buttons {\"Cancel\", \"Full rebuild…\", \"Repair\"} default button \"Repair\" with icon caution)")
+        switch c {
+        case "Repair":       doReinstall(mode: .repair)
+        case "Full rebuild…":
+            let ok = osa("button returned of (display dialog \"Delete and rebuild \(( appPrefix as NSString).abbreviatingWithTildeInPath)?\n\nEverything in that folder is removed, including anything you put there by hand. SAI is copied in again from your source folder, and your saved license is restored.\" buttons {\"Cancel\", \"Rebuild\"} default button \"Cancel\" with icon caution)")
+            if ok == "Rebuild" { doReinstall(mode: .rebuild) }
+        default: break
+        }
+    }
+
+    // ONE button: a true factory reset. Wipes the prefix, FORGETS every
+    // remembered path, optionally removes Wine, then starts setup from zero.
+    // Deliberately keeps the licence stash — re-buying a certificate is not a
+    // reasonable price for "reinstall", and it's the one thing we can't recreate.
+    @objc func installFromScratch() {
+        let hadWine = wineBin() != nil
+        let ours = wineInstalledByUs()
+        var bullets = "• delete \(( appPrefix as NSString).abbreviatingWithTildeInPath) (the whole Wine prefix)\n• forget your saved SAI folder\n• forget which build was installed"
+        bullets += "\n• KEEP your saved license, and put it back afterwards"
+        let c = osa("button returned of (display dialog \"Reset everything and start over?\n\nThis will:\n\n\(bullets)\n\nThen it asks you to pick your SAI folder again and rebuilds from scratch. Takes about a minute.\" buttons {\"Cancel\", \"Reset everything\"} default button \"Cancel\" with icon caution)")
+        guard c == "Reset everything" else { return }
+
+        // Wine is shared with any other Windows app you run, so never remove it
+        // silently. If WE installed it for SAI we say so and default to removing;
+        // otherwise we default to keeping it.
+        var removeWine = false
+        if hadWine {
+            let q = ours
+                ? "Also remove Wine?\n\nThis app installed Wine Staging for SAI, so removing it should be safe. It goes to the Trash and you can reinstall it from this window anytime."
+                : "Also remove Wine?\n\nWine Staging was NOT installed by this app — you may be using it for other Windows programs. Keeping it is the safe choice."
+            let def = ours ? "Move Wine to Trash" : "Keep Wine"
+            let w = osa("button returned of (display dialog \(q.debugDescription) buttons {\"Keep Wine\", \"Move Wine to Trash\"} default button \(def.debugDescription) with icon caution)")
+            removeWine = (w == "Move Wine to Trash")
+        }
+
+        // --- wipe -------------------------------------------------------------
+        try? FileManager.default.removeItem(atPath: appPrefix)
+        try? FileManager.default.removeItem(atPath: appSupport() + "/config.txt")
+        try? FileManager.default.removeItem(atPath: appSupport() + "/installed-src.txt")
+        if removeWine {
+            try? FileManager.default.trashItem(at: URL(fileURLWithPath: "/Applications/Wine Staging.app"), resultingItemURL: nil)
+            try? FileManager.default.removeItem(atPath: appSupport() + "/wine-ours.txt")
+        }
+        refresh()
+
+        if removeWine || wineBin() == nil {
+            alertUser("Reset done. Everything was removed.\n\nInstall Wine again from this window, then pick your SAI folder and Launch — your license is saved and will be restored automatically.")
+            return
+        }
+        // --- rebuild ----------------------------------------------------------
+        chooseSAI()                                   // forgotten on purpose: ask again
+        guard savedSAIPath() != nil else {
+            alertUser("Reset done. Choose your SAI folder in this window whenever you're ready — your license is saved and will be restored.")
+            return
+        }
+        doReinstall(mode: .rebuild)
+    }
+
+    // ---- in-app Wine install with live progress -----------------------------
+    // install-wine.sh needs no sudo (it only writes to /Applications), so we can
+    // run it as a child process and show curl's progress in the window instead
+    // of sending the user to a Terminal and hoping they watch it. Terminal
+    // remains the fallback if the bundled script is missing or the run fails.
+    var wineRow: NSStackView!
+    var wineBar: PressureBar!
+    var wineLabel: NSTextField!
+    var wineProc: Process?
+    var wineOutBuf = ""
+
+    /// Pull the last "NN.N%" out of a curl progress-bar chunk.
+    func percent(in s: String) -> Double? {
+        guard let pctIdx = s.lastIndex(of: "%") else { return nil }
+        var digits = ""
+        var i = pctIdx
+        while i > s.startIndex {
+            i = s.index(before: i)
+            let c = s[i]
+            if c.isNumber || c == "." { digits.insert(c, at: digits.startIndex) } else { break }
+        }
+        return Double(digits)
+    }
+
+    func handleWineLine(_ line: String) {
+        let t = line.trimmingCharacters(in: .whitespaces)
+        guard !t.isEmpty else { return }
+        DispatchQueue.main.async {
+            if let p = self.percent(in: t), t.contains("#") || t.hasSuffix("%") {
+                self.wineBar.value = CGFloat(p / 100.0)
+                self.wineLabel.stringValue = String(format: "Downloading Wine… %.1f%%", p)
+            } else if t.contains("Extracting") {
+                self.wineBar.value = 1; self.wineLabel.stringValue = "Extracting…"
+            } else if t.contains("Installing to") {
+                self.wineLabel.stringValue = "Installing to /Applications…"
+            } else if t.contains("Finding the latest") {
+                self.wineLabel.stringValue = "Finding the latest Wine build…"
+            } else if t.contains("Done!") {
+                self.wineLabel.stringValue = "Wine installed."
+            }
+        }
+    }
+
+    @objc func installWineInApp() {
+        guard wineProc == nil else { return }
+        guard let sh = Bundle.main.resourcePath.map({ "\($0)/install-wine.sh" }),
+              FileManager.default.fileExists(atPath: sh) else {
+            installWineViaTerminal(); return
+        }
+        markWineInstalledByUs()
+        wineRow.isHidden = false
+        wineBar.value = 0
+        wineLabel.stringValue = "Starting…"
+        applyLayout()
+
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        p.arguments = [sh]
+        let pipe = Pipe()
+        p.standardOutput = pipe; p.standardError = pipe
+        wineOutBuf = ""
+        pipe.fileHandleForReading.readabilityHandler = { [weak self] h in
+            guard let self = self else { return }
+            let d = h.availableData
+            guard !d.isEmpty, let s = String(data: d, encoding: .utf8) else { return }
+            self.wineOutBuf += s
+            // curl redraws its bar with \r, so split on BOTH terminators and treat
+            // the trailing partial chunk as a live progress line.
+            let parts = self.wineOutBuf.components(separatedBy: CharacterSet(charactersIn: "\r\n"))
+            self.wineOutBuf = parts.last ?? ""
+            for l in parts.dropLast() { self.handleWineLine(l) }
+            self.handleWineLine(self.wineOutBuf)
+        }
+        p.terminationHandler = { [weak self] _ in
+            pipe.fileHandleForReading.readabilityHandler = nil
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.wineProc = nil
+                let ok = wineBin() != nil
+                self.wineLabel.stringValue = ok ? "Wine installed ✅" : "Wine install failed — try the Terminal fallback."
+                self.wineBar.value = ok ? 1 : 0
+                self.refresh()
+                if !ok {
+                    let c = osa("button returned of (display dialog \"The automatic Wine install didn't finish.\n\nRun it in a Terminal window instead so you can see the full output?\" buttons {\"Cancel\", \"Open Terminal\"} default button \"Open Terminal\" with icon caution)")
+                    if c == "Open Terminal" { installWineViaTerminal() }
+                } else {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                        self.wineRow.isHidden = true; self.applyLayout()
+                    }
+                }
+            }
+        }
+        do { try p.run(); wineProc = p } catch {
+            wineRow.isHidden = true; installWineViaTerminal()
+        }
+    }
+
+    // ---- automatic setup ----------------------------------------------------
+    // Walks every required step in order and does each one itself, pausing only
+    // where macOS or a licence genuinely needs a human. Replaces "read five rows,
+    // work out which button to press, repeat".
+    @objc func autoSetup() {
+        guard !autoRunning else { return }
+        autoRunning = true
+        autoBtn.isEnabled = false
+        DispatchQueue.global().async { self.autoSteps() }
+    }
+
+    func step(_ n: Int, _ msg: String) {
+        DispatchQueue.main.async { self.subtitle.stringValue = "Step \(n)/5 — \(msg)" }
+    }
+    /// Run a main-thread UI call from the background and wait for its result.
+    func onMain<T>(_ work: @escaping () -> T) -> T {
+        if Thread.isMainThread { return work() }
+        var out: T!
+        DispatchQueue.main.sync { out = work() }
+        return out
+    }
+
+    func autoSteps() {
+        defer { DispatchQueue.main.async { self.autoRunning = false; self.autoBtn.isEnabled = true; self.refresh() } }
+
+        // 1 — Wine
+        if wineBin() == nil {
+            step(1, "installing Wine…")
+            let go = onMain { osa("button returned of (display dialog \"Automatic setup will now install Wine.\n\nIt's about a 300 MB download and runs in a Terminal window so you can watch the progress. I'll wait for it and carry on by myself when it's done.\" buttons {\"Cancel\", \"Install Wine\"} default button \"Install Wine\" with icon note)") }
+            guard go == "Install Wine" else { return }
+            onMain { self.markWineInstalledByUs() }
+            installWineViaTerminal()
+            // wait for Wine to appear (up to 20 min — it's a big download)
+            var waited = 0
+            while wineBin() == nil && waited < 1200 {
+                Thread.sleep(forTimeInterval: 2); waited += 2
+                if waited % 20 == 0 { step(1, "waiting for Wine to finish installing… (\(waited)s)") }
+            }
+            guard wineBin() != nil else {
+                onMain { alertUser("Wine still isn't in /Applications, so automatic setup stopped here.\n\nFinish the Wine install in the Terminal window, then press 'Set up everything automatically' again — it will pick up from this step.") }
+                return
+            }
+        }
+        guard let wine = wineBin() else { return }
+
+        // 2 — SAI source folder
+        if savedSAIPath() == nil {
+            step(2, "finding your SAI folder…")
+            let found = onMain { self.findSAIFolders() }
+            if found.count == 1 {
+                let c = onMain { osa("button returned of (display dialog \"Found SAI here:\n\n\((found[0] as NSString).abbreviatingWithTildeInPath)\n\nUse this folder?\" buttons {\"Choose another…\", \"Use this folder\"} default button \"Use this folder\" with icon note)") }
+                if c == "Use this folder" { onMain { saveSAIPath(found[0]) } } else { onMain { self.chooseSAI() } }
+            } else {
+                onMain { self.chooseSAI() }
+            }
+            guard savedSAIPath() != nil else {
+                onMain { alertUser("Automatic setup stopped: no SAI folder chosen.\n\nRun it again whenever you're ready — it resumes from here.") }
+                return
+            }
+        }
+        guard let src = savedSAIPath() else { return }
+
+        // 3 — build the prefix
+        if !saiInstalledInPrefix() || prefixIsStale() {
+            step(3, "building the Wine prefix and copying SAI… (about a minute)")
+            guard performSetup(src, wine, mode: .ensure, quiet: true) else {
+                onMain { alertUser("Automatic setup couldn't build the Wine prefix. Check the SAI folder and try again.") }
+                return
+            }
+        }
+
+        // 4 — licence
+        if installedLicenseName() == nil {
+            step(4, "installing your license…")
+            let c = onMain { osa("button returned of (display dialog \"Do you have your SAI license file (.slc)?\n\nSAI runs and draws without it, but can't save. Licenses come from SYSTEMAX — this project is not affiliated with them and cannot provide one.\" buttons {\"Skip for now\", \"Open official site\", \"I have my .slc\"} default button \"I have my .slc\" with icon note)") }
+            if c == "Open official site" { onMain { self.openOfficialSAISite() } }
+            else if c == "I have my .slc" { onMain { self.chooseLicense() } }
+        }
+
+        // 5 — permission
+        if !inputMonitoringGranted() {
+            step(5, "granting Input Monitoring…")
+            onMain { self.grantInputMonitoring() }
+            var waited = 0
+            while !inputMonitoringGranted() && waited < 180 {
+                Thread.sleep(forTimeInterval: 2); waited += 2
+            }
+        }
+
+        // done
+        let ok = wineBin() != nil && saiInstalledInPrefix() && inputMonitoringGranted()
+        DispatchQueue.main.async {
+            self.subtitle.stringValue = ok ? "All set. Click Launch." : "Almost there — finish the red items above."
+            let lic = installedLicenseName() == nil ? "\n\nNo license installed yet — SAI will run but can't save." : ""
+            alertUser(ok
+                ? "Setup complete.\n\nSAI is installed in \((prefixSAIDir as NSString).abbreviatingWithTildeInPath).\(lic)\n\nClick \"Launch SAI with Pressure\", then in SAI turn on Others → Options → Pen Tablet → Use WinTab API and restart SAI."
+                : "Automatic setup finished what it could. The remaining red items in the window need you.\(lic)")
+        }
+    }
+
+    // Remove everything this project created, and NOTHING the user brought.
+    // Their SAI source folder and their original .slc are never touched — those
+    // are inputs we copied FROM, not things we own.
+    @objc func uninstallEverything() {
+        let fm = FileManager.default
+        let src = savedSAIPath()
+        let srcExists = src.map { fm.fileExists(atPath: "\($0)/sai2.exe") } ?? false
+        let keptLine = srcExists
+            ? "\n\nKEPT (yours, never touched):\n• \((src! as NSString).abbreviatingWithTildeInPath)"
+            : "\n\nYour own SAI folder is never touched."
+        let c = osa("button returned of (display dialog \"Remove SAI Pen Pressure's installation?\n\nWILL BE DELETED:\n• \(( appPrefix as NSString).abbreviatingWithTildeInPath) (Wine prefix + the SAI copy inside it)\n• saved settings: chosen folder, dev mode, recordings\(keptLine)\" buttons {\"Cancel\", \"Remove\"} default button \"Cancel\" with icon caution)")
+        guard c == "Remove" else { return }
+
+        // The licence is the one thing we cannot recreate — ask before dropping it.
+        var keepLicense = true
+        if !slcFiles(in: licenseStashDir()).isEmpty {
+            let l = osa("button returned of (display dialog \"Keep your saved license copy?\n\nWe hold a copy of \(slcFiles(in: licenseStashDir()).joined(separator: ", ")) so a future reinstall can restore it. Your ORIGINAL .slc file wherever you downloaded it is never touched either way.\" buttons {\"Delete it too\", \"Keep license\"} default button \"Keep license\" with icon note)")
+            keepLicense = (l != "Delete it too")
+        }
+
+        var removeWine = false
+        if wineBin() != nil {
+            let ours = wineInstalledByUs()
+            let q = ours
+                ? "Also remove Wine?\n\nThis app installed Wine Staging for SAI, so removing it should be safe."
+                : "Also remove Wine?\n\nWine Staging was NOT installed by this app — you may use it for other Windows programs. Keeping it is the safe choice."
+            let def = ours ? "Move Wine to Trash" : "Keep Wine"
+            removeWine = (osa("button returned of (display dialog \(q.debugDescription) buttons {\"Keep Wine\", \"Move Wine to Trash\"} default button \(def.debugDescription) with icon caution)") == "Move Wine to Trash")
+        }
+
+        try? fm.removeItem(atPath: appPrefix)
+        for f in ["config.txt", "installed-src.txt", "devmode.txt", "wine-ours.txt"] {
+            try? fm.removeItem(atPath: appSupport() + "/" + f)
+        }
+        try? fm.removeItem(atPath: appSupport() + "/recordings")
+        try? fm.removeItem(atPath: appSupport() + "/bin")
+        if !keepLicense { try? fm.removeItem(atPath: licenseStashDir()) }
+        if removeWine {
+            try? fm.trashItem(at: URL(fileURLWithPath: "/Applications/Wine Staging.app"), resultingItemURL: nil)
+        }
+        devMode = false
+        refresh()
+        let licNote = keepLicense && !slcFiles(in: licenseStashDir()).isEmpty
+            ? "\n\nYour license copy was kept and will be restored on the next install."
+            : ""
+        alertUser("Removed.\(licNote)\n\nThis app itself is still here — quit it and drag it to the Trash if you're done, or just pick your SAI folder again to reinstall.")
+    }
+
+    /// Did THIS app install Wine? Set when the user takes our "Install Wine"
+    /// path, so a reset can tell "installed for SAI" from "the user's own Wine".
+    func wineInstalledByUs() -> Bool {
+        FileManager.default.fileExists(atPath: appSupport() + "/wine-ours.txt")
+    }
+    func markWineInstalledByUs() {
+        try? "1".write(toFile: appSupport() + "/wine-ours.txt", atomically: true, encoding: .utf8)
+    }
+
+    func doReinstall(mode: SetupMode) {
+        guard let wine = wineBin(), let src = savedSAIPath() else { refresh(); return }
+        let wasRunning = running
+        subtitle.stringValue = mode == .rebuild ? "Rebuilding the Wine prefix…" : "Reinstalling SAI…"
+        launchBtn.isEnabled = false
+        // wineboot + a full copy takes ~a minute; off the main thread so the
+        // window keeps drawing instead of beachballing.
+        DispatchQueue.global().async {
+            let ok = performSetup(src, wine, mode: mode)
+            DispatchQueue.main.async {
+                self.running = wasRunning
+                self.refresh()
+                if ok {
+                    let lic = installedLicenseName().map { "\n\nLicense in place: \($0)" }
+                        ?? "\n\nNo license found — use Install… on the license row if you need to save."
+                    alertUser("Done. SAI is installed in:\n\n\(( prefixSAIDir as NSString).abbreviatingWithTildeInPath)\(lic)")
+                } else {
+                    self.subtitle.stringValue = "Reinstall failed — check the SAI source folder."
+                }
+            }
+        }
+    }
+
+    // ---- dev mode (issue #15) ----------------------------------------------
+    // Off by default. Toggled from the menu-bar item and the right-click Dock
+    // menu; persisted so it survives a relaunch.
+    var devMode: Bool = FileManager.default.fileExists(atPath: appSupport() + "/devmode.txt") {
+        didSet {
+            let p = appSupport() + "/devmode.txt"
+            if devMode { try? "1".write(toFile: p, atomically: true, encoding: .utf8) }
+            else { try? FileManager.default.removeItem(atPath: p) }
+            rebuildMenus()
+        }
+    }
+    @objc func toggleDevMode(_ sender: NSMenuItem) { devMode.toggle() }
+
+    func openPath(_ p: String, createIfMissing: Bool = false) {
+        if !FileManager.default.fileExists(atPath: p) {
+            guard createIfMissing else { alertUser("Nothing there yet:\n\n\(p)"); return }
+            try? "".write(toFile: p, atomically: true, encoding: .utf8)
+        }
+        NSWorkspace.shared.open(URL(fileURLWithPath: p))
+    }
+    @objc func openHelperLog() { openPath("\(appPrefix)/helper.log") }
+    @objc func openWakeLog()   { openPath("/tmp/sai-wake.log") }
+    @objc func openDLLLog()    { openPath("\(appPrefix)/drive_c/wtlog.txt") }
+    @objc func revealPrefix() {
+        NSWorkspace.shared.selectFile(prefixSAIExe, inFileViewerRootedAtPath: appPrefix)
+    }
+    // Three explicit folders instead of one ambiguous "Prefix" that opened a
+    // Finder window with sai2.exe selected and left you guessing what you were
+    // looking at.
+    @objc func openSAIInWine()   { openFolder(prefixSAIDir) }     // the copy that RUNS
+    @objc func openWinePrefix()  { openFolder(appPrefix) }        // the whole bottle
+    @objc func openAppSupport()  { openFolder(appSupport()) }     // config, licence stash, recordings
+    func openFolder(_ p: String) {
+        guard FileManager.default.fileExists(atPath: p) else { alertUser("That folder doesn't exist yet:\n\n\(p)"); return }
+        NSWorkspace.shared.open(URL(fileURLWithPath: p))
+    }
+
+    // ---- health check -------------------------------------------------------
+    // Verifies every moving part is actually where it has to be. This is the
+    // check that would have answered "I removed some files and nothing works"
+    // in one click instead of a debugging session.
+    func runCapture(_ exe: String, _ args: [String], env: [String: String] = [:]) -> String {
+        let p = Process(); p.executableURL = URL(fileURLWithPath: exe); p.arguments = args
+        if !env.isEmpty { var e = ProcessInfo.processInfo.environment; env.forEach { e[$0] = $1 }; p.environment = e }
+        let out = Pipe(); p.standardOutput = out; p.standardError = Pipe()
+        do { try p.run() } catch { return "" }
+        let d = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return String(data: d, encoding: .utf8) ?? ""
+    }
+
+    @objc func healthCheckTapped() {
+        console.string = "Running health check… (querying the Wine registry, a few seconds)"
+        subtitle.stringValue = "Running health check…"
+        DispatchQueue.global().async {
+            let report = self.buildHealthReport()
+            DispatchQueue.main.async {
+                self.console.string = report
+                self.console.scrollToEndOfDocument(nil)
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(report, forType: .string)
+                self.subtitle.stringValue = "Health check done — copied to clipboard."
+            }
+        }
+    }
+
+    func buildHealthReport() -> String {
+        let fm = FileManager.default
+        var lines: [String] = ["=== SAI Pen Pressure — health check ===",
+                               "version \(currentVersion())", ""]
+        var problems = 0
+        func check(_ label: String, _ ok: Bool, _ detail: String = "", fatal: Bool = true) {
+            if !ok && fatal { problems += 1 }
+            let mark = ok ? "OK  " : (fatal ? "FAIL" : "warn")
+            lines.append("[\(mark)] \(label)\(detail.isEmpty ? "" : "  — \(detail)")")
+        }
+
+        // --- Wine
+        let wine = wineBin()
+        check("Wine runtime", wine != nil, wine ?? "not found in /Applications or $WINE")
+
+        // --- source folder
+        let src = savedSAIPath()
+        check("SAI source folder recorded", src != nil, src ?? "none chosen")
+        if let s = src {
+            check("SAI source still exists", fm.fileExists(atPath: "\(s)/sai2.exe"),
+                  fm.fileExists(atPath: "\(s)/sai2.exe") ? s : "missing sai2.exe at \(s)", fatal: false)
+        }
+
+        // --- prefix layout
+        check("Wine prefix exists", fm.fileExists(atPath: appPrefix), appPrefix)
+        check("drive_c exists", fm.fileExists(atPath: "\(appPrefix)/drive_c"))
+        check("SAI2 folder in prefix", fm.fileExists(atPath: prefixSAIDir), prefixSAIDir)
+        let exeAttrs = try? fm.attributesOfItem(atPath: prefixSAIExe)
+        let exeSize = (exeAttrs?[.size] as? Int) ?? 0
+        check("sai2.exe installed", saiInstalledInPrefix(),
+              exeSize > 0 ? "\(exeSize / 1024 / 1024) MB" : "missing")
+        check("install matches selected source", !prefixIsStale(),
+              prefixIsStale() ? "prefix was built from: \(installedSrcPath() ?? "unknown")" : "")
+
+        // --- the bridge
+        let sysDLL = "\(appPrefix)/drive_c/windows/system32/wintab32.dll"
+        check("wintab32.dll in system32", fm.fileExists(atPath: sysDLL), sysDLL)
+        if let res = Bundle.main.resourcePath {
+            let a = fm.contents(atPath: "\(res)/wintab32.dll")
+            let b = fm.contents(atPath: sysDLL)
+            if let a = a, let b = b {
+                check("wintab32.dll matches this build", a == b,
+                      a == b ? "" : "installed DLL differs from the one shipped in this app — Reinstall to fix", fatal: false)
+            }
+        }
+
+        // --- registry
+        if let w = wine {
+            let env = ["WINEPREFIX": appPrefix, "WINEDEBUG": "-all"]
+            let ov = runCapture(w, ["reg", "query", "HKCU\\Software\\Wine\\DllOverrides", "/v", "wintab32"], env: env)
+            check("DllOverrides wintab32 = native,builtin", ov.contains("native,builtin"),
+                  ov.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "key not set" : "")
+            let cmd = runCapture(w, ["reg", "query", "HKCU\\Software\\Wine\\Mac Driver", "/v", "LeftCommandIsCtrl"], env: env)
+            check("Cmd→Ctrl remap (LeftCommandIsCtrl=Y)", cmd.uppercased().contains("Y"),
+                  "", fatal: false)
+        }
+
+        // --- licence + runtime files
+        check("license (.slc) in prefix", installedLicenseName() != nil,
+              installedLicenseName() ?? "none — SAI can draw but not save", fatal: false)
+        check("stashed license backup", !slcFiles(in: licenseStashDir()).isEmpty,
+              slcFiles(in: licenseStashDir()).joined(separator: ", "), fatal: false)
+        check("pressure file", fm.fileExists(atPath: "\(appPrefix)/drive_c/wt_pressure.txt"),
+              "", fatal: false)
+
+        // --- permission
+        check("Input Monitoring granted", inputMonitoringGranted(),
+              inputMonitoringGranted() ? "" : "System Settings → Privacy & Security → Input Monitoring")
+
+        lines.append("")
+        lines.append(problems == 0
+            ? "RESULT: everything checks out."
+            : "RESULT: \(problems) problem\(problems == 1 ? "" : "s") found. 'Install from scratch' fixes most of them.")
+        return lines.joined(separator: "\n")
+    }
+
+    // ---- session recorder ---------------------------------------------------
+    // "Record from here to there, then tell me what happened." Snapshots the
+    // event counters and the wake log, then diffs them on stop — so you can
+    // reproduce a glitch and get a self-contained report instead of eyeballing
+    // a live log. Saved, shown in the console, and copied to the clipboard.
+    struct RecSnapshot {
+        let t: Date, seq: Int, tabletPtr: Int, tabletMouse: Int
+        let prox: Int, plainMouse: Int, wakeLines: Int
+    }
+    var recording: RecSnapshot?
+    var recMaxPressure = 0
+    var recPressSamples = 0
+    var recTimer: Timer?
+    var recBtn: NSButton!
+
+    func wakeLogLineCount() -> Int {
+        guard let s = try? String(contentsOfFile: "/tmp/sai-wake.log", encoding: .utf8) else { return 0 }
+        return s.split(separator: "\n").count
+    }
+
+    @objc func toggleRecord() {
+        if recording != nil { stopRecording(); return }
+        _ = startPressureEngineOnce()      // so pen counters actually move
+        recMaxPressure = 0; recPressSamples = 0
+        recording = RecSnapshot(t: Date(), seq: seq, tabletPtr: g_evTabletPtr,
+                                tabletMouse: g_evTabletMouse, prox: g_evProx,
+                                plainMouse: g_evPlainMouse, wakeLines: wakeLogLineCount())
+        recBtn.title = "■ Stop recording"
+        console.string = "● Recording… reproduce the problem now, then press Stop."
+        let t = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            guard let self = self, self.recording != nil else { return }
+            let p = max(0, lastKeyP)
+            if p > 0 { self.recPressSamples += 1 }
+            if p > self.recMaxPressure { self.recMaxPressure = p }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        recTimer = t
+        wlog("=== RECORDING STARTED ===")
+    }
+
+    func stopRecording() {
+        guard let r = recording else { return }
+        wlog("=== RECORDING STOPPED ===")
+        recTimer?.invalidate(); recTimer = nil
+        recording = nil
+        recBtn.title = "● Record session"
+
+        let dur = Date().timeIntervalSince(r.t)
+        // only the wake-log lines written during the window
+        var newLines: [String] = []
+        if let s = try? String(contentsOfFile: "/tmp/sai-wake.log", encoding: .utf8) {
+            newLines = s.split(separator: "\n").map(String.init).dropFirst(r.wakeLines).map { $0 }
+        }
+        let win = g_saiWindow.isEmpty ? "none on screen"
+            : "\(Int(g_saiWindow.width))x\(Int(g_saiWindow.height)) at (\(Int(g_saiWindow.minX)),\(Int(g_saiWindow.minY)))"
+        let pct = Int((Double(recMaxPressure) / 1023.0 * 100).rounded())
+        var out = """
+        === SAI Pen Pressure — session recording ===
+        version   \(currentVersion())      duration  \(String(format: "%.1fs", dur))
+        started   \(r.t)
+
+        --- pen ---
+        samples streamed to SAI   \(seq - r.seq)
+        tablet pointer events     \(g_evTabletPtr - r.tabletPtr)
+        tablet-mouse events       \(g_evTabletMouse - r.tabletMouse)
+        proximity changes         \(g_evProx - r.prox)
+        PLAIN mouse events        \(g_evPlainMouse - r.plainMouse)
+        max pressure              \(recMaxPressure)/1023 (\(pct)%)
+        frames with pen down      \(recPressSamples)
+        pen seen this session     \(g_penEverSeen)
+
+        --- SAI ---
+        window                    \(win)
+        menu strip active         \(!g_saiStrip.isEmpty)
+        auto-wake enabled         \(autoWake)
+
+        --- setup ---
+        prefix                    \(appPrefix)
+        sai2.exe installed        \(saiInstalledInPrefix())
+        prefix stale              \(prefixIsStale())
+        license                   \(installedLicenseName() ?? "none")
+        Input Monitoring          \(inputMonitoringGranted())
+
+        --- wake log during recording (\(newLines.count) lines) ---
+        """
+        out += "\n" + (newLines.isEmpty ? "(nothing — no wake/auto-wake fired)" : newLines.joined(separator: "\n"))
+
+        // interpretation, so the numbers mean something without reading the code
+        var notes: [String] = []
+        if seq - r.seq == 0 { notes.append("• No pen samples reached SAI. Either the pen wasn't used, or Input Monitoring is off.") }
+        if g_evPlainMouse - r.plainMouse > 0 && g_evTabletMouse - r.tabletMouse == 0 && g_penEverSeen {
+            notes.append("• Pen arrived as a PLAIN mouse — the Wacom driver demoted it. That's the app-switch freeze signature (issue #2).")
+        }
+        if recMaxPressure == 0 && seq - r.seq > 0 { notes.append("• Samples flowed but pressure never exceeded 0 — hover only, no contact.") }
+        if !newLines.isEmpty { notes.append("• Wake activity fired during this window (see above).") }
+        if !notes.isEmpty { out += "\n\n--- notes ---\n" + notes.joined(separator: "\n") }
+
+        console.string = out
+        console.scrollToEndOfDocument(nil)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(out, forType: .string)
+
+        let dir = appSupport() + "/recordings"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withYear, .withMonth, .withDay, .withTime]
+        let path = "\(dir)/session-\(f.string(from: r.t).replacingOccurrences(of: ":", with: "-")).log"
+        try? out.write(toFile: path, atomically: true, encoding: .utf8)
+        subtitle.stringValue = "Recording saved + copied to clipboard."
+    }
+    @objc func copyDiagnostics() {
+        let fm = FileManager.default
+        var os = ProcessInfo.processInfo.operatingSystemVersionString
+        os = os.replacingOccurrences(of: "Version ", with: "")
+        let lines = [
+            "SAI Pen Pressure \(currentVersion())",
+            "macOS: \(os)",
+            "Wine: \(wineBin() ?? "NOT FOUND")",
+            "Prefix: \(appPrefix)  (exists: \(fm.fileExists(atPath: appPrefix)))",
+            "SAI source: \(savedSAIPath() ?? "none")",
+            "SAI installed from: \(installedSrcPath() ?? "unknown")",
+            "sai2.exe in prefix: \(saiInstalledInPrefix())",
+            "prefix stale: \(prefixIsStale())",
+            "license: \(installedLicenseName() ?? "none")",
+            "wintab32.dll: \(fm.fileExists(atPath: "\(appPrefix)/drive_c/windows/system32/wintab32.dll"))",
+            "Input Monitoring: \(inputMonitoringGranted())",
+            "auto-wake: \(autoWake)",
+        ]
+        let text = lines.joined(separator: "\n")
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        alertUser("Diagnostics copied to the clipboard:\n\n\(text)")
     }
 
     // Uninstall Wine on request: move "Wine Staging.app" to the Trash (reversible)
@@ -1286,7 +2455,7 @@ final class SetupController: NSObject, NSApplicationDelegate {
     func stopTest() {
         testing = false
         testTimer?.invalidate(); testTimer = nil
-        if testBtn != nil { testBtn.title = "Test Tablet Pressure" }
+        if testBtn != nil { testBtn.title = "Test pen" }
         if testHint != nil { testHint.isHidden = true }
         if barRow != nil { barRow.isHidden = true }
     }

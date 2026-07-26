@@ -3,10 +3,41 @@
 An honest list of the bugs we know about — the symptom, the underlying cause, **what we
 tried, and what didn't work** — so nobody re-treads the dead ends.
 
-Both issues below are caused by layers **beneath** this project (SAI itself, and Wine's
+Issues 1 and 2 are caused by layers **beneath** this project (SAI itself, and Wine's
 macOS driver). They are not defects in the pressure bridge, and there is no bridge-side fix
 for either without breaking something more important (drawing). Contributions that prove
 otherwise are very welcome.
+
+---
+
+## 0. If the pen won't draw at all on v0.1.5 — upgrade (fixed in 0.1.6)
+
+**Symptom.** The pen hovers and the cursor moves, but no stroke is ever painted. Everything
+you can check looks perfect, so it reads as a broken install — and reinstalling never helps.
+
+**Why it's so misleading.** Pressure genuinely reaches SAI. `WT_DEBUG=1` on an affected
+machine showed a flawless pipeline:
+
+```
+producer: open=1 posted=274 recv=274 gaps=0 fetched=274 udp=live
+WTPacket #256 press=1023 lat=0ms
+```
+
+**Cause.** 0.1.5's click de-dup (the fix for #8) rewrote left-button messages to `WM_NULL`
+within 400 ms of a pen-tip transition, scoped to SAI's main window. The canvas is a child of
+the main window too, so it ate the `WM_LBUTTONDOWN` that starts every stroke:
+
+```
+PEN DOWN press=218
+CLICK dedup: ate msg=0x201 dt=6ms        (0x201 = WM_LBUTTONDOWN)
+```
+
+**Fix.** Upgrade to 0.1.6, where the de-dup is off by default. On 0.1.5 you can work around
+it with `WT_NO_CLICK_DEDUP=1`. Full write-up: issue #19.
+
+**Lesson for future debugging:** when the pen misbehaves, run `WT_DEBUG=1` *first*. It writes
+`C:\wtlog.txt` inside the prefix and shows exactly what SAI received and what the DLL did —
+it distinguishes "the bridge is broken" from "SAI ignored it" in seconds.
 
 ---
 

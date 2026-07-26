@@ -465,7 +465,20 @@ static void check_win32_wake(DWORD now) {
  *     issue-#1 menu-strip fix is unaffected.
  *   - only within CLICK_DEDUP_MS of a REAL tip transition from our stream; a
  *     human can't switch pen->mouse that fast, so real mouse clicks pass.
- * Disable: WT_NO_CLICK_DEDUP=1. */
+ *
+ * OFF BY DEFAULT since v0.1.6 — see issue #19. The "main window only" scoping
+ * above is WRONG: the canvas is a child of the main window too, so GA_ROOT
+ * matches it just as happily as a brush slot. That made this hook swallow the
+ * WM_LBUTTONDOWN that STARTS EVERY STROKE, ~6ms after each pen-down:
+ *     PEN DOWN press=218
+ *     CLICK dedup: ate msg=0x201 dt=6ms          (0x201 = WM_LBUTTONDOWN)
+ * WinTab pressure kept arriving perfectly (fetched=274/274, press up to 1023),
+ * so every log looked healthy while the pen simply could not draw — and no
+ * amount of reinstalling could fix it, because the bug shipped in this DLL.
+ * A double-click dialog is a nuisance; a pen that cannot draw is not, so the
+ * default now favours drawing and #8 is reopened.
+ * Enable:  WT_CLICK_DEDUP=1   (accepts the #8 double-click risk)
+ * Disable: WT_NO_CLICK_DEDUP=1 (still honoured; now redundant) */
 #define CLICK_DEDUP_MS 400
 static HHOOK g_click_hook;
 static unsigned long g_clicks_eaten;
@@ -501,7 +514,11 @@ static LRESULT CALLBACK click_hook_proc(int code, WPARAM wp, LPARAM lp) {
 /* install once SAI's window exists (cheap; called from producer housekeeping) */
 static void ensure_click_dedup(void) {
     if (g_click_hook || !g_hwnd) return;
-    if (getenv("WT_NO_CLICK_DEDUP")) return;
+    if (getenv("WT_NO_CLICK_DEDUP")) return;   /* explicit off, kept for compat */
+    if (!getenv("WT_CLICK_DEDUP")) {           /* OPT-IN now — see issue #19 */
+        log_line("click dedup: OFF by default (set WT_CLICK_DEDUP=1 to enable)");
+        return;
+    }
     HWND root = GetAncestor(g_hwnd, GA_ROOT);
     DWORD tid = GetWindowThreadProcessId(root ? root : g_hwnd, NULL);
     if (!tid) return;
