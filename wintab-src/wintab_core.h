@@ -12,9 +12,12 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#define WTC_MAX_PRESS 1023
+/* Hard ceiling for the wire format. The ACTIVE full-scale value is chosen
+ * at runtime (see g_max_press in wintab32.c) and may be lower; this only
+ * bounds what the parser will accept. */
+#define WTC_MAX_PRESS 8191
 
-/* one pen sample from the mac helper: pressure 0..1023 plus (optionally) a
+/* one pen sample from the mac helper: pressure 0..g_max_press plus (optionally) a
  * position in mac coords — origin bottom-left, y-up, 8x fixed point — and the
  * virtual-desktop size in the same units. */
 typedef struct { int press, x, y, w, h, has_pos; } WTC_SAMPLE;

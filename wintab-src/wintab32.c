@@ -6,7 +6,7 @@
  *
  * Architecture:
  *   - No synthetic/test injection (so no phantom stroke on startup).
- *   - A producer thread reads the current pressure (0..1023) from a small file
+ *   - A producer thread reads the current pressure (0..g_max_press) from a small file
  *     C:\wt_pressure.txt (which a native macOS helper writes from the real
  *     Wacom tablet). When pressure > 0 (pen down) it emits a packet at the
  *     LIVE cursor position and posts WT_PACKET to SAI's window; SAI then calls
@@ -57,7 +57,29 @@ typedef struct {
 
 #define WT_DEFBASE 0x7ff0
 #define WT_PACKET  (WT_DEFBASE+0)
-#define MAX_PRESS  1023
+/* Full-scale pressure. CHOSEN AT RUNTIME so the user can trade resolution
+ * against jitter from the setup window (issue #21): more levels means finer
+ * control but also that sensor noise stops being quantised away.
+ *
+ * Read once from C:\\wt_pmax.txt, which the mac side writes BEFORE launching
+ * SAI. Both halves read the same file, so the helper's scaling and the axis we
+ * advertise to SAI can never disagree -- and SAI reads the axis at WTOpen, so
+ * it must be settled before then. Missing or invalid file -> 1023 (the long-standing
+ * default). */
+#define MAX_PRESS_CEILING 8191
+static int g_max_press = 1023;
+#define MAX_PRESS  g_max_press
+
+static void load_max_press(void) {
+    FILE *f = fopen("C:\\wt_pmax.txt", "rb");
+    if (!f) return;
+    char b[32] = {0};
+    size_t n = fread(b, 1, sizeof(b) - 1, f);
+    fclose(f);
+    b[n] = '\0';
+    int v = atoi(b);
+    if (v >= 255 && v <= MAX_PRESS_CEILING) g_max_press = v;
+}
 #define IN_EXT     32767
 
 /* our packet, in field order matching OUR_PKTDATA (36 bytes) */
@@ -856,8 +878,11 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID r) {
         /* logging is OFF unless WT_DEBUG is set: without a log file, log_line() is a
          * no-op (g_log stays NULL) so there's zero per-packet fflush overhead. */
         if (getenv("WT_DEBUG")) g_log = fopen("C:\\wtlog.txt", "w");
-        log_line("==== OwnTab wintab32.dll loaded; screen %dx%d virtual %dx%d ====",
-             g_screenW, g_screenH, g_virtW, g_virtH);
+        /* Must happen before SAI calls WTInfo/WTOpen — it reads the pressure
+         * axis exactly once, at open time. */
+        load_max_press();
+        log_line("==== OwnTab wintab32.dll loaded; screen %dx%d virtual %dx%d maxPress=%d ====",
+             g_screenW, g_screenH, g_virtW, g_virtH, g_max_press);
         CreateThread(NULL, 0, producer, NULL, 0, NULL);
     }
     return TRUE;

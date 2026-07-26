@@ -64,6 +64,9 @@ let noHover = ProcessInfo.processInfo.environment["WT_NO_HOVER"] != nil
 // App mode when launched as the .app bundle (its main executable is THIS binary
 // directly — no launcher script, so downloaded/quarantined apps still open) or
 // when forced with --app. Running the bare binary from a terminal = dev mode.
+// Load the stored pressure resolution before anything samples the pen.
+// Unset -> 1023, the long-standing default.
+let _pmaxInit: Void = { PressureCore.maxPressure = savedMaxPressure() }()
 let isAppMode = CommandLine.arguments.contains("--app") || Bundle.main.bundlePath.hasSuffix(".app")
 // Wine prefix the app manages. Override with SAI_PREFIX (e.g. to test from
 // scratch in a throwaway location without touching a real setup).
@@ -86,6 +89,28 @@ func savedSAIPath() -> String? {
     guard let s = try? String(contentsOfFile: appSupport() + "/config.txt", encoding: .utf8) else { return nil }
     let p = s.trimmingCharacters(in: .whitespacesAndNewlines); return p.isEmpty ? nil : p
 }
+// ---- pressure resolution (issue #21) ---------------------------------------
+// The helper and the DLL must agree on full-scale pressure, and SAI reads the
+// axis once at WTOpen. So the choice is stored on the mac side and mirrored
+// into the prefix as C:\wt_pmax.txt BEFORE SAI launches; the DLL reads that at
+// load. One value, two readers, no way for them to disagree.
+func savedMaxPressure() -> Int {
+    guard let s = try? String(contentsOfFile: appSupport() + "/pmax.txt", encoding: .utf8),
+          let v = Int(s.trimmingCharacters(in: .whitespacesAndNewlines)),
+          PressureCore.pressureChoices.contains(v) else { return 1023 }
+    return v
+}
+func saveMaxPressure(_ v: Int) {
+    try? "\(v)".write(toFile: appSupport() + "/pmax.txt", atomically: true, encoding: .utf8)
+    PressureCore.maxPressure = v
+}
+/// Mirror the setting into the prefix so the DLL picks it up on next SAI launch.
+func writeMaxPressureForDLL() {
+    let dir = "\(appPrefix)/drive_c"
+    try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    try? "\(PressureCore.maxPressure)".write(toFile: "\(dir)/wt_pmax.txt", atomically: true, encoding: .ascii)
+}
+
 func saveSAIPath(_ p: String) { try? p.write(toFile: appSupport() + "/config.txt", atomically: true, encoding: .utf8) }
 
 func osa(_ src: String) -> String? {
@@ -180,6 +205,46 @@ func installedLicenseName() -> String? {
     return nil
 }
 
+// ---- which SAI build is installed? -----------------------------------------
+// SAI ships its own changelog, `history.txt`, newest entry first, with the build
+// date as a bare `YYYY-MM-DD` line. Reading that beats guessing from the folder
+// name (users rename them) or the exe size (changes every release).
+//
+// We report the DATE and nothing more. It is tempting to infer the branch —
+// "Major Renovated" vs "Technical Preview Stable" — from a cutoff date, but that
+// is wrong: SYSTEMAX updates BOTH branches, so a Stable build released after the
+// renovated one carries a later date and would be misclassified. There is no
+// date at which one branch starts and the other stops.
+//
+// It doesn't matter anyway: the licence is written to every location SAI might
+// read, so nothing depends on knowing the branch. A build date is a fact we can
+// show without it going stale; a branch label would be a guess that rots.
+func saiBuildDate() -> String? {
+    guard let text = try? String(contentsOfFile: "\(prefixSAIDir)/history.txt", encoding: .utf8) else { return nil }
+    for line in text.split(separator: "\n", maxSplits: 400, omittingEmptySubsequences: true) {
+        let t = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard t.count == 10, t.dropFirst(4).first == "-", t.dropFirst(7).first == "-" else { continue }
+        if t.split(separator: "-").allSatisfy({ $0.allSatisfy(\.isNumber) }) { return t }
+    }
+    return nil
+}
+
+func saiBuildLabel() -> String? { saiBuildDate().map { "SAI build \($0)" } }
+
+/// Which of the two locations actually hold a certificate right now. Shown in
+/// the UI because "it says installed but SAI won't save" is impossible to debug
+/// blind — seeing the real paths makes a half-install obvious at a glance.
+func licenseLocations() -> [String] {
+    licenseDirs.filter { !slcFiles(in: $0).isEmpty }
+}
+func licenseLocationSummary() -> String {
+    let have = licenseLocations()
+    if have.count == licenseDirs.count { return "in both locations (works on old and new SAI builds)" }
+    if have.isEmpty { return "not installed" }
+    return have.contains(prefixSAIDir) ? "only next to sai2.exe (older builds)"
+                                       : "only in settings/ (Major Renovated build)"
+}
+
 @discardableResult
 func installLicenseFile(_ src: String) -> Bool {
     let name = (src as NSString).lastPathComponent
@@ -227,6 +292,36 @@ func installBridge(_ wine: String) {
     }
     runProc(wine, ["reg", "add", "HKCU\\Software\\Wine\\DllOverrides", "/v", "wintab32",
                    "/t", "REG_SZ", "/d", "native,builtin", "/f"], env: env)
+}
+
+/// Keep the DLL inside the prefix identical to the one shipped in this app.
+///
+/// The helper and the DLL are a matched pair: they share `maxPressure` /
+/// `WTC_MAX_PRESS` over a wire format with no version field. A new helper
+/// scaling to 8191 against an old DLL that clamps at 1023 would pin every
+/// stroke at full pressure — worse than the quantisation it fixes (issue #21).
+///
+/// Users update the app without re-running setup all the time, which would
+/// leave a stale DLL in the prefix forever. So check on every launch and heal
+/// it: a byte compare of a 138 KB file is far cheaper than that failure mode.
+@discardableResult
+func ensureBridgeUpToDate(_ wine: String?) -> Bool {
+    guard let res = Bundle.main.resourcePath else { return false }
+    let shipped = "\(res)/wintab32.dll"
+    let sys = "\(appPrefix)/drive_c/windows/system32"
+    let installed = "\(sys)/wintab32.dll"
+    guard let want = FileManager.default.contents(atPath: shipped) else { return false }
+    if FileManager.default.contents(atPath: installed) == want { return false }   // already current
+    wlog("bridge: installed wintab32.dll differs from the shipped one — updating")
+    try? FileManager.default.createDirectory(atPath: sys, withIntermediateDirectories: true)
+    try? FileManager.default.removeItem(atPath: installed)
+    guard (try? FileManager.default.copyItem(atPath: shipped, toPath: installed)) != nil else { return false }
+    if let w = wine {                        // re-assert the override, harmless if already set
+        runProc(w, ["reg", "add", "HKCU\\Software\\Wine\\DllOverrides", "/v", "wintab32",
+                    "/t", "REG_SZ", "/d", "native,builtin", "/f"],
+                env: ["WINEPREFIX": appPrefix, "WINEDEBUG": "-all"])
+    }
+    return true
 }
 
 @discardableResult
@@ -366,6 +461,7 @@ func pollUntilSAICloses() {
 // LAUNCH (runs only after the pressure tap is active): start SAI; quit the app
 // when SAI closes.
 func launchSAIApp() {
+    writeMaxPressureForDLL()      // must land before the DLL loads
     applyWineShortcutRemap(g_wine)          // Cmd->Ctrl via Wine (every launch; idempotent)
     let pf = "\(appPrefix)/drive_c/wt_pressure.txt"
     try? "0".write(toFile: pf, atomically: true, encoding: .ascii)
@@ -565,12 +661,15 @@ func emit(pressure: Int, loc: CGPoint) {
         }
     }
 
-    if PressureCore.isDuplicate(p: p, xf: xf, yf: yf, lastP: lastKeyP, lastX: lastKeyX, lastY: lastKeyY) { return }
+    // Deadband, not exact-equality: at higher resolutions sensor jitter would
+    // otherwise become a packet per wobble (issue #21).
+    if PressureCore.shouldSkip(p: p, xf: xf, yf: yf, lastP: lastKeyP, lastX: lastKeyX, lastY: lastKeyY,
+                               deadband: PressureCore.pressureDeadband) { return }
     lastKeyP = p; lastKeyX = xf; lastKeyY = yf
     if p > 0 { g_lastDrawAt = Date() }        // "SAI is clearly alive" signal for auto-wake
     send(p, xf, yf)
     if verbose && (seq % 100 == 1 || p == 0) {
-        print("captured=\(seq) pressure=\(p)/1023")
+        print("captured=\(seq) pressure=\(p)/\(PressureCore.maxPressure)")
     }
 }
 
@@ -651,7 +750,7 @@ let tapCallback: CGEventTapCallBack = { _, type, event, _ in
         g_lastTabletEvAt = CFAbsoluteTimeGetCurrent(); g_penEverSeen = true
         inProximity = true
         let pr = event.getDoubleValueField(.tabletEventPointPressure)
-        emit(pressure: Int(pr * 1023.0), loc: event.location)
+        emit(pressure: Int(pr * Double(PressureCore.maxPressure)), loc: event.location)
     case .leftMouseUp:
         if isTabletMouse(event) { emit(pressure: 0, loc: event.location) }   // pen tip lift (still hovering)
     case .mouseMoved, .leftMouseDown, .leftMouseDragged:
@@ -660,7 +759,7 @@ let tapCallback: CGEventTapCallBack = { _, type, event, _ in
             g_lastTabletEvAt = CFAbsoluteTimeGetCurrent(); g_penEverSeen = true
             inProximity = true
             let pr = event.getDoubleValueField(.tabletEventPointPressure)
-            emit(pressure: Int(pr * 1023.0), loc: event.location)
+            emit(pressure: Int(pr * Double(PressureCore.maxPressure)), loc: event.location)
         } else {
             g_evPlainMouse += 1
             inProximity = false   // real mouse/trackpad -> pen not in use, let SAI have the mouse
@@ -815,6 +914,14 @@ final class SetupController: NSObject, NSApplicationDelegate {
         // offering a button that would just error.
         var enabledIf: (() -> Bool)? = nil
         var blockedHint: String = ""
+        // Optional second button — used for "show me where this actually is",
+        // which shouldn't be buried in Developer mode.
+        var extraTitle: String? = nil
+        var extraAction: (() -> Void)? = nil
+        /// "Show ▸" only makes sense once the thing exists; the permission row's
+        /// extra button is the opposite — it's the escape hatch for when it's
+        /// still missing.
+        var extraWhenSatisfied: Bool = true
     }
     var reqs: [Req] = []
     var window: NSWindow!
@@ -823,6 +930,7 @@ final class SetupController: NSObject, NSApplicationDelegate {
     var statusFields: [NSTextField] = []
     var detailFields: [NSTextField] = []
     var fixButtons: [NSButton] = []
+    var extraButtons: [NSButton?] = []      // optional "Show ▸" per row
     var running = false
     // "Test Tablet Pressure" widgets — a live 0–100% bar so the user can confirm
     // the pen works BEFORE launching SAI.
@@ -892,11 +1000,13 @@ final class SetupController: NSObject, NSApplicationDelegate {
                     let where_ = (prefixSAIDir as NSString).abbreviatingWithTildeInPath
                     if !saiInstalledInPrefix() { return "Not installed yet — will be created on Launch." }
                     if prefixIsStale() { return "OUT OF DATE — source folder changed. Reinstall to apply." }
-                    return where_
+                    // Read from SAI's own history.txt, so it survives renamed folders.
+                    return saiBuildLabel().map { "\(where_)  ·  \($0)" } ?? where_
                 },
                 keepButton: true, keepButtonTitle: "Reinstall…",
                 enabledIf: { wineBin() != nil && saiReady() },
-                blockedHint: "Needs Wine and a SAI folder first — SAI is installed INTO the Wine prefix."),
+                blockedHint: "Needs Wine and a SAI folder first — SAI is installed INTO the Wine prefix.",
+                extraTitle: "Show ▸", extraAction: { [weak self] in self?.openSAIInWine() }),
             // Optional (⚪️ not ❌): SAI launches without a licence, you just
             // can't save. Lives next to the INSTALLED row because that's the
             // folder it has to land in.
@@ -906,15 +1016,18 @@ final class SetupController: NSObject, NSApplicationDelegate {
                 ok: { installedLicenseName() != nil },
                 fix: { [weak self] in self?.chooseLicense() }, required: false,
                 dynamicDetail: {
-                    if let n = installedLicenseName() { return "Installed: \(n)" }
+                    if let n = installedLicenseName() { return "\(n) — \(licenseLocationSummary())" }
                     if !slcFiles(in: licenseStashDir()).isEmpty {
                         return "Saved copy will be restored when SAI is installed."
                     }
                     return "Not installed — SAI still runs and draws, but can't save."
                 },
-                keepButton: true),
+                keepButton: true,
+                extraTitle: "Show ▸", extraAction: { [weak self] in self?.revealLicense() }),
             Req(title: "Input Monitoring permission", detail: "lets the app read your tablet's pressure", fixTitle: "Grant…",
-                ok: { inputMonitoringGranted() }, fix: { [weak self] in self?.grantInputMonitoring() }, required: true),
+                ok: { inputMonitoringGranted() }, fix: { [weak self] in self?.grantInputMonitoring() }, required: true,
+                extraTitle: "Ask again", extraAction: { [weak self] in self?.resetOwnPermission() },
+                extraWhenSatisfied: false),
         ]
         buildWindow()
         refresh()
@@ -1384,7 +1497,19 @@ final class SetupController: NSObject, NSApplicationDelegate {
             fixButtons.append(btn)
             let spacer = NSView()
             spacer.widthAnchor.constraint(greaterThanOrEqualToConstant: 16).isActive = true
-            row.addArrangedSubview(status); row.addArrangedSubview(col); row.addArrangedSubview(spacer); row.addArrangedSubview(btn)
+            row.addArrangedSubview(status); row.addArrangedSubview(col); row.addArrangedSubview(spacer)
+            // "Show ▸" sits before the main action so the primary button stays
+            // in the same column down the whole checklist.
+            if r.extraTitle != nil {
+                let extra = NSButton(title: r.extraTitle!, target: self, action: #selector(extraTapped(_:)))
+                extra.tag = i; extra.bezelStyle = .rounded; extra.controlSize = .small
+                extra.setContentHuggingPriority(.required, for: .horizontal)
+                extraButtons.append(extra)
+                row.addArrangedSubview(extra)
+            } else {
+                extraButtons.append(nil)
+            }
+            row.addArrangedSubview(btn)
             row.widthAnchor.constraint(equalToConstant: rowWidth).isActive = true
             rowViews.append(row)
             content.addArrangedSubview(row)
@@ -1485,6 +1610,7 @@ final class SetupController: NSObject, NSApplicationDelegate {
         // whole copy-into-the-prefix model raises, so answer it with a button.
         let devFolders = NSStackView(); devFolders.orientation = .horizontal; devFolders.spacing = 6
         for (t, s) in [("SAI in Wine ▸", #selector(openSAIInWine)),
+                       ("License ▸", #selector(revealLicense)),
                        ("Wine prefix ▸", #selector(openWinePrefix)),
                        ("App data ▸", #selector(openAppSupport))] {
             let b = NSButton(title: t, target: self, action: s)
@@ -1634,6 +1760,11 @@ final class SetupController: NSObject, NSApplicationDelegate {
             }
             rowViews[i].alphaValue = enabled ? 1.0 : 0.45
             fixButtons[i].isEnabled = enabled
+            // Nothing to reveal until the thing actually exists on disk.
+            if i < extraButtons.count, let extra = extraButtons[i] {
+                extra.isHidden = (r.extraWhenSatisfied ? !ok : ok)
+                extra.isEnabled = enabled
+            }
             if r.keepButton {                       // stays visible so you can change/uninstall it
                 fixButtons[i].isHidden = false
                 fixButtons[i].title = ok ? r.keepButtonTitle : r.fixTitle
@@ -1655,6 +1786,10 @@ final class SetupController: NSObject, NSApplicationDelegate {
         } else {
             subtitle.stringValue = "All set. Click Launch."
         }
+    }
+
+    @objc func extraTapped(_ sender: NSButton) {
+        reqs[sender.tag].extraAction?()
     }
 
     @objc func fixTapped(_ sender: NSButton) {
@@ -1742,6 +1877,27 @@ final class SetupController: NSObject, NSApplicationDelegate {
         refresh()
     }
 
+    /// Make macOS ask again. Once Input Monitoring has been answered for an app
+    /// identity, `IOHIDRequestAccess` silently returns the cached answer forever
+    /// and the only route left is hunting the app down in a file picker.
+    /// `tccutil reset` clears the entry so the native prompt fires again.
+    ///
+    /// Deliberately narrow and deliberately not silent: it targets THIS app's
+    /// bundle id only (never a blanket reset), it can only REMOVE a grant —
+    /// never add one, you still approve in System Settings — and it asks first.
+    @objc func resetOwnPermission() {
+        let bid = Bundle.main.bundleIdentifier ?? "com.runasharp.saipenpressure"
+        let c = osa("button returned of (display dialog \"Make macOS ask for Input Monitoring again?\n\nThis clears only this app's own permission entry (\(bid)) so the system prompt reappears — much quicker than adding the app by hand.\n\nIt cannot grant anything: you still approve it in System Settings. The app will relaunch.\" buttons {\"Cancel\", \"Reset & ask again\"} default button \"Reset & ask again\" with icon caution)")
+        guard c == "Reset & ask again" else { return }
+        _ = runCapture("/usr/bin/tccutil", ["reset", "ListenEvent", bid])
+        // The prompt only fires on a fresh launch, so bounce ourselves.
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        p.arguments = ["-c", "sleep 1; open '\(Bundle.main.bundlePath)'"]
+        try? p.run()
+        exit(0)
+    }
+
     /// Granting Input Monitoring means finding this app in a file picker, which
     /// is the fiddliest step in the whole setup. Do the finding FOR the user:
     /// open the right Settings pane, reveal the app in Finder so it can be
@@ -1797,7 +1953,21 @@ final class SetupController: NSObject, NSApplicationDelegate {
             return
         }
         if installLicenseFile(url.path) {
-            alertUser("License installed into:\n\n\(( prefixSAIDir as NSString).abbreviatingWithTildeInPath)\n\nQuit SAI completely and relaunch it for the license to take effect (closing the window isn't enough).")
+            // Show the REAL paths. SAI reads the certificate from a different
+            // folder depending on the build, so "installed" alone doesn't tell
+            // you whether the build you run will actually find it.
+            let paths = licenseLocations()
+                .map { "  \(($0 as NSString).abbreviatingWithTildeInPath)/\(url.lastPathComponent)" }
+                .joined(separator: "\n")
+            alertUser("""
+            License installed — copied to both places SAI might read it:
+
+            \(paths)
+
+            Older SAI builds read it next to sai2.exe; the 2026-07-12 "Major Renovated" preview reads it from settings/. Copying both means whichever build you run finds it.
+
+            Quit SAI completely and relaunch for it to take effect (closing the window isn't enough).
+            """)
         } else {
             alertUser("Couldn't copy the license into the Wine prefix. Check that \(( prefixSAIDir as NSString).abbreviatingWithTildeInPath) is writable, then try again.")
         }
@@ -2176,6 +2346,14 @@ final class SetupController: NSObject, NSApplicationDelegate {
     // Finder window with sai2.exe selected and left you guessing what you were
     // looking at.
     @objc func openSAIInWine()   { openFolder(prefixSAIDir) }     // the copy that RUNS
+    /// Reveal the certificate itself, so "where did it actually go?" is one click.
+    @objc func revealLicense() {
+        guard let name = installedLicenseName(), let dir = licenseLocations().first else {
+            alertUser("No license installed yet.\n\nUse Install… on the SAI license row — licenses come from SYSTEMAX, this app can't provide one.")
+            return
+        }
+        NSWorkspace.shared.selectFile("\(dir)/\(name)", inFileViewerRootedAtPath: dir)
+    }
     @objc func openWinePrefix()  { openFolder(appPrefix) }        // the whole bottle
     @objc func openAppSupport()  { openFolder(appSupport()) }     // config, licence stash, recordings
     func openFolder(_ p: String) {
@@ -2343,7 +2521,7 @@ final class SetupController: NSObject, NSApplicationDelegate {
         }
         let win = g_saiWindow.isEmpty ? "none on screen"
             : "\(Int(g_saiWindow.width))x\(Int(g_saiWindow.height)) at (\(Int(g_saiWindow.minX)),\(Int(g_saiWindow.minY)))"
-        let pct = Int((Double(recMaxPressure) / 1023.0 * 100).rounded())
+        let pct = Int((Double(recMaxPressure) / Double(PressureCore.maxPressure) * 100).rounded())
         var out = """
         === SAI Pen Pressure — session recording ===
         version   \(currentVersion())      duration  \(String(format: "%.1fs", dur))
@@ -2355,7 +2533,7 @@ final class SetupController: NSObject, NSApplicationDelegate {
         tablet-mouse events       \(g_evTabletMouse - r.tabletMouse)
         proximity changes         \(g_evProx - r.prox)
         PLAIN mouse events        \(g_evPlainMouse - r.plainMouse)
-        max pressure              \(recMaxPressure)/1023 (\(pct)%)
+        max pressure              \(recMaxPressure)/\(PressureCore.maxPressure) (\(pct)%)
         frames with pen down      \(recPressSamples)
         pen seen this session     \(g_penEverSeen)
 
@@ -2460,8 +2638,8 @@ final class SetupController: NSObject, NSApplicationDelegate {
         let t = Timer(timeInterval: 1.0/60.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             let p = max(0, lastKeyP)                 // lastKeyP is -1 until a pen is first seen
-            self.pressureBar.value = CGFloat(p) / 1023.0
-            self.pressureLabel.stringValue = "\(Int((Double(p) / 1023.0 * 100).rounded()))%"
+            self.pressureBar.value = CGFloat(p) / CGFloat(PressureCore.maxPressure)
+            self.pressureLabel.stringValue = "\(Int((Double(p) / Double(PressureCore.maxPressure) * 100).rounded()))%"
         }
         RunLoop.main.add(t, forMode: .common)
         testTimer = t
@@ -2482,6 +2660,10 @@ final class SetupController: NSObject, NSApplicationDelegate {
         launchBtn.isEnabled = false
         subtitle.stringValue = "Setting up… (first time can take a minute)"
         DispatchQueue.global().async {
+            // An app update ships a new helper AND a new DLL, but the DLL only
+            // reaches the prefix if setup runs. Heal it here so the two halves
+            // can never drift apart (issue #21).
+            ensureBridgeUpToDate(wine)
             let ok = ensureSetup(sai, wine)
             DispatchQueue.main.async {
                 guard ok else { self.subtitle.stringValue = "Setup failed. Re-check the SAI folder."; self.refresh(); return }

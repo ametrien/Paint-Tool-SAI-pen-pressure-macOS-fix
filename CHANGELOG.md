@@ -5,7 +5,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
 
 ## [Unreleased]
 
+- **Pressure resolution picker** (#21) — the plumbing shipped in 0.1.7 but is inert
+  (everything still runs at 1024). Next: detect the tablet's real level count over HID
+  (`usage page 0x0d`/`0xff0d`, usage `0x30`, `logicalMax + 1` — an Intuos BT S reports 4096),
+  fall back to 1024 when the tablet doesn't answer, and allow a careful manual override.
+
+## [0.1.7] — 2026-07-26
+
 ### Fixed
+- **The app could mistake ITSELF for SAI.** Three window scans matched any window whose owner
+  name contained "wine" or "sai" — and *"SAI Pen Pressure"* contains "sai". The winner was
+  picked by area, and Wine's window (1007×554) beat ours (726×760) by about 1%, so merely
+  resizing our window would have pointed the wake, the menu-strip dead zone and the
+  "has SAI closed?" check at our own window. Now excluded by PID.
+- **A stale `wintab32.dll` can no longer survive an app update.** The helper and the DLL are a
+  matched pair sharing a wire format with no version field, but the DLL only reached the
+  prefix during setup — so updating the app left the old one in place indefinitely.
+  `ensureBridgeUpToDate()` now byte-compares the installed DLL against the shipped one on
+  every launch and heals it.
 - **The license now works on the new "Major Renovated" SAI build too.** Where SAI reads the
   `.slc` changed between builds: older Ver.2 builds read it from the folder holding `sai2.exe`,
   the **2026-07-12 Technical Preview Major Renovated** build reads it from a **`settings`**
@@ -15,10 +32,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
   so whichever build you run finds its own.
 
 ### Added
+- **`Show ▸` buttons** on the *Installed in Wine* and *SAI license* rows — one click to the
+  folder SAI actually runs from, and to the certificate itself. No more guessing where things
+  landed; previously this was buried in Developer mode behind an ambiguous "Prefix" button.
+- **The license row says which locations are covered**, not just "installed" — *"in both
+  locations"*, or *"only next to sai2.exe"* / *"only in settings/"*. That distinction is
+  invisible otherwise, and it's the difference between SAI saving and refusing to.
+- **SAI's build date** in the *Installed in Wine* row, read from SAI's own `history.txt`
+  (survives renamed folders, unlike guessing from the folder name). Deliberately the date
+  only — inferring the *branch* from a cutoff date would be wrong, since SYSTEMAX updates
+  both branches and a later Stable build would be misclassified.
+- **"Ask again"** on the Input Monitoring row when the permission is missing: clears just this
+  app's own entry (`tccutil reset ListenEvent <bundle id>`) so macOS shows the native prompt
+  again, instead of making you add the app by hand. It can only ever *remove* a grant — you
+  still approve in System Settings — and it asks first.
 - README documents both downloads on <https://www.systemax.jp/en/sai/devdept.html> — the
   newest **2026-07-12 Major Renovated** preview (which has a **dark theme**:
   *Window → Window Color → Dark Colors*) and the older Technical Preview Stable Version —
   and explains the license-location difference between them.
+
+### Changed
+- The setup window's footer lines are one line each instead of wrapping to two.
 
 ## [0.1.6] — 2026-07-26
 
