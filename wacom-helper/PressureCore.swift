@@ -51,6 +51,30 @@ enum PressureCore {
         return override ?? detected ?? cached ?? 1023
     }
 
+    /// Bar position for a setup step whose real progress cannot be observed
+    /// (issue #28). `wineboot` prints nothing parseable and takes about a
+    /// minute, so there is no true percentage — but a bar frozen for a minute
+    /// is read as a hang, which is the complaint this exists to answer.
+    ///
+    /// Approaches `to` asymptotically and **never reaches it**: only the next
+    /// step moves the bar past `to`. So the bar is always moving while work is
+    /// happening, yet never claims progress nobody observed. A step that
+    /// overruns its estimate keeps creeping, ever more slowly, rather than
+    /// sitting at 100% and lying about it.
+    ///
+    /// `tau = expected/2` puts it ~86% of the way at the expected duration —
+    /// far enough to feel like real progress, with headroom left for overrun.
+    /// The `1 - 1e-9` clamp is load-bearing, not paranoia: for a long enough
+    /// elapsed time `exp(-elapsed/tau)` underflows to exactly 0, the approach
+    /// term becomes exactly 1, and the bar lands on `to` — displaying a step as
+    /// complete while it is still running. Caught by a test asserting the
+    /// invariant, not by inspection.
+    static func setupCreep(from: Double, to: Double, elapsed: Double, expected: Double) -> Double {
+        let tau = max(0.5, expected / 2)
+        let approach = min(1 - 1e-9, 1 - exp(-max(0, elapsed) / tau))
+        return from + (to - from) * approach
+    }
+
     static func clampPressure(_ raw: Int) -> Int { max(0, min(maxPressure, raw)) }
 
     /// PEN FEEL — a response curve applied to the normalised 0…1 pressure
