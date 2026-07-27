@@ -446,8 +446,23 @@ func ensureBridgeUpToDate(_ wine: String?) -> Bool {
     return true
 }
 
+/// How a setup step reports itself to the UI (issue #28).
+///
+/// A step announces the span of the bar it owns and roughly how long it takes,
+/// rather than a single "we are at 40%" number. That is what lets the bar keep
+/// moving *during* a step: `wineboot` prints nothing parseable and takes about
+/// a minute, so a per-step number would freeze the bar for the longest part of
+/// the job — which is exactly the "it looks stuck" complaint.
+///
+///   from/to   the slice of the 0…1 bar this step occupies
+///   label     what to say while it runs
+///   expected  typical duration in seconds, for the creep (an estimate, and
+///             treated as one — see setupStep)
+typealias SetupProgress = (_ from: Double, _ to: Double, _ label: String, _ expected: Double) -> Void
+
 @discardableResult
-func performSetup(_ saiSrc: String, _ wine: String, mode: SetupMode = .ensure, quiet: Bool = false) -> Bool {
+func performSetup(_ saiSrc: String, _ wine: String, mode: SetupMode = .ensure, quiet: Bool = false,
+                  progress: SetupProgress? = nil) -> Bool {
     if mode == .ensure, saiInstalledInPrefix(), !prefixIsStale() { return true }
 
     // Fail fast (before the ~1-minute wineboot) with a SPECIFIC message if the
@@ -475,27 +490,34 @@ func performSetup(_ saiSrc: String, _ wine: String, mode: SetupMode = .ensure, q
     let env = ["WINEPREFIX": appPrefix, "WINEDEBUG": "-all"]
     // Everything below rewrites the prefix, so nothing may still be using it —
     // including a wineserver left over from a previous session (#28).
+    progress?(0.00, 0.06, "Stopping Wine…", 1)
     stopWineForPrefix(wine)
     if mode == .rebuild {
         // The whole point of a rebuild: nothing from the old prefix survives.
         // The licence is restored afterwards from our own stash, not from here.
+        progress?(0.06, 0.12, "Removing the old Wine prefix…", 3)
         try? FileManager.default.removeItem(atPath: appPrefix)
     }
+    // By far the longest step, and the one that made the window look frozen.
+    progress?(0.12, 0.70, "Preparing the Wine environment… (about a minute)", 60)
     runProc(wine, ["wineboot", "-u"], env: env)
 
     // Re-copy SAI. For repair/rebuild the destination is cleared first, so files
     // deleted from the source don't linger and a broken install can't survive.
     if mode != .ensure, FileManager.default.fileExists(atPath: prefixSAIDir) {
+        progress?(0.70, 0.74, "Clearing the old SAI copy…", 2)
         // keep any certificate that's already in there
         for f in slcFiles(in: prefixSAIDir) { installLicenseFile("\(prefixSAIDir)/\(f)") }
         try? FileManager.default.removeItem(atPath: prefixSAIDir)
     }
     try? FileManager.default.createDirectory(atPath: prefixSAIDir, withIntermediateDirectories: true)
+    progress?(0.74, 0.94, "Copying SAI into the Wine prefix…", 12)
     runProc("/bin/cp", ["-R", "\(saiSrc)/.", prefixSAIDir])
     guard saiInstalledInPrefix() else {
         alertUser("Something went wrong copying SAI into the Wine prefix. Check that you have free disk space and that the SAI folder is readable, then reopen the app and try again."); return false
     }
 
+    progress?(0.94, 1.00, "Installing the pressure bridge…", 2)
     installBridge(wine)
     restoreStashedLicenses()
     setInstalledSrcPath(saiSrc)          // the prefix now matches this source
@@ -2552,6 +2574,44 @@ final class SetupController: NSObject, NSApplicationDelegate {
     var wineRow: NSStackView!
     var wineBar: PressureBar!
     var wineLabel: NSTextField!
+    // The setup steps reuse the same bar/label as the Wine download: only one
+    // long operation ever runs at a time, and a second identical row would just
+    // be more to keep in sync.
+    var setupTimer: Timer?
+
+    /// Drive the bar across one setup step (issue #28).
+    ///
+    /// `wineboot` produces nothing we can parse and takes about a minute, so
+    /// there is no real percentage to show. Instead the bar approaches the
+    /// step's end asymptotically — fast at first, slower as it goes — and
+    /// **never arrives on its own**: only the next step (or completion) moves
+    /// it past `to`. So it always looks alive, and it never claims progress it
+    /// hasn't actually observed. A step that overruns its estimate keeps
+    /// creeping, ever more slowly, instead of sitting at 100% and lying.
+    func setupStep(from: Double, to: Double, label: String, expected: Double) {
+        setupTimer?.invalidate()
+        wineRow.isHidden = false
+        wineLabel.stringValue = label
+        wineBar.value = CGFloat(from)
+        applyLayout()
+        let started = Date()
+        setupTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            self.wineBar.value = CGFloat(PressureCore.setupCreep(
+                from: from, to: to,
+                elapsed: Date().timeIntervalSince(started), expected: expected))
+        }
+        RunLoop.main.add(setupTimer!, forMode: .common)   // keep ticking during menu tracking
+    }
+
+    func setupFinished(_ ok: Bool) {
+        setupTimer?.invalidate(); setupTimer = nil
+        wineBar.value = ok ? 1 : 0
+        wineLabel.stringValue = ok ? "Done ✅" : "Setup failed."
+        DispatchQueue.main.asyncAfter(deadline: .now() + (ok ? 2 : 4)) { [weak self] in
+            self?.wineRow.isHidden = true; self?.applyLayout()
+        }
+    }
     var wineProc: Process?
     var wineOutBuf = ""
 
@@ -2810,8 +2870,15 @@ final class SetupController: NSObject, NSApplicationDelegate {
         // wineboot + a full copy takes ~a minute; off the main thread so the
         // window keeps drawing instead of beachballing.
         DispatchQueue.global().async {
-            let ok = performSetup(src, wine, mode: mode)
+            // performSetup runs off the main thread, so every step report has to
+            // hop back before it touches the UI.
+            let ok = performSetup(src, wine, mode: mode) { from, to, label, expected in
+                DispatchQueue.main.async {
+                    self.setupStep(from: from, to: to, label: label, expected: expected)
+                }
+            }
             DispatchQueue.main.async {
+                self.setupFinished(ok)
                 self.running = wasRunning
                 self.refresh()
                 if ok {
