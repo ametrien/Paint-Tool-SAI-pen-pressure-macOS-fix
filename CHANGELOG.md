@@ -5,6 +5,44 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
 
 ## [Unreleased]
 
+## [0.1.9] — 2026-07-27
+
+### Added
+- **Pinch to zoom** (#22). Two fingers apart/together on the trackpad now zooms SAI, at the
+  cursor rather than the canvas centre. Notably this needed **no new permission**: the obvious
+  route (synthesising events with `CGEvent.post`) requires Accessibility, which this project
+  deliberately shed — but `wintab32.dll` already runs *inside* SAI, so the Mac side merely
+  observes the gesture on the tap it already uses for the tablet and the DLL posts
+  `WM_MOUSEWHEEL` from within SAI's own process. Disable with `WT_NO_PINCH_ZOOM=1`.
+- **Universal binary — Intel Macs are supported again** (#6). Both slices are cross-compiled, so
+  no Intel hardware is needed to build them; the x86_64 slice was verified by actually running it
+  under Rosetta rather than assumed to work. `UNIVERSAL=0` builds host-only while iterating.
+- **Documentation site** at
+  <https://ametrien.github.io/Paint-Tool-SAI-pen-pressure-macOS-fix/> — install, troubleshooting,
+  how it works, and engineering notes recording the decisions and the mistakes behind them.
+  Plain GitHub Pages Jekyll: no Node, no build step, nothing to keep up to date.
+
+### Fixed
+- **First strokes after switching back to SAI now have pressure** (#9), and the macOS arrow no
+  longer lingers over SAI's brush cursor at launch. Entering proximity emitted *nothing*, so SAI
+  wasn't told a pen had arrived until it actually moved — and the hover keepalive couldn't cover
+  the gap either, since it requires `lastPressure == 0` while `lastKeyP` stays at `-1` until the
+  first sample. Proximity-enter now emits a hover sample, which announces the pen and unblocks
+  the keepalive.
+- **The DLL log no longer drowns itself.** The "click dedup: OFF by default" notice was emitted
+  from producer housekeeping on every iteration; a field capture came back 2055 spam lines out of
+  2111, burying the packet flow the log exists to show.
+
+### Known
+- **The macOS arrow can still reappear later in a session** (#20). The launch case above is fixed;
+  a second cause remains — any plain mouse or trackpad event clears the in-proximity flag, which
+  stops the keepalive, and a pen already resting in range sends no new proximity event to restore
+  it. Cosmetic; drawing is unaffected.
+- **The menu-bar pen icon is still missing** (#14). Five theories tested and disproven.
+- **Releases remain ad-hoc signed** (#23), so macOS will not prompt for Input Monitoring — it has
+  to be added by hand, once. Signing properly needs a paid Apple Developer Program membership.
+  The install page says so plainly rather than implying a prompt will appear.
+
 ## [0.1.8] — 2026-07-27
 
 ### Added
