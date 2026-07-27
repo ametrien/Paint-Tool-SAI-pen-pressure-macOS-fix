@@ -61,14 +61,26 @@ struct CoreTests {
 
         // --- keepAliveShouldResend ---------------------------------------------------
         // The rule that fixed the double-click bug: resend ONLY hover (pressure 0).
-        expect(PressureCore.keepAliveShouldResend(inProximity: true, lastPressure: 0, secondsSinceLastSend: 0.06),
+        expect(PressureCore.keepAliveShouldResend(penInRange: true, lastPressure: 0,
+                                                 secondsSinceLastSend: 0.06, secondsSinceMouseUse: 5),
                "keepalive: hover + idle resends")
-        expect(!PressureCore.keepAliveShouldResend(inProximity: true, lastPressure: 200, secondsSinceLastSend: 0.06),
+        expect(!PressureCore.keepAliveShouldResend(penInRange: true, lastPressure: 200,
+                                                  secondsSinceLastSend: 0.06, secondsSinceMouseUse: 5),
                "keepalive: NEVER resends a press (double-click bug)")
-        expect(!PressureCore.keepAliveShouldResend(inProximity: false, lastPressure: 0, secondsSinceLastSend: 0.06),
+        expect(!PressureCore.keepAliveShouldResend(penInRange: false, lastPressure: 0,
+                                                  secondsSinceLastSend: 0.06, secondsSinceMouseUse: 5),
                "keepalive: pen out of range -> silent (mouse can paint)")
-        expect(!PressureCore.keepAliveShouldResend(inProximity: true, lastPressure: 0, secondsSinceLastSend: 0.02),
+        expect(!PressureCore.keepAliveShouldResend(penInRange: true, lastPressure: 0,
+                                                  secondsSinceLastSend: 0.02, secondsSinceMouseUse: 5),
                "keepalive: not yet idle (<50ms) -> no resend")
+        // issue #20: the pen stays in range while the mouse is used, so the
+        // keepalive must pause for the mouse and resume by itself afterwards.
+        expect(!PressureCore.keepAliveShouldResend(penInRange: true, lastPressure: 0,
+                                                  secondsSinceLastSend: 0.06, secondsSinceMouseUse: 0.2),
+               "keepalive: mouse just used -> stay quiet so SAI can paint with it")
+        expect(PressureCore.keepAliveShouldResend(penInRange: true, lastPressure: 0,
+                                                 secondsSinceLastSend: 0.06, secondsSinceMouseUse: 2.0),
+               "keepalive: mouse gone idle -> pen reasserts itself, arrow hides again")
 
         // --- upLatchAbsorbs ----------------------------------------------------------
         // Pen-tap bounce fix: a pressure dip through zero at ~the same spot within
