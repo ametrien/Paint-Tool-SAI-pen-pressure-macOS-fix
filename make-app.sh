@@ -73,18 +73,29 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 
 # --- Code signing -----------------------------------------------------------
-# Default: AD-HOC. Ad-hoc gives every build its own distinct identity, so macOS
-# treats each rebuild as a separate app. That's what we want while developing:
-# the Mac app's permissions/state stay INDEPENDENT and don't get entangled with
-# other builds (a stable identity persists TCC grants across rebuilds, but that
-# also connects the versions and gets in the way of debugging).
-# To opt into a stable identity on purpose, pass SIGN_ID="<identity name or hash>".
-if [ -n "$SIGN_ID" ]; then
+# Prefer a REAL signing identity when the machine has one; fall back to ad-hoc.
+#
+# This used to default to ad-hoc on purpose, reasoning that a distinct identity
+# per build keeps permissions from entangling across versions. In practice that
+# was backwards: TCC attaches Input Monitoring to a code identity, and an ad-hoc
+# signature has no Team ID and a fresh hash every build — so macOS has nothing
+# durable to grant to. Every rebuild lost the permission, the list filled with
+# duplicate "SAI Pen Pressure" entries, and the system never showed a prompt at
+# all. Signing once means granting once.
+#
+#   SIGN_ID="<name or hash>"   use a specific identity
+#   SIGN_ID="-"                force ad-hoc (what CI gets anyway — no certs there)
+if [ -z "${SIGN_ID:-}" ]; then
+  SIGN_ID="$(security find-identity -v -p codesigning 2>/dev/null \
+             | awk -F'"' '/^ *[0-9]+\)/ { print $2; exit }')"
+  [ -n "$SIGN_ID" ] && echo "Found a signing identity; using it (SIGN_ID=- forces ad-hoc)."
+fi
+if [ -n "${SIGN_ID:-}" ] && [ "$SIGN_ID" != "-" ]; then
   echo "Signing with identity: $SIGN_ID"
   codesign --force --deep --sign "$SIGN_ID" "$APP"
 else
   codesign --force --deep --sign - "$APP" 2>/dev/null || true
-  echo "Signed ad-hoc (each build independent)."
+  echo "Signed ad-hoc — macOS will NOT prompt for Input Monitoring; add the app by hand."
 fi
 
 echo ""

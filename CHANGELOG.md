@@ -5,10 +5,42 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
 
 ## [Unreleased]
 
-- **Pressure resolution picker** (#21) — the plumbing shipped in 0.1.7 but is inert
-  (everything still runs at 1024). Next: detect the tablet's real level count over HID
-  (`usage page 0x0d`/`0xff0d`, usage `0x30`, `logicalMax + 1` — an Intuos BT S reports 4096),
-  fall back to 1024 when the tablet doesn't answer, and allow a careful manual override.
+## [0.1.8] — 2026-07-27
+
+### Added
+- **Pressure now follows your tablet instead of a hard-coded 1024** (#21). The pen's HID
+  tip-pressure element carries a logical range, and its size *is* the level count — so the app
+  asks the hardware rather than guessing. No model lookup table; works for any vendor. Wacom
+  reports it on the **vendor** digitizer page `0xff0d` rather than the standard `0x0d`, which is
+  why a first attempt found nothing; both are accepted. A Wacom Intuos BT S answers 4096, so
+  that hardware now gets 4× the resolution it was previously given.
+- **Pressure levels** picker in Settings — Auto (the default) plus 1024 / 2048 / 4096 / 8192 —
+  and it **explains itself**: *"Wacom Intuos BT S reports 4096 levels — using that"*, or with two
+  tablets *"2 tablets connected — following the highest…"*, or *"no tablet reported a pressure
+  range — using the safe default 1024"*. Choosing more levels than the hardware has warns first,
+  because that spreads the same steps over a wider range and surfaces sensor noise as wobbly
+  stroke width rather than giving finer control.
+- **Jitter deadband**, scaled to the chosen resolution. This is what made higher resolutions
+  usable: de-duplication compared pressure for *exact* equality, so 1024-level quantisation had
+  been silently filtering sensor noise. Removing it without a replacement made stroke widths
+  visibly wobble. The deadband keeps that noise rejection at any level count.
+- **Pen feel** — a response curve (`out = in ^ gamma`) from Very soft to Very firm, applied on
+  our side before the value is sent, so it needs no agreement with the DLL and **no SAI restart**.
+  Endpoints are pinned (0→0, 1→1), so full press always stays full press. Defaults to Normal
+  (linear) on purpose: it stacks with the Wacom driver's own curve and SAI's per-brush Min Size.
+- **Test pen shows the raw tablet value** and a count of distinct raw values seen — an empirical
+  read of what the hardware really sends, so upsampling can be told apart from real detail.
+
+### Fixed
+- **`make-app.sh` now signs with a real identity when the machine has one.** It defaulted to
+  ad-hoc on the reasoning that a distinct identity per build keeps permissions from entangling.
+  That was backwards: macOS attaches Input Monitoring to a code identity, and an ad-hoc signature
+  has no Team ID and a fresh hash every build — so there was nothing durable to grant to. The
+  permission was lost on every rebuild, the permission list filled with duplicate entries, and
+  macOS never showed a prompt at all. `SIGN_ID="-"` forces ad-hoc (which is what CI gets anyway).
+- **Grant… opens System Settings again.** A well-meant "ask me again" branch returned early and
+  skipped the one step that actually worked, bouncing the app back into the same dialog — an
+  infinite loop. Resetting the permission is still available as its own button, off the main path.
 
 ## [0.1.7] — 2026-07-26
 

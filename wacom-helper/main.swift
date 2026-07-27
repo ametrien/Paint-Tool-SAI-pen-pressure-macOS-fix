@@ -66,7 +66,8 @@ let noHover = ProcessInfo.processInfo.environment["WT_NO_HOVER"] != nil
 // when forced with --app. Running the bare binary from a terminal = dev mode.
 // Load the stored pressure resolution before anything samples the pen.
 // Unset -> 1023, the long-standing default.
-let _pmaxInit: Void = { PressureCore.maxPressure = savedMaxPressure() }()
+let _pmaxInit: Void = { PressureCore.maxPressure = savedMaxPressure()
+                        PressureCore.pressureGamma = savedGamma() }()
 let isAppMode = CommandLine.arguments.contains("--app") || Bundle.main.bundlePath.hasSuffix(".app")
 // Wine prefix the app manages. Override with SAI_PREFIX (e.g. to test from
 // scratch in a throwaway location without touching a real setup).
@@ -94,11 +95,73 @@ func savedSAIPath() -> String? {
 // axis once at WTOpen. So the choice is stored on the mac side and mirrored
 // into the prefix as C:\wt_pmax.txt BEFORE SAI launches; the DLL reads that at
 // load. One value, two readers, no way for them to disagree.
-func savedMaxPressure() -> Int {
+/// Ask the tablet how many pressure levels it actually has.
+///
+/// The pen's tip-pressure HID element carries a logical range, and its size IS
+/// the level count — no model lookup table, works for any vendor. Wacom reports
+/// it on the VENDOR digitizer page 0xff0d rather than the standard 0x0d (an
+/// Intuos BT S answers 0…4095, i.e. 4096 levels), so accept both.
+///
+/// Returns the full-scale value (levels - 1), or nil when nothing answers —
+/// no tablet plugged in, a driver that hides the element, or a device that
+/// simply doesn't report one. Callers fall back to 1023.
+struct TabletInfo {
+    let name: String        // e.g. "Wacom Intuos BT S"
+    let fullScale: Int      // levels - 1
+}
+
+/// Every connected device that reports a tip-pressure range.
+func detectTablets() -> [TabletInfo] {
+    let mgr = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
+    IOHIDManagerSetDeviceMatching(mgr, nil)
+    IOHIDManagerOpen(mgr, IOOptionBits(kIOHIDOptionsTypeNone))
+    defer { IOHIDManagerClose(mgr, IOOptionBits(kIOHIDOptionsTypeNone)) }
+    guard let devs = IOHIDManagerCopyDevices(mgr) as? Set<IOHIDDevice> else { return [] }
+    var found: [TabletInfo] = []
+    for d in devs {
+        guard let els = IOHIDDeviceCopyMatchingElements(d, nil, IOOptionBits(kIOHIDOptionsTypeNone)) as? [IOHIDElement] else { continue }
+        var best = 0
+        for e in els {
+            let page = IOHIDElementGetUsagePage(e), usage = IOHIDElementGetUsage(e)
+            // 0x30 = Tip Pressure, on the standard or the vendor digitizer page.
+            guard usage == 0x30, page == 0x0D || page == 0xFF0D else { continue }
+            let span = Int(IOHIDElementGetLogicalMax(e)) - Int(IOHIDElementGetLogicalMin(e))
+            // Ignore nonsense: some elements advertise the full 32-bit range.
+            guard span >= 255, span <= PressureCore.maxPressureCeiling else { continue }
+            best = max(best, span)
+        }
+        guard best > 0 else { continue }
+        let maker = (IOHIDDeviceGetProperty(d, kIOHIDManufacturerKey as CFString) as? String) ?? ""
+        let prod  = (IOHIDDeviceGetProperty(d, kIOHIDProductKey as CFString) as? String) ?? "tablet"
+        // "Wacom Co.,Ltd." + "Intuos BT S" reads badly; keep it short.
+        let short = maker.split(separator: " ").first.map(String.init)?
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".,")) ?? ""
+        let name = (short.isEmpty || prod.lowercased().contains(short.lowercased())) ? prod : "\(short) \(prod)"
+        found.append(TabletInfo(name: name, fullScale: best))
+    }
+    return found.sorted { $0.fullScale > $1.fullScale }
+}
+
+/// The tablet we follow in Auto mode: the highest-resolution one connected.
+func detectTablet() -> TabletInfo? { detectTablets().first }
+
+func detectTabletFullScale() -> Int? { detectTablet()?.fullScale }
+
+/// Stored override, if the user set one explicitly. nil = follow the tablet.
+func storedMaxPressureOverride() -> Int? {
     guard let s = try? String(contentsOfFile: appSupport() + "/pmax.txt", encoding: .utf8),
           let v = Int(s.trimmingCharacters(in: .whitespacesAndNewlines)),
-          PressureCore.pressureChoices.contains(v) else { return 1023 }
+          v >= 255, v <= PressureCore.maxPressureCeiling else { return nil }
     return v
+}
+
+/// Full scale to run at: an explicit override if set, otherwise whatever the
+/// tablet reports, otherwise 1023. Asking the hardware beats guessing — and
+/// beats asking the user, who mostly doesn't know and can't verify a wrong answer
+/// (setting more levels than the tablet has adds noise, not detail).
+func savedMaxPressure() -> Int {
+    if let v = storedMaxPressureOverride() { return v }
+    return detectTabletFullScale() ?? 1023
 }
 func saveMaxPressure(_ v: Int) {
     try? "\(v)".write(toFile: appSupport() + "/pmax.txt", atomically: true, encoding: .utf8)
@@ -109,6 +172,18 @@ func writeMaxPressureForDLL() {
     let dir = "\(appPrefix)/drive_c"
     try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
     try? "\(PressureCore.maxPressure)".write(toFile: "\(dir)/wt_pmax.txt", atomically: true, encoding: .ascii)
+}
+
+// Pen feel (response curve). Stored as a gamma; 1.0 = untouched.
+func savedGamma() -> Double {
+    guard let s = try? String(contentsOfFile: appSupport() + "/gamma.txt", encoding: .utf8),
+          let v = Double(s.trimmingCharacters(in: .whitespacesAndNewlines)),
+          v >= 0.4, v <= 2.5 else { return 1.0 }
+    return v
+}
+func saveGamma(_ v: Double) {
+    try? String(format: "%.2f", v).write(toFile: appSupport() + "/gamma.txt", atomically: true, encoding: .utf8)
+    PressureCore.pressureGamma = v
 }
 
 func saveSAIPath(_ p: String) { try? p.write(toFile: appSupport() + "/config.txt", atomically: true, encoding: .utf8) }
@@ -541,6 +616,17 @@ var gTap: CFMachPort?
 var inProximity = false
 var lastSendMs = CFAbsoluteTimeGetCurrent()
 
+/// Record what the hardware actually reported. Counting DISTINCT raw values
+/// over a firm press-and-release is an empirical read of the tablet's real
+/// resolution: a 4096-level tablet cannot produce more than 4096 of them, no
+/// matter what full scale we ask for.
+func noteRawPressure(_ pr: Double) {
+    g_lastRawPressure = pr
+    guard pr > 0 else { return }
+    if g_rawSeen.count > 60_000 { g_rawSeen.removeAll() }   // bounded
+    g_rawSeen.insert(Int((pr * 1_000_000).rounded()))
+}
+
 func writeFile(_ s: String) {
     try? s.write(toFile: outPath, atomically: true, encoding: .ascii)
 }
@@ -569,6 +655,11 @@ let menuStripH: CGFloat = {
 var g_saiStrip = CGRect.zero          // in CGEvent.location space (top-left origin)
 var g_saiWindow = CGRect.zero         // SAI's whole window rect (same space)
 var g_lastDrawAt = Date.distantPast   // last time real pressure was emitted
+// RAW pressure straight from the tablet, before any scaling of ours. Kept so the
+// pen test can show what the hardware actually reports rather than what we
+// derived from it — the only way to tell real resolution from upsampling.
+var g_lastRawPressure: Double = 0
+var g_rawSeen = Set<Int>()            // distinct raw values, keyed to 1e-6
 var g_onMouseDown: ((CGPoint) -> Void)?   // set by the wizard: auto-wake on click
 
 func refreshSAIStrip() {
@@ -750,7 +841,8 @@ let tapCallback: CGEventTapCallBack = { _, type, event, _ in
         g_lastTabletEvAt = CFAbsoluteTimeGetCurrent(); g_penEverSeen = true
         inProximity = true
         let pr = event.getDoubleValueField(.tabletEventPointPressure)
-        emit(pressure: Int(pr * Double(PressureCore.maxPressure)), loc: event.location)
+        noteRawPressure(pr)
+        emit(pressure: Int(PressureCore.curved(pr) * Double(PressureCore.maxPressure)), loc: event.location)
     case .leftMouseUp:
         if isTabletMouse(event) { emit(pressure: 0, loc: event.location) }   // pen tip lift (still hovering)
     case .mouseMoved, .leftMouseDown, .leftMouseDragged:
@@ -759,7 +851,8 @@ let tapCallback: CGEventTapCallBack = { _, type, event, _ in
             g_lastTabletEvAt = CFAbsoluteTimeGetCurrent(); g_penEverSeen = true
             inProximity = true
             let pr = event.getDoubleValueField(.tabletEventPointPressure)
-            emit(pressure: Int(pr * Double(PressureCore.maxPressure)), loc: event.location)
+            noteRawPressure(pr)
+            emit(pressure: Int(PressureCore.curved(pr) * Double(PressureCore.maxPressure)), loc: event.location)
         } else {
             g_evPlainMouse += 1
             inProximity = false   // real mouse/trackpad -> pen not in use, let SAI have the mouse
@@ -941,6 +1034,11 @@ final class SetupController: NSObject, NSApplicationDelegate {
     var pressureLabel: NSTextField!
     var testing = false
     var testTimer: Timer?
+    var testPeakSeen = 0        // highest raw level seen this test run
+    var pressurePopup: NSPopUpButton!
+    var pressureInfo: NSTextField!
+    var feelPopup: NSPopUpButton!
+    let feelChoices: [(String, Double)] = [("Very soft", 0.55), ("Soft", 0.75), ("Normal", 1.0), ("Firm", 1.35), ("Very firm", 1.8)]        // highest raw level seen this test run
 
     // ---- window layout tiers -------------------------------------------------
     // SIMPLE (default): only what needs your attention, plus Launch. Once
@@ -1558,17 +1656,55 @@ final class SetupController: NSObject, NSApplicationDelegate {
         content.addArrangedSubview(secondaryRow)
 
         testHint = lbl("Press your pen on the tablet — the bar should move.", 10, color: .secondaryLabelColor)
+        testHint.preferredMaxLayoutWidth = rowWidth
         testHint.isHidden = true
         content.addArrangedSubview(testHint)
         barRow = NSStackView(); barRow.orientation = .horizontal; barRow.alignment = .centerY; barRow.spacing = 10
         pressureBar = PressureBar()
         pressureBar.widthAnchor.constraint(equalToConstant: 240).isActive = true
         pressureBar.heightAnchor.constraint(equalToConstant: 12).isActive = true
-        pressureLabel = lbl("0%", 11, bold: true)
-        pressureLabel.widthAnchor.constraint(equalToConstant: 40).isActive = true
+        // Show the RAW value and the scale, not just a percent — the whole point
+        // of issue #21 is how many distinct levels actually arrive, and a
+        // percentage hides that completely.
+        pressureLabel = lbl("0 / \(PressureCore.maxPressure)", 11, bold: true)
+        pressureLabel.widthAnchor.constraint(equalToConstant: 150).isActive = true
         barRow.addArrangedSubview(pressureBar); barRow.addArrangedSubview(pressureLabel)
         barRow.isHidden = true
         content.addArrangedSubview(barRow)
+
+        // --- pressure resolution, in Settings ---------------------------------
+        // Auto follows the tablet's own HID report; the explicit choices are an
+        // override for people who want to experiment. Above the tablet's real
+        // count you get noise, not detail, so the UI says so.
+        let pRow = NSStackView(); pRow.orientation = .horizontal; pRow.spacing = 8
+        pRow.alignment = .centerY
+        pRow.addArrangedSubview(lbl("Pressure levels", 12, bold: true))
+        pressurePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        pressurePopup.controlSize = .small
+        pressurePopup.target = self
+        pressurePopup.action = #selector(pressureChoiceChanged)
+        pressurePopup.addItem(withTitle: "Auto")
+        for v in PressureCore.pressureChoices { pressurePopup.addItem(withTitle: "\(v + 1)") }
+        pRow.addArrangedSubview(pressurePopup)
+        pressureInfo = lbl("", 10, color: .tertiaryLabelColor)
+        pRow.addArrangedSubview(pressureInfo)
+        settingsOnlyViews.append(pRow)
+        content.addArrangedSubview(pRow)
+
+        // Pen feel: applied on our side before the value is sent, so it needs no
+        // agreement with the DLL and no SAI restart. Stacks with the Wacom
+        // driver's own curve and SAI's per-brush Min Size — hence Normal default.
+        let fRow = NSStackView(); fRow.orientation = .horizontal; fRow.spacing = 8
+        fRow.alignment = .centerY
+        fRow.addArrangedSubview(lbl("Pen feel", 12, bold: true))
+        feelPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        feelPopup.controlSize = .small
+        feelPopup.target = self; feelPopup.action = #selector(feelChanged)
+        for (name, _) in feelChoices { feelPopup.addItem(withTitle: name) }
+        fRow.addArrangedSubview(feelPopup)
+        fRow.addArrangedSubview(lbl("how hard you press for a full-width stroke · applies instantly", 10, color: .tertiaryLabelColor))
+        settingsOnlyViews.append(fRow)
+        content.addArrangedSubview(fRow)
 
         // --- one-button recovery, in Settings ---------------------------------
         // The whole point: a single obvious action that rebuilds everything, for
@@ -1772,6 +1908,7 @@ final class SetupController: NSObject, NSApplicationDelegate {
                 fixButtons[i].isHidden = ok
             }
         }
+        refreshPressureUI()
         applyLayout()                           // rows appear/vanish as state changes
         guard !running else { return }          // SAI is up; leave the CTA alone
         // Launch needs Wine + SAI; Input Monitoring is verified for real by
@@ -1786,6 +1923,75 @@ final class SetupController: NSObject, NSApplicationDelegate {
         } else {
             subtitle.stringValue = "All set. Click Launch."
         }
+    }
+
+    /// Reflect the current setting and what the tablet says it can do.
+    func refreshPressureUI() {
+        guard pressurePopup != nil else { return }
+        if feelPopup != nil {
+            let g = PressureCore.pressureGamma
+            let idx = feelChoices.enumerated().min { abs($0.1.1 - g) < abs($1.1.1 - g) }?.offset ?? 2
+            feelPopup.selectItem(at: idx)
+        }
+        let detected = detectTabletFullScale()
+        if let ov = storedMaxPressureOverride(),
+           let idx = PressureCore.pressureChoices.firstIndex(of: ov) {
+            pressurePopup.selectItem(at: idx + 1)
+        } else {
+            pressurePopup.selectItem(at: 0)                       // Auto
+        }
+        // Say WHY this number, and name the device it came from — otherwise
+        // "4096" is just an unexplained figure, and with two tablets plugged in
+        // there's no way to tell which one it came from.
+        _ = detected
+        let all = detectTablets()
+        let inUse = PressureCore.maxPressure + 1
+        let auto = storedMaxPressureOverride() == nil
+        switch all.count {
+        case 0:
+            pressureInfo.stringValue = auto
+                ? "no tablet reported a pressure range — using the safe default \(inUse)"
+                : "set by you: \(inUse) · no tablet connected to check against"
+        case 1:
+            let t = all[0]
+            pressureInfo.stringValue = auto
+                ? "\(t.name) reports \(t.fullScale + 1) levels — using that"
+                : "set by you: \(inUse) · \(t.name) reports \(t.fullScale + 1)"
+        default:
+            let t = all[0]
+            let others = all.dropFirst().map { "\($0.name) \($0.fullScale + 1)" }.joined(separator: ", ")
+            pressureInfo.stringValue = auto
+                ? "\(all.count) tablets connected — following the highest, \(t.name) (\(t.fullScale + 1)). Also: \(others)"
+                : "set by you: \(inUse) · connected: \(t.name) \(t.fullScale + 1), \(others)"
+        }
+    }
+
+    @objc func pressureChoiceChanged() {
+        let detected = detectTabletFullScale()
+        let idx = pressurePopup.indexOfSelectedItem
+        if idx == 0 {
+            try? FileManager.default.removeItem(atPath: appSupport() + "/pmax.txt")   // back to Auto
+        } else {
+            let v = PressureCore.pressureChoices[idx - 1]
+            // More levels than the hardware has is not more detail — it is the
+            // same steps spread wider, so noise stops being quantised away.
+            // That is exactly what produced wobbly stroke widths in testing.
+            if let d = detected, v > d {
+                let c = osa("button returned of (display dialog \"Your tablet reports \(d + 1) pressure levels.\n\nSetting \(v + 1) doesn't give finer control — the same hardware steps get spread over a wider range, so sensor noise shows up as wobbly stroke width instead of being rounded away.\n\nUse it anyway?\" buttons {\"Cancel\", \"Use anyway\"} default button \"Cancel\" with icon caution)")
+                guard c == "Use anyway" else { refreshPressureUI(); return }
+            }
+            saveMaxPressure(v)
+        }
+        PressureCore.maxPressure = savedMaxPressure()
+        writeMaxPressureForDLL()
+        refreshPressureUI()
+        alertUser("Pressure set to \(PressureCore.maxPressure + 1) levels.\n\nSAI reads this once when it starts, so quit SAI completely and relaunch it to apply.")
+    }
+
+    @objc func feelChanged() {
+        let g = feelChoices[feelPopup.indexOfSelectedItem].1
+        saveGamma(g)
+        // No SAI restart needed: the curve is applied before the value is sent.
     }
 
     @objc func extraTapped(_ sender: NSButton) {
@@ -1877,6 +2083,20 @@ final class SetupController: NSObject, NSApplicationDelegate {
         refresh()
     }
 
+    /// Is this copy ad-hoc signed? If so macOS will never prompt for Input
+    /// Monitoring, because there's no durable identity to attach the grant to.
+    /// `codesign` reports on stderr, hence the merged capture.
+    func isAdHocSigned() -> Bool {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        p.arguments = ["-dv", Bundle.main.bundlePath]
+        let pipe = Pipe(); p.standardOutput = pipe; p.standardError = pipe
+        do { try p.run() } catch { return false }
+        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        p.waitUntilExit()
+        return out.contains("adhoc")
+    }
+
     /// Make macOS ask again. Once Input Monitoring has been answered for an app
     /// identity, `IOHIDRequestAccess` silently returns the cached answer forever
     /// and the only route left is hunting the app down in a file picker.
@@ -1903,7 +2123,14 @@ final class SetupController: NSObject, NSApplicationDelegate {
     /// open the right Settings pane, reveal the app in Finder so it can be
     /// dragged straight in, and put its path on the clipboard to paste.
     @objc func grantInputMonitoring() {
-        _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)      // native prompt, if it still applies
+        // Keep this DUMB and linear: request, open the right Settings pane, help
+        // the user find the app. An earlier version branched into "reset and
+        // relaunch" first and returned early — which meant Grant stopped opening
+        // Settings at all and just bounced the app back to this same dialog.
+        // Opening Settings is the step that actually works; never skip it.
+        // ("Ask again" still exists as its own button for the genuinely stuck
+        // case, but it is not on the path of the normal Grant flow.)
+        _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)      // no-op if already answered
         let appPath = Bundle.main.bundlePath
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(appPath, forType: .string)
@@ -2630,6 +2857,8 @@ final class SetupController: NSObject, NSApplicationDelegate {
             return
         }
         testing = true
+        testPeakSeen = 0
+        g_rawSeen.removeAll()          // fresh census per test run
         testBtn.title = "Stop Test"
         testHint.isHidden = false; barRow.isHidden = false
         // fast (~60fps), .common-mode timer so the bar tracks the pen instantly and
@@ -2638,8 +2867,17 @@ final class SetupController: NSObject, NSApplicationDelegate {
         let t = Timer(timeInterval: 1.0/60.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             let p = max(0, lastKeyP)                 // lastKeyP is -1 until a pen is first seen
-            self.pressureBar.value = CGFloat(p) / CGFloat(PressureCore.maxPressure)
-            self.pressureLabel.stringValue = "\(Int((Double(p) / Double(PressureCore.maxPressure) * 100).rounded()))%"
+            let maxP = PressureCore.maxPressure
+            self.pressureBar.value = CGFloat(p) / CGFloat(maxP)
+            // raw / full-scale, then percent — so the actual level count is visible
+            self.pressureLabel.stringValue = "\(p) / \(maxP)   (\(Int((Double(p) / Double(maxP) * 100).rounded()))%)"
+            if p > self.testPeakSeen { self.testPeakSeen = p }
+            // RAW is what the tablet reported; distinct-raw is the empirical read
+            // of its true resolution. If distinct stops climbing well below the
+            // configured levels, the extra range is upsampling, not detail.
+            self.testHint.stringValue = String(
+                format: "sending %d levels · peak %d · raw from tablet %.6f · %d distinct raw values seen",
+                maxP + 1, self.testPeakSeen, g_lastRawPressure, g_rawSeen.count)
         }
         RunLoop.main.add(t, forMode: .common)
         testTimer = t

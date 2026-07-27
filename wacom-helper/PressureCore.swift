@@ -12,33 +12,47 @@ import Foundation
 
 enum PressureCore {
 
-    /// Full-scale pressure carried on the wire.
+    /// Hard ceiling of the wire format — must match `WTC_MAX_PRESS` in
+    /// wintab-src/wintab_core.h. The ACTIVE full scale is chosen at runtime
+    /// (see `maxPressure`) and is normally whatever the tablet reports.
     ///
-    /// Tried 8191 for issue #21 (Wacom hardware reports 8192 levels) and BACKED
-    /// IT OUT: `isDuplicate` only drops a sample when pressure is exactly equal,
-    /// so 1024-level quantisation was silently filtering sensor jitter. At 8192
-    /// every micro-fluctuation became a distinct packet, and stroke width
-    /// visibly wobbled. More resolution needs a smoothing/deadband strategy
-    /// first — the raw number is not the hard part.
-    ///
-    /// MUST equal `WTC_MAX_PRESS` in wintab-src/wintab_core.h — the two form a
-    /// wire protocol with no version field, and a mismatched pair fails badly:
-    /// a helper scaling to 8191 against a DLL clamping at 1023 pins every
-    /// stroke at full pressure. `ensureBridgeUpToDate()` keeps the installed
-    /// DLL in step with the app so that pairing can't happen in practice.
-    /// Hard ceiling of the wire format (matches WTC_MAX_PRESS). The ACTIVE
-    /// full-scale value is chosen by the user at runtime — see `maxPressure`.
+    /// History worth keeping: hard-coding 8191 for issue #21 made stroke width
+    /// visibly wobble. Two reasons, both instructive — de-duplication compared
+    /// pressure for exact equality, so 1024-level quantisation had been silently
+    /// filtering sensor jitter; and the tablet in question only had 4096 levels,
+    /// so the extra range was upsampled noise rather than detail. Hence: follow
+    /// the hardware, and filter with `pressureDeadband` rather than by accident.
     static let maxPressureCeiling = 8191
 
     /// Levels offered in the setup window. 1024 is the long-standing default and
     /// stays first for a reason: it is the quietest.
-    static let pressureChoices = [1023, 4095, 8191]
+    static let pressureChoices = [1023, 2047, 4095, 8191]
 
     /// Active full-scale pressure. Settable so the user can trade resolution
     /// against jitter; both halves of the bridge read the same stored value.
     static var maxPressure = 1023
 
     static func clampPressure(_ raw: Int) -> Int { max(0, min(maxPressure, raw)) }
+
+    /// PEN FEEL — a response curve applied to the normalised 0…1 pressure
+    /// BEFORE it is scaled and sent. `out = in ^ gamma`.
+    ///
+    ///   gamma < 1  softer: a light touch already gives thick strokes
+    ///   gamma = 1  linear, exactly what the tablet reports (default)
+    ///   gamma > 1  firmer: you have to lean on it to get full width
+    ///
+    /// Applied on our side, so unlike the level count it needs no agreement with
+    /// the DLL and takes effect without restarting SAI. Note this stacks with
+    /// the Wacom driver's own curve and with SAI's per-brush Min Size — which is
+    /// why the default is 1.0: no surprises unless asked for.
+    static var pressureGamma = 1.0
+
+    /// Endpoints are fixed points of the curve (0→0, 1→1), so only the shape
+    /// between them changes — full press always stays full press.
+    static func curved(_ normalised: Double) -> Double {
+        guard pressureGamma != 1.0, normalised > 0, normalised < 1 else { return normalised }
+        return pow(normalised, pressureGamma)
+    }
 
     /// Minimum pressure change worth sending, in wire units.
     ///
