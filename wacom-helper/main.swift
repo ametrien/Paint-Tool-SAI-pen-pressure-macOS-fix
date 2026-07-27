@@ -613,7 +613,16 @@ var gTap: CFMachPort?
 // low rate even if it hasn't moved, so SAI keeps thinking a pen is present and
 // keeps the OS arrow cursor hidden (it flickered back during quiet gaps). Cleared
 // on pen-leave / mouse use so mouse painting still works.
-var inProximity = false
+// PEN IN RANGE — a fact about the PEN, changed only by real proximity/tablet
+// events. Deliberately NOT cleared by mouse activity: that conflation is what
+// left the macOS arrow over SAI's cursor (issue #20), because a pen already
+// resting on the tablet fires no new proximity event to undo it.
+var penInRange = false
+// ...and separately, when the mouse was last used. The keepalive pauses while
+// the mouse is active so SAI can still paint with it, then resumes on its own.
+var lastPlainMouseAt: CFAbsoluteTime = 0
+// Pen is over SAI's menu row: stay silent so SAI takes the plain mouse click.
+var overMenuStrip = false
 var lastSendMs = CFAbsoluteTimeGetCurrent()
 
 /// Record what the hardware actually reported. Counting DISTINCT raw values
@@ -735,9 +744,16 @@ func emit(pressure: Int, loc: CGPoint) {
             lastKeyP = 0
             send(0, lastKeyX, lastKeyY)
         }
-        inProximity = false                    // stops the hover keepalive too
+        // Do NOT clear penInRange here: the pen is still very much in range,
+        // it is merely over the menu. Claiming otherwise is the same conflation
+        // that caused issue #20 elsewhere. A separate flag suppresses the
+        // keepalive while over the strip, and clears itself the moment the pen
+        // moves back onto the canvas.
+        overMenuStrip = true
         return
     }
+
+    overMenuStrip = false          // got past the strip check: back on the canvas
 
     // coordinate mapping + clamp + dedup rules live in PressureCore (unit-tested)
     let p = PressureCore.clampPressure(pressure)
@@ -800,7 +816,22 @@ var g_lastTabletEvAt = CFAbsoluteTimeGetCurrent()   // last time a real TABLET e
 var g_penEverSeen = false                           // this session uses a pen at all
 let g_demotionWake = ProcessInfo.processInfo.environment["WT_DEMOTION_WAKE"] != nil   // experimental, off
 var g_onStuckDetected: (() -> Void)?                // set by the wizard -> auto-wake
+var g_lastPenInRange = false
+var g_lastKAState = ""
 func keepAlive() {
+    // Log only TRANSITIONS — the arrow reappearing mid-session (issue #20) is a
+    // state change, and a per-tick log would bury it the way the dedup notice
+    // buried the packet flow.
+    if penInRange != g_lastPenInRange {
+        g_lastPenInRange = penInRange
+        wlog("penInRange -> \(penInRange)  (overStrip=\(overMenuStrip) lastP=\(lastKeyP))")
+    }
+    let st = !penInRange ? "quiet: pen out of range"
+           : overMenuStrip ? "quiet: over menu strip"
+           : (CFAbsoluteTimeGetCurrent() - lastPlainMouseAt) <= 1.0 ? "quiet: mouse just used"
+           : lastKeyP > 0 ? "quiet: pen is down (drawing)"
+           : "keepalive active"
+    if st != g_lastKAState { g_lastKAState = st; wlog("keepalive \(st)") }
     // Revive the tap if macOS ever disabled it (App Nap / timeout / user input).
     // The disable-event path only fires if our run loop is awake to receive it;
     // this poll (every 40ms) is the belt-and-suspenders that recovers the pen
@@ -812,8 +843,9 @@ func keepAlive() {
     g_kaTick += 1
     if wakeLogOn, g_kaTick % 25 == 0 { wlog("mac keepAlive: tick=\(g_kaTick) tapEnabled=\(enabled) captured(seq)=\(seq) | tabletMouse=\(g_evTabletMouse) PLAINmouse=\(g_evPlainMouse) penSeen=\(g_penEverSeen) saiWin=\(g_saiWindow.isEmpty ? "EMPTY" : "\(Int(g_saiWindow.width))x\(Int(g_saiWindow.height))")") }
     if noHover { return }   // WT_NO_HOVER experiment: no hover keepalive at all
-    if PressureCore.keepAliveShouldResend(inProximity: inProximity, lastPressure: lastKeyP,
-                                          secondsSinceLastSend: CFAbsoluteTimeGetCurrent() - lastSendMs) {
+    if PressureCore.keepAliveShouldResend(penInRange: penInRange && !overMenuStrip, lastPressure: lastKeyP,
+                                          secondsSinceLastSend: CFAbsoluteTimeGetCurrent() - lastSendMs,
+                                          secondsSinceMouseUse: CFAbsoluteTimeGetCurrent() - lastPlainMouseAt) {
         send(lastKeyP, lastKeyX, lastKeyY)
     }
 }
@@ -857,8 +889,8 @@ let tapCallback: CGEventTapCallBack = { _, type, event, _ in
         g_evProx += 1
         // pen entering/leaving range drives the keepalive (arrow stays hidden
         // while present, mouse can paint once the pen leaves)
-        inProximity = event.getIntegerValueField(.tabletProximityEventEnterProximity) != 0
-        if inProximity {
+        penInRange = event.getIntegerValueField(.tabletProximityEventEnterProximity) != 0
+        if penInRange {
             // ENTERING range used to emit nothing, so SAI wasn't told a pen was
             // present until the pen actually MOVED. Two consequences (issue #20):
             // the macOS arrow stayed drawn over SAI's brush cursor in that gap,
@@ -873,7 +905,7 @@ let tapCallback: CGEventTapCallBack = { _, type, event, _ in
     case .tabletPointer:
         g_evTabletPtr += 1
         g_lastTabletEvAt = CFAbsoluteTimeGetCurrent(); g_penEverSeen = true
-        inProximity = true
+        penInRange = true
         let pr = event.getDoubleValueField(.tabletEventPointPressure)
         noteRawPressure(pr)
         emit(pressure: Int(PressureCore.curved(pr) * Double(PressureCore.maxPressure)), loc: event.location)
@@ -883,13 +915,16 @@ let tapCallback: CGEventTapCallBack = { _, type, event, _ in
         if isTabletMouse(event) {
             g_evTabletMouse += 1
             g_lastTabletEvAt = CFAbsoluteTimeGetCurrent(); g_penEverSeen = true
-            inProximity = true
+            penInRange = true
             let pr = event.getDoubleValueField(.tabletEventPointPressure)
             noteRawPressure(pr)
             emit(pressure: Int(PressureCore.curved(pr) * Double(PressureCore.maxPressure)), loc: event.location)
         } else {
             g_evPlainMouse += 1
-            inProximity = false   // real mouse/trackpad -> pen not in use, let SAI have the mouse
+            // Note what the mouse did, but do NOT claim the pen has left:
+            // it may well still be sitting on the tablet. The keepalive pauses
+            // on this timestamp and resumes once the mouse goes idle.
+            lastPlainMouseAt = CFAbsoluteTimeGetCurrent()
             // STUCK DETECTION: the Wacom driver demotes the pen to a PLAIN mouse
             // when SAI's window isn't properly foreground. Signature = plain-mouse
             // events arriving over SAI's window while the tablet stream (which was
@@ -1468,39 +1503,44 @@ final class SetupController: NSObject, NSApplicationDelegate {
     }
 
     var statusItem: NSStatusItem?
+
+    // REBUILT FROM SCRATCH (issue #14). The previous version accumulated
+    // attempted fixes — autosaveName, an explicit isVisible, a symbol
+    // configuration — none of which helped, and each of which was one more
+    // difference from the thing that demonstrably works.
+    //
+    // A minimal test app on this same machine places its item correctly at
+    // x≈863, while ours landed at x=1321, underneath the system clock. Five
+    // theories were tested and disproven (dark emoji glyph, missing
+    // autosaveName, ad-hoc signing, a full menu bar — 125pt free against 31pt
+    // needed — and a stale persisted position). So rather than add a sixth,
+    // this is deliberately reduced to exactly what the working control app did:
+    // create, set an image, attach a menu, retain. Nothing else.
     func setUpStatusItem() {
         let si = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        // ICON: an SF Symbol TEMPLATE image, not the old "🖊" emoji title.
-        // U+1F58A renders as a dark-grey pen — near-invisible on a dark menu bar
-        // (and it's a colour glyph, so it can't adapt). A template image is
-        // recoloured by AppKit to match the menu bar in both light and dark.
-        if let base = NSImage(systemSymbolName: "applepencil", accessibilityDescription: "SAI Pen Pressure"),
-           let img = base.withSymbolConfiguration(.init(pointSize: 15, weight: .regular)) {
-            img.isTemplate = true
-            si.button?.image = img
+
+        // Template image, not the old "🖊": U+1F58A is a dark-grey COLOUR glyph
+        // that can't adapt to the menu bar, and was near-invisible in dark mode.
+        // AppKit recolours a template for both appearances.
+        if let pen = NSImage(systemSymbolName: "applepencil", accessibilityDescription: "SAI Pen Pressure") {
+            pen.isTemplate = true
+            si.button?.image = pen
         } else {
-            si.button?.title = "✏️"     // high-contrast fallback (older macOS)
+            si.button?.title = "✏️"        // high-contrast fallback, older macOS
         }
         si.button?.toolTip = "SAI Pen Pressure"
-        // Give the item a STABLE identity. Without one, AppKit derives the
-        // menu-bar slot from the app's code-signing identity — and make-app.sh
-        // signs ad-hoc, so every rebuild looks like a brand-new app and gets no
-        // allocated slot (it landed at x=1321, underneath the clock, invisible).
-        si.autosaveName = "SAIPenPressureStatusItem"
-        si.isVisible = true
-        // Diagnostic: where did macOS actually put us? A menu bar with no room
-        // left (long app menus + the notch) silently drops the item, which looks
-        // exactly like "the icon vanished". Logged so field reports can tell the
-        // two apart. See wlog() — always on, cheap, fires once at startup.
-        for t in [1.5, 5.0, 12.0] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + t) { [weak si] in
-                guard let si = si else { wlog("statusItem@\(t)s: DEALLOCATED"); return }
-                let f = si.button?.window?.frame
-                wlog("statusItem@\(t)s: visible=\(si.isVisible) len=\(si.length) frame=\(f.map { "\($0)" } ?? "nil")")
-            }
-        }
         si.menu = makeMenu()
         statusItem = si
+
+        // Report where macOS actually put it. Kept because this bug is invisible
+        // from the outside — the item reports itself as visible either way, and
+        // only the frame distinguishes "shown" from "parked under the clock".
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak si] in
+            guard let si = si else { wlog("statusItem: DEALLOCATED"); return }
+            let f = si.button?.window?.frame
+            let x = f?.origin.x ?? -1
+            wlog("statusItem: visible=\(si.isVisible) frame=\(f.map { "\($0)" } ?? "nil") -> \(x > 1200 ? "BAD (parked far right, likely hidden)" : "looks placed")")
+        }
     }
 
     /// Rebuild both menus after something that changes their contents (dev mode).

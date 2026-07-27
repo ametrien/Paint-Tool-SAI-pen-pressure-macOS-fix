@@ -102,9 +102,29 @@ enum PressureCore {
     /// (the OS arrow cursor flickered back during quiet gaps). ONLY when the
     /// last sample was pen-up/hover (pressure 0): re-sending an actual press
     /// made SAI register spurious extra clicks.
-    static func keepAliveShouldResend(inProximity: Bool, lastPressure: Int,
-                                      secondsSinceLastSend: Double) -> Bool {
-        inProximity && lastPressure == 0 && secondsSinceLastSend > 0.05
+    /// - Parameters:
+    ///   - penInRange: the pen is PHYSICALLY in range — a fact about the pen,
+    ///     changed only by real proximity/tablet events.
+    ///   - secondsSinceMouseUse: how long since a plain mouse/trackpad event.
+    ///
+    /// The pen-in-range flag used to be cleared by any mouse event, conflating
+    /// "the pen is here" with "the pen is what you're using". That mattered
+    /// because clicking Launch with the trackpad cleared it, and a pen already
+    /// resting on the tablet fires no *new* proximity event — proximity only
+    /// reports transitions. So nothing told SAI a pen existed and the macOS
+    /// arrow sat over SAI's brush cursor (issue #20).
+    ///
+    /// Splitting them keeps both behaviours: the keepalive follows the pen, and
+    /// a mouse-idle grace period still stops hover packets while the mouse is
+    /// actually in use — which is what lets SAI paint with the mouse at all.
+    static func keepAliveShouldResend(penInRange: Bool, lastPressure: Int,
+                                      secondsSinceLastSend: Double,
+                                      secondsSinceMouseUse: Double,
+                                      mouseIdleGrace: Double = 1.0) -> Bool {
+        penInRange
+            && lastPressure == 0
+            && secondsSinceLastSend > 0.05
+            && secondsSinceMouseUse > mouseIdleGrace
     }
 
     /// PEN-UP LATCH (pen tap = double click bug): a light tap, or lifting away
