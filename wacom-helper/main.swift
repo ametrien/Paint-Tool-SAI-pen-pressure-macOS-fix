@@ -627,6 +627,32 @@ func noteRawPressure(_ pr: Double) {
     g_rawSeen.insert(Int((pr * 1_000_000).rounded()))
 }
 
+// ---- PINCH TO ZOOM (issue #22) ---------------------------------------------
+// macOS pinch is a "magnify" gesture Wine never translates, so SAI only zooms on
+// two-finger scroll. We DON'T synthesise mac events for this (that needs the
+// Accessibility permission this project deliberately dropped) — we just observe
+// the gesture on the tap we already run for the tablet, and hand a step count to
+// our DLL, which posts the wheel message from inside SAI's own process.
+//
+// Magnification arrives as a continuous delta while SAI zooms in fixed steps, so
+// accumulate and emit a step each time the total crosses the threshold: a slow
+// pinch still does something, a fast one doesn't fling the zoom.
+let zoomStep = 0.06
+let pinchZoomOff = ProcessInfo.processInfo.environment["WT_NO_PINCH_ZOOM"] != nil
+var g_zoomAccum = 0.0
+var g_zoomSteps = 0
+
+func noteMagnify(_ mag: Double) {
+    guard !pinchZoomOff, mag != 0 else { return }
+    g_zoomAccum += mag
+    var changed = false
+    while g_zoomAccum >=  zoomStep { g_zoomSteps += 1; g_zoomAccum -= zoomStep; changed = true }
+    while g_zoomAccum <= -zoomStep { g_zoomSteps -= 1; g_zoomAccum += zoomStep; changed = true }
+    guard changed else { return }
+    try? "\(g_zoomSteps)".write(toFile: "\(appPrefix)/drive_c/wt_zoom.txt",
+                                atomically: true, encoding: .ascii)
+}
+
 func writeFile(_ s: String) {
     try? s.write(toFile: outPath, atomically: true, encoding: .ascii)
 }
@@ -882,7 +908,16 @@ let tapCallback: CGEventTapCallBack = { _, type, event, _ in
             }
         }
     default:
-        break
+        // Gesture events have no CGEventType case, so they're matched by raw
+        // value: 29 = NSEventTypeGesture, 30 = NSEventTypeMagnify. Both are
+        // subscribed because trackpads deliver pinch as either depending on the
+        // device; the NSEvent type is what actually decides. Listen-only, like
+        // the wake hotkey — nothing is consumed.
+        if type.rawValue == 29 || type.rawValue == 30 {
+            if let ns = NSEvent(cgEvent: event), ns.type == .magnify {
+                noteMagnify(ns.magnification)
+            }
+        }
     }
     return Unmanaged.passUnretained(event)
 }
@@ -921,7 +956,9 @@ func startPressureEngine() -> Bool {
         (CGEventMask(1) << CGEventType.mouseMoved.rawValue)       |
         (CGEventMask(1) << CGEventType.tabletPointer.rawValue)    |
         (CGEventMask(1) << CGEventType.tabletProximity.rawValue)  |
-        (CGEventMask(1) << CGEventType.keyDown.rawValue)              // wake hotkey detection
+        (CGEventMask(1) << CGEventType.keyDown.rawValue)          |   // wake hotkey detection
+        (CGEventMask(1) << 29)                                    |   // NSEventTypeGesture
+        (CGEventMask(1) << 30)                                        // NSEventTypeMagnify (pinch)
     guard let tap = CGEvent.tapCreate(
         tap: .cghidEventTap, place: .headInsertEventTap, options: .listenOnly,
         eventsOfInterest: mask, callback: tapCallback, userInfo: nil) else { return false }

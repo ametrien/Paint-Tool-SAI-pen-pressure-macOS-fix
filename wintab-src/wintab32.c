@@ -448,6 +448,59 @@ static void win32_wake(void) {
 }
 
 /* poll the wake marker (cheap, ~6x/sec) */
+/* ---- PINCH TO ZOOM (issue #22) --------------------------------------------
+ * macOS pinch arrives as a "magnify" gesture, which Wine does not translate
+ * into anything SAI understands — so only two-finger scroll zooms, and every
+ * Mac reflex to pinch does nothing.
+ *
+ * We do NOT synthesise macOS events for this: that would need the Accessibility
+ * permission, which this project deliberately dropped. Instead the mac helper
+ * (which already sees the gesture through the tap it uses for the tablet) writes
+ * a running step count to C:\wt_zoom.txt, and we post the wheel message from
+ * INSIDE SAI's own process — no permission involved at all.
+ *
+ * WM_MOUSEWHEEL rather than PageUp/PageDown on purpose: it carries a position,
+ * so SAI zooms at the cursor instead of the canvas centre, and it is the path
+ * already known to work here (two-finger scroll zooms today).
+ * Disable: WT_NO_PINCH_ZOOM=1. */
+static void post_zoom(int steps) {
+    HWND w = g_hwnd ? GetAncestor(g_hwnd, GA_ROOT) : NULL;
+    if (!w) return;
+    POINT pt;
+    if (!GetCursorPos(&pt)) { pt.x = 0; pt.y = 0; }
+    int dir = steps > 0 ? 1 : -1;
+    int n = steps > 0 ? steps : -steps;
+    if (n > 8) n = 8;                       /* a violent pinch shouldn't fling the zoom */
+    for (int i = 0; i < n; i++) {
+        PostMessageW(w, WM_MOUSEWHEEL,
+                     MAKEWPARAM(0, (short)(dir * WHEEL_DELTA)),
+                     MAKELPARAM((short)pt.x, (short)pt.y));
+    }
+    log_line("pinch: posted %d wheel step(s) at (%ld,%ld)", dir * n, (long)pt.x, (long)pt.y);
+}
+
+static void check_zoom(DWORD now) {
+    static DWORD lastCheck;
+    static long lastVal;
+    static int primed;
+    if (getenv("WT_NO_PINCH_ZOOM")) return;
+    if (now - lastCheck < 30) return;       /* responsive: a pinch is a live gesture */
+    lastCheck = now;
+    FILE *f = fopen("C:\\wt_zoom.txt", "rb");
+    if (!f) return;
+    char b[32];
+    size_t n = fread(b, 1, sizeof(b) - 1, f);
+    fclose(f);
+    b[n] = 0;
+    long v = atol(b);
+    if (!primed) { primed = 1; lastVal = v; return; }   /* ignore the value present at startup */
+    if (v != lastVal) {
+        long d = v - lastVal;
+        lastVal = v;
+        post_zoom((int)d);
+    }
+}
+
 static void check_win32_wake(DWORD now) {
     static DWORD lastCheck;
     static char lastVal[32];
@@ -629,6 +682,7 @@ static DWORD WINAPI producer(LPVOID arg) {
         DWORD now = GetTickCount();
         ensure_click_dedup();           /* pen-tap double-click fix, once hwnd exists */
         check_win32_wake(now);          /* helper asked us to restore Win32 focus? */
+        check_zoom(now);                /* ...or asked us to zoom (pinch gesture) */
         flush_pending();                /* pen still/lifted: deliver the final point */
         if (now - lastBeat > 2000) {
             lastBeat = now;
