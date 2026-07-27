@@ -1,0 +1,118 @@
+---
+# Front matter required so Jekyll processes this file. Overrides the Cayman
+# theme rather than replacing it: still zero build tooling, still no
+# dependencies — just a palette.
+---
+
+@import "{{ site.theme }}";
+
+/* ── Ametrine ──────────────────────────────────────────────────────────────
+   The stone this project's author is named for: a single crystal that is
+   amethyst at one end and citrine at the other, with the transition happening
+   inside the stone rather than at a seam. The header gradient follows that —
+   deep violet through to warm gold, no hard boundary.                       */
+
+$amethyst-deep: #4a2472;
+$amethyst:      #6d3fa0;
+$amethyst-soft: #8b5fbf;
+$citrine:       #e0a72e;
+$citrine-warm:  #f0c65a;
+$ink:           #2b2340;
+
+.page-header {
+  background-color: $amethyst;
+  background-image: linear-gradient(115deg, $amethyst-deep 0%, $amethyst 32%, $amethyst-soft 55%, $citrine 88%, $citrine-warm 100%);
+}
+
+.project-name  { text-shadow: 0 2px 12px rgba(40, 20, 70, .35); }
+.project-tagline { opacity: .95; }
+
+/* Buttons pick up the citrine end so they read as part of the stone. */
+.btn {
+  border-color: rgba(255, 255, 255, .5);
+  &:hover {
+    border-color: $citrine-warm;
+    background-color: rgba(240, 198, 90, .18);
+  }
+}
+
+.main-content {
+  color: $ink;
+
+  h1, h2, h3, h4, h5, h6 { color: $amethyst-deep; }
+
+  /* Section headings get a citrine underline: the two halves of the stone
+     meeting again further down the page. */
+  h2 {
+    padding-bottom: .3rem;
+    border-bottom: 2px solid rgba(224, 167, 46, .35);
+  }
+
+  a { color: $amethyst; &:hover { color: $citrine; } }
+
+  blockquote {
+    color: #5a4a72;
+    border-left-color: $citrine;
+    background: rgba(224, 167, 46, .07);
+    padding: .6rem 1rem;
+    border-radius: 0 4px 4px 0;
+  }
+
+  table th {
+    background: rgba(109, 63, 160, .07);
+    color: $amethyst-deep;
+  }
+  table td, table th { border-color: rgba(109, 63, 160, .18); }
+
+  code {
+    background-color: rgba(109, 63, 160, .08);
+    color: $amethyst-deep;
+  }
+  pre {
+    background-color: #f7f4fb;
+    border: 1px solid rgba(109, 63, 160, .15);
+    > code { color: $ink; background: transparent; }
+  }
+
+  hr {
+    height: 2px;
+    background-image: linear-gradient(90deg, $amethyst 0%, $citrine 100%);
+    opacity: .35;
+  }
+}
+
+/* ── Dark mode ─────────────────────────────────────────────────────────────
+   Most of this project's readers are drawing at night with a dark system
+   theme; a page that flashes white is genuinely unpleasant. Cayman has no dark
+   mode, so add one rather than hand people a floodlight.                    */
+@media (prefers-color-scheme: dark) {
+  body { background-color: #17131f; }
+
+  .main-content {
+    color: #d7cfe4;
+
+    h1, h2, h3, h4, h5, h6 { color: $citrine-warm; }
+    h2 { border-bottom-color: rgba(224, 167, 46, .28); }
+
+    a { color: $amethyst-soft; &:hover { color: $citrine-warm; } }
+
+    blockquote {
+      color: #b9aecb;
+      background: rgba(224, 167, 46, .06);
+    }
+
+    table th { background: rgba(139, 95, 191, .16); color: $citrine-warm; }
+    table td, table th { border-color: rgba(139, 95, 191, .25); }
+    table tr { background-color: #1e1829; }
+    table tr:nth-child(2n) { background-color: #241d31; }
+
+    code { background-color: rgba(139, 95, 191, .16); color: $citrine-warm; }
+    pre {
+      background-color: #1e1829;
+      border-color: rgba(139, 95, 191, .22);
+      > code { color: #d7cfe4; }
+    }
+  }
+
+  .site-footer { border-top-color: rgba(139, 95, 191, .25); color: #9c90b3; }
+}
