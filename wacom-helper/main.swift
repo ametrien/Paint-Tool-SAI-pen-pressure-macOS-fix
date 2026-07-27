@@ -832,7 +832,15 @@ let tapCallback: CGEventTapCallBack = { _, type, event, _ in
         // pen entering/leaving range drives the keepalive (arrow stays hidden
         // while present, mouse can paint once the pen leaves)
         inProximity = event.getIntegerValueField(.tabletProximityEventEnterProximity) != 0
-        if !inProximity {
+        if inProximity {
+            // ENTERING range used to emit nothing, so SAI wasn't told a pen was
+            // present until the pen actually MOVED. Two consequences (issue #20):
+            // the macOS arrow stayed drawn over SAI's brush cursor in that gap,
+            // and the hover keepalive couldn't start either — it requires
+            // lastPressure == 0, but lastKeyP is -1 until the first sample.
+            // Emitting one hover sample on entry closes both.
+            emit(pressure: 0, loc: event.location)
+        } else {
             emit(pressure: 0, loc: event.location)
             flushPendingUp()   // pen left range: no bounce can follow, end the touch now
         }
@@ -993,6 +1001,49 @@ final class PressureBar: NSView {
     }
 }
 
+/// Live plot of the pen-feel curve: input pressure across, output up. The
+/// diagonal is linear (gamma 1); the dot is where the pen is right now, so you
+/// can press and watch the mapping instead of interpreting a number.
+final class GammaCurveView: NSView {
+    var gamma: Double = 1.0 { didSet { if gamma != oldValue { needsDisplay = true } } }
+    var live: Double = 0 { didSet { if live != oldValue { needsDisplay = true } } }   // 0...1 input
+
+    override func draw(_ dirtyRect: NSRect) {
+        let r = bounds.insetBy(dx: 1, dy: 1)
+        NSColor.quaternaryLabelColor.setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: 4, yRadius: 4).fill()
+
+        // linear reference
+        NSColor.tertiaryLabelColor.setStroke()
+        let diag = NSBezierPath()
+        diag.move(to: NSPoint(x: r.minX, y: r.minY))
+        diag.line(to: NSPoint(x: r.maxX, y: r.maxY))
+        diag.lineWidth = 1
+        diag.setLineDash([3, 3], count: 2, phase: 0)
+        diag.stroke()
+
+        // the actual curve
+        let curve = NSBezierPath()
+        curve.lineWidth = 2
+        for i in 0...60 {
+            let x = Double(i) / 60.0
+            let y = gamma == 1.0 ? x : pow(x, gamma)
+            let p = NSPoint(x: r.minX + CGFloat(x) * r.width, y: r.minY + CGFloat(y) * r.height)
+            if i == 0 { curve.move(to: p) } else { curve.line(to: p) }
+        }
+        NSColor.controlAccentColor.setStroke()
+        curve.stroke()
+
+        // where the pen is right now
+        if live > 0.001 {
+            let y = gamma == 1.0 ? live : pow(live, gamma)
+            let p = NSPoint(x: r.minX + CGFloat(live) * r.width, y: r.minY + CGFloat(y) * r.height)
+            NSColor.controlAccentColor.setFill()
+            NSBezierPath(ovalIn: NSRect(x: p.x - 3, y: p.y - 3, width: 6, height: 6)).fill()
+        }
+    }
+}
+
 // ---- App mode: a small setup wizard (AppKit) -------------------------------
 final class SetupController: NSObject, NSApplicationDelegate {
     struct Req {
@@ -1038,6 +1089,9 @@ final class SetupController: NSObject, NSApplicationDelegate {
     var pressurePopup: NSPopUpButton!
     var pressureInfo: NSTextField!
     var feelPopup: NSPopUpButton!
+    var gammaSlider: NSSlider!
+    var gammaLabel: NSTextField!
+    var curveView: GammaCurveView!
     let feelChoices: [(String, Double)] = [("Very soft", 0.55), ("Soft", 0.75), ("Normal", 1.0), ("Firm", 1.35), ("Very firm", 1.8)]        // highest raw level seen this test run
 
     // ---- window layout tiers -------------------------------------------------
@@ -1772,6 +1826,29 @@ final class SetupController: NSObject, NSApplicationDelegate {
         hc.bezelStyle = .rounded; hc.controlSize = .small
         devTools.addArrangedSubview(hc)
         devSection.addArrangedSubview(devTools)
+
+        // Pen feel, precisely: the dropdown picks five presets, this exposes the
+        // gamma itself with a live plot. Press the pen while the test is running
+        // and the dot tracks the mapping, which beats reasoning about a number.
+        let gRow = NSStackView(); gRow.orientation = .horizontal; gRow.spacing = 8
+        gRow.alignment = .centerY
+        gRow.addArrangedSubview(lbl("Pen feel curve", 11, bold: true))
+        gammaSlider = NSSlider(value: PressureCore.pressureGamma, minValue: 0.40, maxValue: 2.50,
+                               target: self, action: #selector(gammaSliderMoved))
+        gammaSlider.controlSize = .small
+        gammaSlider.widthAnchor.constraint(equalToConstant: 190).isActive = true
+        gRow.addArrangedSubview(gammaSlider)
+        gammaLabel = lbl("", 11, bold: true)
+        gammaLabel.widthAnchor.constraint(equalToConstant: 92).isActive = true
+        gRow.addArrangedSubview(gammaLabel)
+        curveView = GammaCurveView()
+        curveView.widthAnchor.constraint(equalToConstant: 84).isActive = true
+        curveView.heightAnchor.constraint(equalToConstant: 46).isActive = true
+        gRow.addArrangedSubview(curveView)
+        devSection.addArrangedSubview(gRow)
+        let gHint = lbl("1.00 = exactly what the tablet reports · below = lighter touch goes further · above = press harder", 9, color: .tertiaryLabelColor)
+        gHint.preferredMaxLayoutWidth = rowWidth
+        devSection.addArrangedSubview(gHint)
         // Live console: the tail of the wake log, so you can watch auto-wake and
         // setup decisions without leaving the window.
         consoleScroll = NSScrollView()
@@ -1928,11 +2005,7 @@ final class SetupController: NSObject, NSApplicationDelegate {
     /// Reflect the current setting and what the tablet says it can do.
     func refreshPressureUI() {
         guard pressurePopup != nil else { return }
-        if feelPopup != nil {
-            let g = PressureCore.pressureGamma
-            let idx = feelChoices.enumerated().min { abs($0.1.1 - g) < abs($1.1.1 - g) }?.offset ?? 2
-            feelPopup.selectItem(at: idx)
-        }
+        syncFeelControls()
         let detected = detectTabletFullScale()
         if let ov = storedMaxPressureOverride(),
            let idx = PressureCore.pressureChoices.firstIndex(of: ov) {
@@ -1988,9 +2061,31 @@ final class SetupController: NSObject, NSApplicationDelegate {
         alertUser("Pressure set to \(PressureCore.maxPressure + 1) levels.\n\nSAI reads this once when it starts, so quit SAI completely and relaunch it to apply.")
     }
 
+    @objc func gammaSliderMoved() {
+        let g = (gammaSlider.doubleValue * 100).rounded() / 100      // 2dp, no jitter
+        saveGamma(g)
+        syncFeelControls()
+    }
+
+    /// One source of truth for both the preset popup and the fine control.
+    func syncFeelControls() {
+        let g = PressureCore.pressureGamma
+        if feelPopup != nil {
+            let idx = feelChoices.enumerated().min { abs($0.1.1 - g) < abs($1.1.1 - g) }?.offset ?? 2
+            feelPopup.selectItem(at: idx)
+        }
+        if gammaSlider != nil { gammaSlider.doubleValue = g }
+        if gammaLabel != nil {
+            let name = abs(g - 1.0) < 0.03 ? "linear" : (g < 1 ? "softer" : "firmer")
+            gammaLabel.stringValue = String(format: "%.2f (%@)", g, name)
+        }
+        if curveView != nil { curveView.gamma = g }
+    }
+
     @objc func feelChanged() {
         let g = feelChoices[feelPopup.indexOfSelectedItem].1
         saveGamma(g)
+        syncFeelControls()
         // No SAI restart needed: the curve is applied before the value is sent.
     }
 
@@ -2872,6 +2967,7 @@ final class SetupController: NSObject, NSApplicationDelegate {
             // raw / full-scale, then percent — so the actual level count is visible
             self.pressureLabel.stringValue = "\(p) / \(maxP)   (\(Int((Double(p) / Double(maxP) * 100).rounded()))%)"
             if p > self.testPeakSeen { self.testPeakSeen = p }
+            if self.curveView != nil { self.curveView.live = g_lastRawPressure }
             // RAW is what the tablet reported; distinct-raw is the empirical read
             // of its true resolution. If distinct stops climbing well below the
             // configured levels, the extra range is upsampling, not detail.
