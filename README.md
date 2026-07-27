@@ -121,10 +121,24 @@ it all together.
    "Open Anyway"** (it's unsigned; [why?](#macos-wont-let-me-open-it--is-this-safe)).
 2. It **asks for your SAI Ver.2 folder** (the one containing `sai2.exe`), then sets up the
    Wine prefix and installs the bridge.
-3. **Grant Input Monitoring.** On first launch the app asks for **Input Monitoring** — turn on
-   **"SAI Pen Pressure"** under System Settings → **Privacy & Security**. This is what reads your
+3. **Grant Input Monitoring — you'll need to add the app by hand.** This is what reads your
    tablet's pressure, and it's the **only** permission the app needs. (Mac-style **Cmd+Z / Cmd+S**
    etc. are handled by Wine itself — no Accessibility permission required.)
+
+   **macOS will not show a prompt for it.** Downloaded releases are ad-hoc signed — signing them
+   properly needs a paid Apple Developer Program membership, which this free project doesn't have
+   — and macOS only prompts for apps with a stable signing identity. So it has to be added
+   manually, once:
+
+   - click **Grant…** in the setup window (it opens the right pane, reveals the app in Finder,
+     and copies its path to your clipboard), then
+   - in **System Settings → Privacy & Security → Input Monitoring**, click **+**,
+   - press **⇧⌘G**, paste (**⌘V**), choose the app, and switch it **on**.
+
+   *Tip:* move the app to **/Applications** first and grant it there. The grant is matched by
+   path, so moving the app afterwards means doing this again. Building from source on a Mac that
+   has an Apple Development certificate avoids the whole dance — `make-app.sh` signs
+   automatically and macOS then prompts normally. See issue #23.
 4. **⚠️ Quit and reopen the app.** macOS only applies this permission on a **fresh launch** —
    the first run *won't have pressure* until you restart the app. You only do this once; after
    that, double-clicking the app just works.
