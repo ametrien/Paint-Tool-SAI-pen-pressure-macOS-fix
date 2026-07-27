@@ -78,3 +78,7 @@ osascript -e 'quit app "SAI Pen Pressure"'; sleep 2; \
 
 Click **Launch SAI**, reproduce, then copy `~/SAI2-pressure/drive_c/wtlog.txt` — it is
 overwritten on each launch. It shows exactly what SAI received.
+
+---
+
+[Home](index.md) · [Install](install.md) · [Troubleshooting](troubleshooting.md) · [How it works](how-it-works.md) · [Engineering notes](notes.md) · [GitHub](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix)

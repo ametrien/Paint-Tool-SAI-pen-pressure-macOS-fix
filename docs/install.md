@@ -71,3 +71,7 @@ Buy from SYSTEMAX, get your **System ID** from *Others → System ID*, download 
 ---
 
 Trouble? → [Troubleshooting](troubleshooting.md)
+
+---
+
+[Home](index.md) · [Install](install.md) · [Troubleshooting](troubleshooting.md) · [How it works](how-it-works.md) · [Engineering notes](notes.md) · [GitHub](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix)

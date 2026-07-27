@@ -591,7 +591,12 @@ static void ensure_click_dedup(void) {
     if (g_click_hook || !g_hwnd) return;
     if (getenv("WT_NO_CLICK_DEDUP")) return;   /* explicit off, kept for compat */
     if (!getenv("WT_CLICK_DEDUP")) {           /* OPT-IN now — see issue #19 */
-        log_line("click dedup: OFF by default (set WT_CLICK_DEDUP=1 to enable)");
+        /* Log ONCE. This is called from producer housekeeping on every
+         * iteration, so an unguarded line here drowned the log: a field capture
+         * came back 2055 spam lines out of 2111, hiding the packet flow that
+         * the log exists to show. */
+        static int said;
+        if (!said) { said = 1; log_line("click dedup: OFF by default (set WT_CLICK_DEDUP=1 to enable)"); }
         return;
     }
     HWND root = GetAncestor(g_hwnd, GA_ROOT);
