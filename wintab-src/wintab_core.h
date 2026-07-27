@@ -17,6 +17,11 @@
  * bounds what the parser will accept. */
 #define WTC_MAX_PRESS 8191
 
+/* How long after a real pen-tip transition a synthetic left-button message is
+ * considered a duplicate of it. Lives here (not in wintab32.c) so the DLL and
+ * tests/test_wintab_core.c cannot drift apart on the boundary. */
+#define WTC_CLICK_DEDUP_MS 400
+
 /* one pen sample from the mac helper: pressure 0..g_max_press plus (optionally) a
  * position in mac coords — origin bottom-left, y-up, 8x fixed point — and the
  * virtual-desktop size in the same units. */
@@ -70,6 +75,46 @@ static void wtc_map_to_out(const WTC_SAMPLE *s,
 static int wtc_should_post(unsigned serial, unsigned fetched, int transition, int post_window) {
     int outstanding = (int)(serial - 1 - fetched);
     return transition || outstanding < post_window;
+}
+
+/* CLICK DE-DUP decision: should this left-button message be rewritten to
+ * WM_NULL? Answering yes to a WM_LBUTTONDOWN destroys the stroke it would have
+ * started, so this has blocked drawing entirely TWICE (#19, then again in
+ * v0.1.10) and is the single most damaging "yes" in the DLL.
+ *
+ * ---------------------------------------------------------------------------
+ * READ THIS BEFORE TOUCHING THE MESSAGE HOOK
+ * ---------------------------------------------------------------------------
+ * `want_dedup` is NOT redundant, and you cannot infer it from the hook being
+ * installed. That inference is exactly what broke this the second time:
+ *
+ *   #19  fixed the first outage by making the de-dup opt-in AT THE INSTALL
+ *        SITE — ensure_click_dedup() simply returned without installing the
+ *        hook. click_hook_proc needed no check of its own, because the hook's
+ *        existence implied consent.
+ *   #24  needed the SAME WH_GETMESSAGE hook for scroll-to-pan, which is on by
+ *        default, so the early return became `if (!want_dedup && !want_pan)`.
+ *        The hook now installs for everyone. The install-site guard silently
+ *        stopped guarding anything, and every user got #19 back.
+ *
+ * The lesson: the hook is SHARED. Its existence tells you nothing about which
+ * feature asked for it. Every consumer inside click_hook_proc must gate on its
+ * own flag. If you add a third feature to that hook, it needs its own flag too
+ * — do not widen an existing one.
+ *
+ * Keep this decision here, in the natively-testable core, rather than inline in
+ * click_hook_proc: the Win32 version is unreachable from the test suite, which
+ * is why two outages shipped undetected. See the wtc_should_eat_click cases in
+ * tests/test_wintab_core.c.
+ *
+ *   want_dedup  did the user actually opt in (WT_CLICK_DEDUP=1)?
+ *   dt          ms since the last real pen-tip transition
+ *   dedup_ms    the window (WTC_CLICK_DEDUP_MS, 400)
+ *   same_root   is the message aimed at SAI's own root window?
+ */
+static int wtc_should_eat_click(int want_dedup, unsigned long dt,
+                                unsigned long dedup_ms, int same_root) {
+    return want_dedup && dt < dedup_ms && same_root;
 }
 
 #endif /* WINTAB_CORE_H */
