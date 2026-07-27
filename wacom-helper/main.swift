@@ -551,7 +551,34 @@ func pollUntilSAICloses() {
 
 // LAUNCH (runs only after the pressure tap is active): start SAI; quit the app
 // when SAI closes.
+/// Keep the prefix's copy of our DLL in step with the one inside the app bundle.
+///
+/// installBridge() runs only from performSetup() — first-time setup or an
+/// explicit reinstall. So an app UPGRADE used to ship a new wintab32.dll in the
+/// bundle while the prefix quietly kept the old one: the user got none of the
+/// fix, saw the old bug, and had every reason to conclude the fix didn't work.
+/// A DLL-side fix that only reaches people who happen to reinstall is a fix
+/// that did not ship.
+///
+/// Compares bytes rather than timestamps (copying does not preserve mtime
+/// reliably, and a same-size build is still a different build). Safe at this
+/// point specifically: SAI has not been started yet, so nothing has the file
+/// mapped. The registry override is deliberately not touched — it persists in
+/// the prefix and rewriting it would mean spawning wine on every launch.
+func syncBridgeDLL() {
+    guard let res = Bundle.main.resourcePath else { return }   // dev mode: no bundle
+    let src = "\(res)/wintab32.dll"
+    let dst = "\(appPrefix)/drive_c/windows/system32/wintab32.dll"
+    guard let bundled = FileManager.default.contents(atPath: src) else { return }
+    if let installed = FileManager.default.contents(atPath: dst), installed == bundled { return }
+    try? FileManager.default.createDirectory(
+        atPath: "\(appPrefix)/drive_c/windows/system32", withIntermediateDirectories: true)
+    try? FileManager.default.removeItem(atPath: dst)
+    try? FileManager.default.copyItem(atPath: src, toPath: dst)
+}
+
 func launchSAIApp() {
+    syncBridgeDLL()               // an upgraded app must not leave a stale DLL behind
     // Ask the hardware once more before committing the value (issue #27). At
     // app startup a Bluetooth tablet may still be asleep and answer nothing; by
     // the time someone presses Launch it is usually awake. This is the LAST
