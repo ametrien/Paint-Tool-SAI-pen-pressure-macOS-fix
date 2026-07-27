@@ -108,7 +108,27 @@ struct CoreTests {
         expect(u == (-1920, -200, 3360, 1100), "union: monitor up-left gives negative origin")
 
         // -----------------------------------------------------------------------------
-        if failures > 0 { print("FAILED: \(failures) test(s)"); exit(1) }
+        // ---- resolveMaxPressure: precedence (issue #27) -------------------------
+    // The cached term exists because a Bluetooth tablet asleep at startup
+    // reports nothing, and falling through to 1023 cost 4x resolution silently.
+    expect(PressureCore.resolveMaxPressure(override: 2047, detected: 4095, cached: 8191) == 2047,
+           "pmax: explicit override beats everything")
+    expect(PressureCore.resolveMaxPressure(override: 2047, detected: nil, cached: nil) == 2047,
+           "pmax: override alone is honoured")
+    expect(PressureCore.resolveMaxPressure(override: nil, detected: 4095, cached: 1023) == 4095,
+           "pmax: live detection beats a stale cache")
+    expect(PressureCore.resolveMaxPressure(override: nil, detected: nil, cached: 4095) == 4095,
+           "pmax: sleeping BT tablet falls back to last known good, NOT 1023 (#27)")
+    expect(PressureCore.resolveMaxPressure(override: nil, detected: nil, cached: nil) == 1023,
+           "pmax: nothing known -> 1023 default")
+    expect(PressureCore.resolveMaxPressure(override: nil, detected: 4095, cached: nil) == 4095,
+           "pmax: first ever run with the tablet awake")
+    // The regression this replaces: detection failing used to mean 1023 even
+    // though the hardware had already told us 4095 on an earlier launch.
+    expect(PressureCore.resolveMaxPressure(override: nil, detected: nil, cached: 4095) != 1023,
+           "pmax: a known 4096-level tablet never silently drops to 1024 levels")
+
+    if failures > 0 { print("FAILED: \(failures) test(s)"); exit(1) }
         print("All PressureCore tests passed.")
     }
 }
