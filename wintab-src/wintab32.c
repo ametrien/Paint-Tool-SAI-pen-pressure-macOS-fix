@@ -1064,7 +1064,13 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID r) {
         /* Must happen before SAI calls WTInfo/WTOpen — it reads the pressure
          * axis exactly once, at open time. */
         load_max_press();
-        log_line("==== OwnTab wintab32.dll loaded; screen %dx%d virtual %dx%d maxPress=%d ====",
+        /* The build stamp is not decoration. A DLL-side fix reaches the user
+         * only if the file in the PREFIX was replaced, and for several releases
+         * nothing refreshed it on upgrade — so "is the fix even loaded?" was
+         * unanswerable from the log, and a stale DLL looked exactly like a
+         * broken fix. One line here settles it. */
+        log_line("==== OwnTab wintab32.dll loaded; built " __DATE__ " " __TIME__
+                 "; screen %dx%d virtual %dx%d maxPress=%d ====",
              g_screenW, g_screenH, g_virtW, g_virtH, g_max_press);
         CreateThread(NULL, 0, producer, NULL, 0, NULL);
     }

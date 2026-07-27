@@ -30,6 +30,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
   across launches, and the tablet is asked once more just before SAI starts — the last moment the
   answer can still be changed safely. An explicit setting is never second-guessed.
 
+- **Upgrading the app now actually updates the bridge** — and without this, none of the above would
+  have reached you. The DLL that does the work lives inside the Wine prefix, and it was only ever
+  copied there during first-time setup or an explicit reinstall. So installing a new version left
+  the *old* DLL in place: you would have got the new app, none of the fix, and every reason to
+  believe the fix didn't work. The prefix copy is now compared against the one in the app on every
+  launch and replaced when it differs.
+- **The DLL log states which build it is.** "Is the fix even loaded?" was previously unanswerable
+  from the log, so a stale DLL looked identical to a broken fix.
+
 ### Internal
 - `CLICK_DEDUP_MS` is shared between the DLL and its tests as `WTC_CLICK_DEDUP_MS`, so the two
   cannot drift apart on the boundary.
