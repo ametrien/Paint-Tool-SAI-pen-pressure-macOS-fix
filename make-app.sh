@@ -13,8 +13,23 @@ VERSION="${SAIPP_VERSION:-$(git -C "$REPO" describe --tags --abbrev=0 2>/dev/nul
 VERSION="${VERSION:-0.0.0-dev}"
 echo "Version: $VERSION"
 
+# Universal (arm64 + x86_64) so the release runs natively on Apple Silicon AND
+# on Intel Macs (#6). Both slices are cross-compiled from whichever machine
+# builds; no Intel hardware needed. The x86_64 slice can even be exercised on
+# Apple Silicon with `arch -x86_64`, via Rosetta.
+# UNIVERSAL=0 builds only the host architecture (faster while iterating).
 echo "Building helper (with --app support)..."
-( cd "$REPO/wacom-helper" && swiftc -O -o wacom-pressure-helper main.swift PressureCore.swift )
+if [ "${UNIVERSAL:-1}" = "1" ]; then
+  ( cd "$REPO/wacom-helper" \
+    && swiftc -O -target x86_64-apple-macos12.0 -o .helper-x86 main.swift PressureCore.swift \
+    && swiftc -O -target arm64-apple-macos12.0  -o .helper-arm main.swift PressureCore.swift \
+    && lipo -create -output wacom-pressure-helper .helper-x86 .helper-arm \
+    && rm -f .helper-x86 .helper-arm )
+  echo "  architectures: $(lipo -archs "$REPO/wacom-helper/wacom-pressure-helper")"
+else
+  ( cd "$REPO/wacom-helper" && swiftc -O -o wacom-pressure-helper main.swift PressureCore.swift )
+  echo "  host architecture only (UNIVERSAL=0)"
+fi
 
 echo "Assembling bundle..."
 rm -rf "$APP"

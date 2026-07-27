@@ -144,7 +144,14 @@ if [ ! -f "$DLL" ]; then
 fi
 if [ ! -x "$HELPER_SRC" ]; then
   echo "Note: helper binary not found; attempting to build it..."
-  ( cd "$REPO/wacom-helper" && swiftc -O -o wacom-pressure-helper main.swift PressureCore.swift ) \
+  # universal (arm64 + x86_64) to match make-app.sh, so a CLI install works on
+  # Intel Macs too; falls back to host-only if cross-compiling isn't available.
+  ( cd "$REPO/wacom-helper" \
+    && swiftc -O -target x86_64-apple-macos12.0 -o .helper-x86 main.swift PressureCore.swift \
+    && swiftc -O -target arm64-apple-macos12.0  -o .helper-arm main.swift PressureCore.swift \
+    && lipo -create -output wacom-pressure-helper .helper-x86 .helper-arm \
+    && rm -f .helper-x86 .helper-arm ) \
+    || ( cd "$REPO/wacom-helper" && swiftc -O -o wacom-pressure-helper main.swift PressureCore.swift ) \
     || { echo "ERROR: could not build the helper (needs Xcode command-line tools)."; exit 1; }
 fi
 
