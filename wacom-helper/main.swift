@@ -373,6 +373,37 @@ enum SetupMode {
 
 /// Install the pressure bridge (our DLL + the registry overrides) into the prefix.
 /// Split out so repair can redo it without touching SAI itself.
+/// Stop everything Wine is running for OUR prefix, and wait until it is really
+/// gone. Call before anything that deletes or rebuilds the prefix (issue #28).
+///
+/// `wineserver` is a per-prefix daemon that outlives both SAI and this app.
+/// Deleting a prefix while its server is still alive leaves the daemon running
+/// against files that no longer exist, and a later `wine` can attach to that
+/// stale server instead of starting cleanly — a documented time-sink here: it
+/// silently invalidated an entire Wine-version test in one session.
+///
+/// `-k` terminates the server, `-w` blocks until it has actually exited. Using
+/// wineserver's own wait beats sleeping and hoping, because no fixed delay is
+/// both short enough to feel instant and long enough to always be right.
+///
+/// The wait is still bounded: a wedged daemon must not freeze the uninstall
+/// dialog. Returning false and carrying on is the better failure — the caller
+/// is about to delete the prefix anyway, and a beachball with no explanation is
+/// worse than a rare unclean stop.
+@discardableResult
+func stopWineForPrefix(_ wine: String, timeout: Double = 10) -> Bool {
+    let ws = ((wine as NSString).deletingLastPathComponent as NSString)
+        .appendingPathComponent("wineserver")
+    guard FileManager.default.isExecutableFile(atPath: ws) else { return false }
+    let env = ["WINEPREFIX": appPrefix, "WINEDEBUG": "-all"]
+    _ = runProc(ws, ["-k"], env: env)                    // terminate it
+    let p = runProc(ws, ["-w"], env: env, wait: false)   // …and wait for it to be gone
+    let deadline = Date().addingTimeInterval(timeout)
+    while p.isRunning && Date() < deadline { usleep(50_000) }
+    if p.isRunning { p.terminate(); return false }
+    return true
+}
+
 func installBridge(_ wine: String) {
     let env = ["WINEPREFIX": appPrefix, "WINEDEBUG": "-all"]
     if let res = Bundle.main.resourcePath {
@@ -442,6 +473,9 @@ func performSetup(_ saiSrc: String, _ wine: String, mode: SetupMode = .ensure, q
     }
 
     let env = ["WINEPREFIX": appPrefix, "WINEDEBUG": "-all"]
+    // Everything below rewrites the prefix, so nothing may still be using it —
+    // including a wineserver left over from a previous session (#28).
+    stopWineForPrefix(wine)
     if mode == .rebuild {
         // The whole point of a rebuild: nothing from the old prefix survives.
         // The licence is restored afterwards from our own stash, not from here.
@@ -578,6 +612,20 @@ func syncBridgeDLL() {
 }
 
 func launchSAIApp() {
+    // One SAI at a time (#28). Two instances share one Wine prefix and contend
+    // over the same settings and recovery files, and a second copy is never
+    // what "Launch" was meant to do — the window is already there, so raise it
+    // rather than starting a rival.
+    if saiWindowIsOpen() {
+        let list = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? []
+        if let w = list.first(where: { isForeignSAIWindow($0) }),
+           let pid = w[kCGWindowOwnerPID as String] as? Int, pid != 0 {
+            NSRunningApplication(processIdentifier: pid_t(pid))?
+                .activate(options: [.activateAllWindows])
+        }
+        pollUntilSAICloses()      // still quit with SAI, as a fresh launch would
+        return
+    }
     syncBridgeDLL()               // an upgraded app must not leave a stale DLL behind
     // Ask the hardware once more before committing the value (issue #27). At
     // app startup a Bluetooth tablet may still be asleep and answer nothing; by
@@ -2723,6 +2771,10 @@ final class SetupController: NSObject, NSApplicationDelegate {
             removeWine = (osa("button returned of (display dialog \(q.debugDescription) buttons {\"Keep Wine\", \"Move Wine to Trash\"} default button \(def.debugDescription) with icon caution)") == "Move Wine to Trash")
         }
 
+        // Stop Wine before the prefix disappears underneath it (#28), otherwise
+        // the daemon lives on against deleted files and can be inherited by the
+        // next launch.
+        if let w = wineBin() { stopWineForPrefix(w) }
         try? fm.removeItem(atPath: appPrefix)
         for f in ["config.txt", "installed-src.txt", "devmode.txt", "wine-ours.txt"] {
             try? fm.removeItem(atPath: appSupport() + "/" + f)
