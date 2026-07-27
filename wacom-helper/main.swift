@@ -159,9 +159,25 @@ func storedMaxPressureOverride() -> Int? {
 /// tablet reports, otherwise 1023. Asking the hardware beats guessing — and
 /// beats asking the user, who mostly doesn't know and can't verify a wrong answer
 /// (setting more levels than the tablet has adds noise, not detail).
+/// The last full scale a tablet actually reported, remembered across launches.
+/// Separate from `pmax.txt`, which is the USER's explicit override — writing
+/// detection results there would silently turn Auto into a permanent pin.
+func cachedDetectedFullScale() -> Int? {
+    guard let s = try? String(contentsOfFile: appSupport() + "/pmax-detected.txt", encoding: .utf8),
+          let v = Int(s.trimmingCharacters(in: .whitespacesAndNewlines)),
+          v >= 255, v <= PressureCore.maxPressureCeiling else { return nil }
+    return v
+}
+func cacheDetectedFullScale(_ v: Int) {
+    try? "\(v)".write(toFile: appSupport() + "/pmax-detected.txt", atomically: true, encoding: .utf8)
+}
+
 func savedMaxPressure() -> Int {
-    if let v = storedMaxPressureOverride() { return v }
-    return detectTabletFullScale() ?? 1023
+    let detected = detectTabletFullScale()
+    if let d = detected { cacheDetectedFullScale(d) }      // remember for a sleepy next start
+    return PressureCore.resolveMaxPressure(override: storedMaxPressureOverride(),
+                                           detected: detected,
+                                           cached: cachedDetectedFullScale())
 }
 func saveMaxPressure(_ v: Int) {
     try? "\(v)".write(toFile: appSupport() + "/pmax.txt", atomically: true, encoding: .utf8)
@@ -536,6 +552,17 @@ func pollUntilSAICloses() {
 // LAUNCH (runs only after the pressure tap is active): start SAI; quit the app
 // when SAI closes.
 func launchSAIApp() {
+    // Ask the hardware once more before committing the value (issue #27). At
+    // app startup a Bluetooth tablet may still be asleep and answer nothing; by
+    // the time someone presses Launch it is usually awake. This is the LAST
+    // safe moment to change our mind: the DLL reads wt_pmax.txt at load and SAI
+    // reads the axis once at WTOpen, so adopting a new value after this point
+    // would leave the two halves scaling differently. An explicit user override
+    // is never second-guessed.
+    if storedMaxPressureOverride() == nil, let live = detectTabletFullScale() {
+        cacheDetectedFullScale(live)
+        PressureCore.maxPressure = live
+    }
     writeMaxPressureForDLL()      // must land before the DLL loads
     applyWineShortcutRemap(g_wine)          // Cmd->Ctrl via Wine (every launch; idempotent)
     let pf = "\(appPrefix)/drive_c/wt_pressure.txt"

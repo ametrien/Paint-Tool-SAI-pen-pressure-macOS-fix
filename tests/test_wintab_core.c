@@ -93,6 +93,70 @@ int main(void) {
     EXPECT(wtc_should_post(10, 9, 0, 3) == 1, "conflate: SAI caught up -> post again");
     EXPECT(wtc_should_post(10, 2, 1, 3) == 1, "conflate: tip transition ALWAYS posts");
 
+    /* --- wtc_should_eat_click (#19, and its v0.1.10 recurrence) ------------ */
+    /* Eating a WM_LBUTTONDOWN destroys the stroke it would have started, so a
+     * wrong "yes" here stops the pen drawing at all. That has shipped TWICE.
+     * These cases are therefore exhaustive rather than representative.
+     * "eats" == message rewritten to WM_NULL, SAI never sees it. */
+
+    /* THE REGRESSION. v0.1.10 installed the hook for scroll->pan (on by
+     * default) while want_dedup was 0, and click_hook_proc checked only the
+     * timing window. The field log showed, 2 ms after a real pen-down:
+     *     msg hook: dedup=off scroll-pan=on
+     *     CLICK dedup: ate msg=0x201 hwnd=... dt=2ms total=1
+     * i.e. the de-dup reporting itself off and eating the stroke anyway. */
+    EXPECT(wtc_should_eat_click(0, 2, WTC_CLICK_DEDUP_MS, 1) == 0,
+           "dedup OFF: click 2ms after pen-down SURVIVES (#19 / v0.1.10 regression)");
+
+    /* The invariant that actually protects drawing: when the de-dup was not
+     * requested, nothing is eaten anywhere in the parameter space. Any future
+     * feature that installs this shared hook trips this immediately. */
+    {
+        int off_ate = 0;
+        for (unsigned long d = 0; d <= 1000; d++)
+            for (int root = 0; root <= 1; root++)
+                if (wtc_should_eat_click(0, d, WTC_CLICK_DEDUP_MS, root)) off_ate++;
+        EXPECT(off_ate == 0, "dedup OFF: eats nothing across dt 0..1000ms x both targets");
+    }
+
+    /* Opt-in still works — #8's double-click fix is intact for those who want it. */
+    EXPECT(wtc_should_eat_click(1, 2, WTC_CLICK_DEDUP_MS, 1) == 1,
+           "dedup ON: eats the duplicate click 2ms after pen-down (#8 fix)");
+    EXPECT(wtc_should_eat_click(1, 0, WTC_CLICK_DEDUP_MS, 1) == 1,
+           "dedup ON: eats at dt=0 (same tick as the tip transition)");
+
+    /* Window boundary is EXCLUSIVE (dt < dedup_ms). Pinned so a future edit
+     * cannot quietly widen or narrow it by one millisecond. */
+    EXPECT(wtc_should_eat_click(1, WTC_CLICK_DEDUP_MS - 1, WTC_CLICK_DEDUP_MS, 1) == 1,
+           "dedup ON: eats at 399ms (last ms inside the window)");
+    EXPECT(wtc_should_eat_click(1, WTC_CLICK_DEDUP_MS, WTC_CLICK_DEDUP_MS, 1) == 0,
+           "dedup ON: does NOT eat at exactly 400ms (boundary exclusive)");
+    EXPECT(wtc_should_eat_click(1, WTC_CLICK_DEDUP_MS + 1, WTC_CLICK_DEDUP_MS, 1) == 0,
+           "dedup ON: does not eat at 401ms (just past the window)");
+    EXPECT(wtc_should_eat_click(1, 60000, WTC_CLICK_DEDUP_MS, 1) == 0,
+           "dedup ON: does not eat a click a minute later (deliberate mouse click)");
+
+    /* Scoping: only messages aimed at SAI's own root window are candidates. */
+    EXPECT(wtc_should_eat_click(1, 2, WTC_CLICK_DEDUP_MS, 0) == 0,
+           "dedup ON: never eats a click aimed at another root window");
+    EXPECT(wtc_should_eat_click(0, 2, WTC_CLICK_DEDUP_MS, 0) == 0,
+           "dedup OFF + foreign window: survives");
+
+    /* Every term is load-bearing: drop any one and the click must survive.
+     * v0.1.10 dropped precisely the first. */
+    EXPECT(wtc_should_eat_click(0, 2, WTC_CLICK_DEDUP_MS, 1) == 0 &&
+           wtc_should_eat_click(1, WTC_CLICK_DEDUP_MS, WTC_CLICK_DEDUP_MS, 1) == 0 &&
+           wtc_should_eat_click(1, 2, WTC_CLICK_DEDUP_MS, 0) == 0 &&
+           wtc_should_eat_click(1, 2, WTC_CLICK_DEDUP_MS, 1) == 1,
+           "dedup: all three terms required — dropping any one spares the click");
+
+    /* Replay of the captured field log (v0.1.10, Intuos BT S, Wine 11.13):
+     * both of these were eaten while dedup reported off — 0x201 cost the
+     * stroke, 0x202 the release. Both must now survive. */
+    EXPECT(wtc_should_eat_click(0, 2,   WTC_CLICK_DEDUP_MS, 1) == 0 &&
+           wtc_should_eat_click(0, 302, WTC_CLICK_DEDUP_MS, 1) == 0,
+           "field replay: WM_LBUTTONDOWN(dt=2ms) and WM_LBUTTONUP(dt=302ms) both survive");
+
     if (failures) { printf("FAILED: %d test(s)\n", failures); return 1; }
     printf("All wintab_core tests passed.\n");
     return 0;
