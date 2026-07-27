@@ -949,16 +949,20 @@ func startPressureEngine() -> Bool {
             options: [.userInitiated, .latencyCritical],
             reason: "Streaming live tablet pressure to SAI")
     }
-    let mask: CGEventMask =
-        (CGEventMask(1) << CGEventType.leftMouseDown.rawValue)    |
-        (CGEventMask(1) << CGEventType.leftMouseDragged.rawValue) |
-        (CGEventMask(1) << CGEventType.leftMouseUp.rawValue)      |
-        (CGEventMask(1) << CGEventType.mouseMoved.rawValue)       |
-        (CGEventMask(1) << CGEventType.tabletPointer.rawValue)    |
-        (CGEventMask(1) << CGEventType.tabletProximity.rawValue)  |
-        (CGEventMask(1) << CGEventType.keyDown.rawValue)          |   // wake hotkey detection
-        (CGEventMask(1) << 29)                                    |   // NSEventTypeGesture
-        (CGEventMask(1) << 30)                                        // NSEventTypeMagnify (pinch)
+    // Built up in a loop rather than as one big `|` chain: at nine terms Swift's
+    // type checker gave up with "unable to type-check this expression in
+    // reasonable time" on CI (it squeaked through locally on a different
+    // compiler version, which is exactly the sort of difference CI is for).
+    var mask: CGEventMask = 0
+    for t in [CGEventType.leftMouseDown, .leftMouseDragged, .leftMouseUp, .mouseMoved,
+              .tabletPointer, .tabletProximity,
+              .keyDown] {                                   // keyDown = wake hotkey
+        mask |= CGEventMask(1) << t.rawValue
+    }
+    // Gesture types have no CGEventType case: 29 = NSEventTypeGesture,
+    // 30 = NSEventTypeMagnify (pinch to zoom, issue #22).
+    mask |= CGEventMask(1) << 29
+    mask |= CGEventMask(1) << 30
     guard let tap = CGEvent.tapCreate(
         tap: .cghidEventTap, place: .headInsertEventTap, options: .listenOnly,
         eventsOfInterest: mask, callback: tapCallback, userInfo: nil) else { return false }
