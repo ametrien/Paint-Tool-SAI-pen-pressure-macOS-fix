@@ -561,9 +561,14 @@ static void check_win32_wake(DWORD now) {
  * default now favours drawing and #8 is reopened.
  * Enable:  WT_CLICK_DEDUP=1   (accepts the #8 double-click risk)
  * Disable: WT_NO_CLICK_DEDUP=1 (still honoured; now redundant) */
-#define CLICK_DEDUP_MS 400
+#define CLICK_DEDUP_MS WTC_CLICK_DEDUP_MS   /* single source of truth: wintab_core.h */
 static HHOOK g_click_hook;
 static unsigned long g_clicks_eaten;
+/* Resolved once in ensure_click_dedup(). The hook is shared with scroll->pan,
+ * which is ON by default, so "is the hook installed" does NOT mean "the user
+ * asked for de-dup" — click_hook_proc must consult this, or enabling #24
+ * silently re-arms the #19 stroke-eater for everyone. */
+static int g_want_dedup;
 
 /* ---- TWO-FINGER SCROLL PANS INSTEAD OF ZOOMING (issue #24) ----------------
  * winemac.drv turns a two-finger scroll into WM_MOUSEWHEEL, and SAI zooms on
@@ -666,8 +671,11 @@ static LRESULT CALLBACK click_hook_proc(int code, WPARAM wp, LPARAM lp) {
         (m->message == WM_LBUTTONDOWN || m->message == WM_LBUTTONUP ||
          m->message == WM_LBUTTONDBLCLK)) {
         DWORD dt = GetTickCount() - g_last_tip_tick;
-        if (dt < CLICK_DEDUP_MS &&
-            GetAncestor(m->hwnd, GA_ROOT) == GetAncestor(g_hwnd, GA_ROOT)) {
+        /* Decision lives in wintab_core.h so the test suite can reach it — the
+         * g_want_dedup term is what #24 dropped, and inlining it here again is
+         * how it would get dropped a third time. */
+        if (wtc_should_eat_click(g_want_dedup, dt, CLICK_DEDUP_MS,
+                                 GetAncestor(m->hwnd, GA_ROOT) == GetAncestor(g_hwnd, GA_ROOT))) {
             log_line("CLICK dedup: ate msg=%#x hwnd=%p dt=%lums total=%lu",
                      m->message, (void *)m->hwnd, (unsigned long)dt, ++g_clicks_eaten);
             m->message = WM_NULL;
@@ -690,11 +698,20 @@ static LRESULT CALLBACK click_hook_proc(int code, WPARAM wp, LPARAM lp) {
 /* install once SAI's window exists (cheap; called from producer housekeeping) */
 static void ensure_click_dedup(void) {
     if (g_click_hook || !g_hwnd) return;
-    /* The hook now serves TWO features, so it is installed if EITHER wants it:
-     * the click de-dup (opt-in since #19) and scroll->pan (#24, on by default).
-     * Each still decides for itself inside click_hook_proc. */
+    /* The hook serves TWO features, so it is installed if EITHER wants it: the
+     * click de-dup (opt-in since #19) and scroll->pan (#24, on by default).
+     *
+     * WARNING — installing this hook does NOT mean the de-dup was requested.
+     * Because scroll->pan defaults on, this function installs the hook for
+     * essentially everyone. #24 widened the early return here and left
+     * click_hook_proc reading only the 400 ms window, which handed every user
+     * #19 back (pen could not draw at all) while the log still said "dedup=off".
+     * The consent flag therefore has to travel to the hook proc — that is what
+     * g_want_dedup is for. A third feature on this hook needs its OWN flag;
+     * do not widen these. See wtc_should_eat_click() in wintab_core.h. */
     int want_dedup = getenv("WT_CLICK_DEDUP") && !getenv("WT_NO_CLICK_DEDUP");
     int want_pan   = !getenv("WT_NO_SCROLL_PAN");
+    g_want_dedup = want_dedup;      /* the hook proc gates the EATING on this */
     if (!want_dedup && !want_pan) return;
     {   /* Log ONCE: this runs from producer housekeeping on every iteration, and
          * an unguarded line here drowned the log — a field capture came back
