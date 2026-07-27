@@ -5,6 +5,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
 
 ## [Unreleased]
 
+## [0.1.12] — 2026-07-27
+
+### Added
+- **Setup shows what it's doing.** Reinstalling set one line of text and then went silent for about a
+  minute while the Wine environment was prepared and SAI copied — no movement, so it read as a hang.
+  Each step now names itself and drives the progress bar. The long step (`wineboot`) reports nothing
+  a program can read, so the bar approaches that step's end without ever arriving: it always moves
+  while work is happening, and never claims progress nobody observed. A step that runs longer than
+  expected keeps creeping slowly rather than sitting at 100%.
+- **A license already in your SAI folder is detected the moment you pick it** (#28). If a `.slc` is
+  sitting there, it is taken under management immediately and you are told — rather than being asked
+  to find a file you evidently already have. This also closes two quiet gaps: setup's plain copy left
+  the certificate wherever it happened to sit in your folder, which may not be where the installed
+  build reads from — and SAI's response to a certificate in the wrong folder is to silently refuse to
+  save, indistinguishable from an invalid license. It also never reached the backup copy, so a rebuild
+  lost it.
+
+### Fixed
+- **Wine is stopped before its prefix is rewritten or deleted** (#28). `wineserver` is a background
+  process that outlives both SAI and this app, and nothing ever stopped it: uninstall removed the
+  prefix while the daemon was still running against it, and reinstall rebuilt underneath it. A later
+  launch could then inherit that stale process instead of starting cleanly.
+- **Launching no longer starts a second SAI** if one is already open — it raises the existing window.
+  Two instances share one Wine prefix and contend over the same settings and recovery files.
+
 ## [0.1.11] — 2026-07-27
 
 ### Fixed

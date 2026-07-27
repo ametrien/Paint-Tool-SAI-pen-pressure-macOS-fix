@@ -364,6 +364,40 @@ func restoreStashedLicenses() {
     }
 }
 
+/// Notice a certificate that is already sitting in the SAI folder the user just
+/// picked, and take it under management. Returns its name if there was one.
+///
+/// Such a file is one they already own, so making them find it again through
+/// "Install…" is asking a question we can answer ourselves. It also closes two
+/// real gaps, because until now setup's `cp -R` was the only thing that moved
+/// it:
+///
+///   - a plain copy lands it wherever it happened to sit in the SOURCE layout,
+///     which may not be where the installed build reads from. SAI's response to
+///     a certificate in the wrong folder is to silently refuse to save — the
+///     same symptom as an invalid licence, with nothing pointing at the cause.
+///   - it never reached the stash, so the next rebuild lost it.
+///
+/// Deliberately does NOT write into the prefix unless SAI is already there:
+/// creating prefix folders before setup has run would leave a half-made prefix
+/// behind if the user stops here. The stash alone is enough — performSetup ends
+/// with restoreStashedLicenses(), which writes every location SAI might read.
+@discardableResult
+func adoptLicenseFromSourceFolder(_ src: String) -> String? {
+    // Look in both places SAI itself uses, since the user's folder mirrors one.
+    let found = [src, "\(src)/settings"]
+        .compactMap { d in slcFiles(in: d).first.map { "\(d)/\($0)" } }
+        .first
+    guard let path = found else { return nil }
+    let name = (path as NSString).lastPathComponent
+    let stash = "\(licenseStashDir())/\(name)"
+    if !FileManager.default.fileExists(atPath: stash) {
+        try? FileManager.default.copyItem(atPath: path, toPath: stash)
+    }
+    if saiInstalledInPrefix() { _ = installLicenseFile(path) }
+    return name
+}
+
 // ---- setup / repair / rebuild ----------------------------------------------
 enum SetupMode {
     case ensure     // install only if nothing usable is there (or the source changed)
@@ -373,6 +407,37 @@ enum SetupMode {
 
 /// Install the pressure bridge (our DLL + the registry overrides) into the prefix.
 /// Split out so repair can redo it without touching SAI itself.
+/// Stop everything Wine is running for OUR prefix, and wait until it is really
+/// gone. Call before anything that deletes or rebuilds the prefix (issue #28).
+///
+/// `wineserver` is a per-prefix daemon that outlives both SAI and this app.
+/// Deleting a prefix while its server is still alive leaves the daemon running
+/// against files that no longer exist, and a later `wine` can attach to that
+/// stale server instead of starting cleanly — a documented time-sink here: it
+/// silently invalidated an entire Wine-version test in one session.
+///
+/// `-k` terminates the server, `-w` blocks until it has actually exited. Using
+/// wineserver's own wait beats sleeping and hoping, because no fixed delay is
+/// both short enough to feel instant and long enough to always be right.
+///
+/// The wait is still bounded: a wedged daemon must not freeze the uninstall
+/// dialog. Returning false and carrying on is the better failure — the caller
+/// is about to delete the prefix anyway, and a beachball with no explanation is
+/// worse than a rare unclean stop.
+@discardableResult
+func stopWineForPrefix(_ wine: String, timeout: Double = 10) -> Bool {
+    let ws = ((wine as NSString).deletingLastPathComponent as NSString)
+        .appendingPathComponent("wineserver")
+    guard FileManager.default.isExecutableFile(atPath: ws) else { return false }
+    let env = ["WINEPREFIX": appPrefix, "WINEDEBUG": "-all"]
+    _ = runProc(ws, ["-k"], env: env)                    // terminate it
+    let p = runProc(ws, ["-w"], env: env, wait: false)   // …and wait for it to be gone
+    let deadline = Date().addingTimeInterval(timeout)
+    while p.isRunning && Date() < deadline { usleep(50_000) }
+    if p.isRunning { p.terminate(); return false }
+    return true
+}
+
 func installBridge(_ wine: String) {
     let env = ["WINEPREFIX": appPrefix, "WINEDEBUG": "-all"]
     if let res = Bundle.main.resourcePath {
@@ -415,8 +480,23 @@ func ensureBridgeUpToDate(_ wine: String?) -> Bool {
     return true
 }
 
+/// How a setup step reports itself to the UI (issue #28).
+///
+/// A step announces the span of the bar it owns and roughly how long it takes,
+/// rather than a single "we are at 40%" number. That is what lets the bar keep
+/// moving *during* a step: `wineboot` prints nothing parseable and takes about
+/// a minute, so a per-step number would freeze the bar for the longest part of
+/// the job — which is exactly the "it looks stuck" complaint.
+///
+///   from/to   the slice of the 0…1 bar this step occupies
+///   label     what to say while it runs
+///   expected  typical duration in seconds, for the creep (an estimate, and
+///             treated as one — see setupStep)
+typealias SetupProgress = (_ from: Double, _ to: Double, _ label: String, _ expected: Double) -> Void
+
 @discardableResult
-func performSetup(_ saiSrc: String, _ wine: String, mode: SetupMode = .ensure, quiet: Bool = false) -> Bool {
+func performSetup(_ saiSrc: String, _ wine: String, mode: SetupMode = .ensure, quiet: Bool = false,
+                  progress: SetupProgress? = nil) -> Bool {
     if mode == .ensure, saiInstalledInPrefix(), !prefixIsStale() { return true }
 
     // Fail fast (before the ~1-minute wineboot) with a SPECIFIC message if the
@@ -442,26 +522,36 @@ func performSetup(_ saiSrc: String, _ wine: String, mode: SetupMode = .ensure, q
     }
 
     let env = ["WINEPREFIX": appPrefix, "WINEDEBUG": "-all"]
+    // Everything below rewrites the prefix, so nothing may still be using it —
+    // including a wineserver left over from a previous session (#28).
+    progress?(0.00, 0.06, "Stopping Wine…", 1)
+    stopWineForPrefix(wine)
     if mode == .rebuild {
         // The whole point of a rebuild: nothing from the old prefix survives.
         // The licence is restored afterwards from our own stash, not from here.
+        progress?(0.06, 0.12, "Removing the old Wine prefix…", 3)
         try? FileManager.default.removeItem(atPath: appPrefix)
     }
+    // By far the longest step, and the one that made the window look frozen.
+    progress?(0.12, 0.70, "Preparing the Wine environment… (about a minute)", 60)
     runProc(wine, ["wineboot", "-u"], env: env)
 
     // Re-copy SAI. For repair/rebuild the destination is cleared first, so files
     // deleted from the source don't linger and a broken install can't survive.
     if mode != .ensure, FileManager.default.fileExists(atPath: prefixSAIDir) {
+        progress?(0.70, 0.74, "Clearing the old SAI copy…", 2)
         // keep any certificate that's already in there
         for f in slcFiles(in: prefixSAIDir) { installLicenseFile("\(prefixSAIDir)/\(f)") }
         try? FileManager.default.removeItem(atPath: prefixSAIDir)
     }
     try? FileManager.default.createDirectory(atPath: prefixSAIDir, withIntermediateDirectories: true)
+    progress?(0.74, 0.94, "Copying SAI into the Wine prefix…", 12)
     runProc("/bin/cp", ["-R", "\(saiSrc)/.", prefixSAIDir])
     guard saiInstalledInPrefix() else {
         alertUser("Something went wrong copying SAI into the Wine prefix. Check that you have free disk space and that the SAI folder is readable, then reopen the app and try again."); return false
     }
 
+    progress?(0.94, 1.00, "Installing the pressure bridge…", 2)
     installBridge(wine)
     restoreStashedLicenses()
     setInstalledSrcPath(saiSrc)          // the prefix now matches this source
@@ -578,6 +668,20 @@ func syncBridgeDLL() {
 }
 
 func launchSAIApp() {
+    // One SAI at a time (#28). Two instances share one Wine prefix and contend
+    // over the same settings and recovery files, and a second copy is never
+    // what "Launch" was meant to do — the window is already there, so raise it
+    // rather than starting a rival.
+    if saiWindowIsOpen() {
+        let list = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? []
+        if let w = list.first(where: { isForeignSAIWindow($0) }),
+           let pid = w[kCGWindowOwnerPID as String] as? Int, pid != 0 {
+            NSRunningApplication(processIdentifier: pid_t(pid))?
+                .activate(options: [.activateAllWindows])
+        }
+        pollUntilSAICloses()      // still quit with SAI, as a fresh launch would
+        return
+    }
     syncBridgeDLL()               // an upgraded app must not leave a stale DLL behind
     // Ask the hardware once more before committing the value (issue #27). At
     // app startup a Bluetooth tablet may still be asleep and answer nothing; by
@@ -2306,6 +2410,14 @@ final class SetupController: NSObject, NSApplicationDelegate {
     /// nothing but a label (issue #11).
     func adoptSAIFolder(_ path: String) {
         saveSAIPath(path)
+        // If their folder already holds a certificate, say so now rather than
+        // leaving them to hunt for a file they clearly already have.
+        if let lic = adoptLicenseFromSourceFolder(path) {
+            let where_ = installedLicenseName() != nil
+                ? "It's installed in every folder SAI might read it from, and saved so a rebuild can restore it."
+                : "Saved — it will be installed automatically when SAI is set up."
+            alertUser("License detected ✅\n\n\(lic) was already in the folder you picked.\n\n\(where_)")
+        }
         if saiInstalledInPrefix() && prefixIsStale() {
             let c = osa("button returned of (display dialog \"Copy this SAI into the Wine prefix now?\n\nSAI runs from a copy inside \(( prefixSAIDir as NSString).abbreviatingWithTildeInPath). Until it's copied, SAI will keep running the previous version.\" buttons {\"Later\", \"Reinstall now\"} default button \"Reinstall now\" with icon note)")
             if c == "Reinstall now" { doReinstall(mode: .repair) }
@@ -2504,6 +2616,44 @@ final class SetupController: NSObject, NSApplicationDelegate {
     var wineRow: NSStackView!
     var wineBar: PressureBar!
     var wineLabel: NSTextField!
+    // The setup steps reuse the same bar/label as the Wine download: only one
+    // long operation ever runs at a time, and a second identical row would just
+    // be more to keep in sync.
+    var setupTimer: Timer?
+
+    /// Drive the bar across one setup step (issue #28).
+    ///
+    /// `wineboot` produces nothing we can parse and takes about a minute, so
+    /// there is no real percentage to show. Instead the bar approaches the
+    /// step's end asymptotically — fast at first, slower as it goes — and
+    /// **never arrives on its own**: only the next step (or completion) moves
+    /// it past `to`. So it always looks alive, and it never claims progress it
+    /// hasn't actually observed. A step that overruns its estimate keeps
+    /// creeping, ever more slowly, instead of sitting at 100% and lying.
+    func setupStep(from: Double, to: Double, label: String, expected: Double) {
+        setupTimer?.invalidate()
+        wineRow.isHidden = false
+        wineLabel.stringValue = label
+        wineBar.value = CGFloat(from)
+        applyLayout()
+        let started = Date()
+        setupTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            self.wineBar.value = CGFloat(PressureCore.setupCreep(
+                from: from, to: to,
+                elapsed: Date().timeIntervalSince(started), expected: expected))
+        }
+        RunLoop.main.add(setupTimer!, forMode: .common)   // keep ticking during menu tracking
+    }
+
+    func setupFinished(_ ok: Bool) {
+        setupTimer?.invalidate(); setupTimer = nil
+        wineBar.value = ok ? 1 : 0
+        wineLabel.stringValue = ok ? "Done ✅" : "Setup failed."
+        DispatchQueue.main.asyncAfter(deadline: .now() + (ok ? 2 : 4)) { [weak self] in
+            self?.wineRow.isHidden = true; self?.applyLayout()
+        }
+    }
     var wineProc: Process?
     var wineOutBuf = ""
 
@@ -2723,6 +2873,10 @@ final class SetupController: NSObject, NSApplicationDelegate {
             removeWine = (osa("button returned of (display dialog \(q.debugDescription) buttons {\"Keep Wine\", \"Move Wine to Trash\"} default button \(def.debugDescription) with icon caution)") == "Move Wine to Trash")
         }
 
+        // Stop Wine before the prefix disappears underneath it (#28), otherwise
+        // the daemon lives on against deleted files and can be inherited by the
+        // next launch.
+        if let w = wineBin() { stopWineForPrefix(w) }
         try? fm.removeItem(atPath: appPrefix)
         for f in ["config.txt", "installed-src.txt", "devmode.txt", "wine-ours.txt"] {
             try? fm.removeItem(atPath: appSupport() + "/" + f)
@@ -2758,8 +2912,15 @@ final class SetupController: NSObject, NSApplicationDelegate {
         // wineboot + a full copy takes ~a minute; off the main thread so the
         // window keeps drawing instead of beachballing.
         DispatchQueue.global().async {
-            let ok = performSetup(src, wine, mode: mode)
+            // performSetup runs off the main thread, so every step report has to
+            // hop back before it touches the UI.
+            let ok = performSetup(src, wine, mode: mode) { from, to, label, expected in
+                DispatchQueue.main.async {
+                    self.setupStep(from: from, to: to, label: label, expected: expected)
+                }
+            }
             DispatchQueue.main.async {
+                self.setupFinished(ok)
                 self.running = wasRunning
                 self.refresh()
                 if ok {

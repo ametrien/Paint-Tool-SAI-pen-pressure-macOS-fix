@@ -128,6 +128,47 @@ struct CoreTests {
     expect(PressureCore.resolveMaxPressure(override: nil, detected: nil, cached: 4095) != 1023,
            "pmax: a known 4096-level tablet never silently drops to 1024 levels")
 
+    // ---- setupCreep: the setup progress bar (issue #28) ---------------------
+    // The bar must always MOVE (a frozen bar reads as a hang, which is the
+    // complaint) but must never ARRIVE on its own (that would claim progress
+    // nobody observed). Both halves are asserted.
+    let cFrom = 0.12, cTo = 0.70, cExp = 60.0
+    expect(PressureCore.setupCreep(from: cFrom, to: cTo, elapsed: 0, expected: cExp) == cFrom,
+           "creep: starts exactly at the step's start")
+    expect(PressureCore.setupCreep(from: cFrom, to: cTo, elapsed: -5, expected: cExp) == cFrom,
+           "creep: negative elapsed (clock skew) cannot pull the bar backwards")
+
+    // Never arrives — not at the estimate, not at 10x the estimate, not ever.
+    expect(PressureCore.setupCreep(from: cFrom, to: cTo, elapsed: cExp, expected: cExp) < cTo,
+           "creep: has NOT reached the end at the expected duration")
+    expect(PressureCore.setupCreep(from: cFrom, to: cTo, elapsed: cExp * 10, expected: cExp) < cTo,
+           "creep: still has not reached the end at 10x overrun (never lies about finishing)")
+    expect(PressureCore.setupCreep(from: cFrom, to: cTo, elapsed: 86_400, expected: cExp) < cTo,
+           "creep: bounded by `to` even after a day")
+
+    // Always moving: strictly increasing across the whole step, including well
+    // past the estimate — a wineboot that takes 3 minutes must not look hung.
+    var creepMonotonic = true, prev = -1.0
+    for t in stride(from: 0.0, through: 300.0, by: 0.5) {
+        let v = PressureCore.setupCreep(from: cFrom, to: cTo, elapsed: t, expected: cExp)
+        if v <= prev { creepMonotonic = false; break }
+        prev = v
+    }
+    expect(creepMonotonic, "creep: strictly increasing for 300s — bar never stalls or jumps back")
+
+    // Visibly underway by the time someone wonders whether it has hung.
+    expect(PressureCore.setupCreep(from: 0, to: 1, elapsed: 5, expected: 60) > 0.10,
+           "creep: >10% within 5s, so it reads as working immediately")
+    let atExpected = PressureCore.setupCreep(from: 0, to: 1, elapsed: 60, expected: 60)
+    expect(atExpected > 0.80 && atExpected < 0.90,
+           "creep: ~86% at the expected duration (1 - e^-2), leaving headroom for overrun")
+
+    // A zero/absurd estimate must not divide by zero or explode (the tau floor).
+    expect(PressureCore.setupCreep(from: 0, to: 1, elapsed: 1, expected: 0).isFinite,
+           "creep: zero expected duration stays finite (tau floor)")
+    expect(PressureCore.setupCreep(from: 0.5, to: 0.5, elapsed: 10, expected: 5) == 0.5,
+           "creep: zero-width step stays put")
+
     if failures > 0 { print("FAILED: \(failures) test(s)"); exit(1) }
         print("All PressureCore tests passed.")
     }
