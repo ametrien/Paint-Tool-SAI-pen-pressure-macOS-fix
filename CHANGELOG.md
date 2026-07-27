@@ -5,6 +5,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
 
 ## [Unreleased]
 
+## [0.1.10] — 2026-07-27
+
+### Added
+- **Two-finger scroll pans the canvas** instead of zooming (#24). Pinch already zoomed, so both
+  gestures did the same thing and the natural way to move around the canvas was missing — on
+  macOS, pinch zooms and two-finger scroll pans. Like pinch, this needs **no new permission**:
+  the DLL rewrites the wheel message from inside SAI's own process and posts the arrow keys SAI
+  binds to *Scroll View*. Tune with `WT_PAN_UNIT` (default 70), disable with `WT_NO_SCROLL_PAN=1`,
+  flip sideways direction with `WT_PAN_INVERT_X=1`.
+
+### Fixed
+- **The macOS arrow no longer sits on top of SAI's brush cursor** (#20). One flag carried two
+  different facts: *the pen is in range* (about the pen) and *the pen is what you're using*
+  (about your hands). Any mouse or trackpad event cleared it, and since proximity events only
+  fire on **transitions**, a pen already resting on the tablet never fired a new one to undo
+  that — so nothing told SAI a pen existed. Clicking Launch with the trackpad was enough to
+  trigger it. The two are now separate, with a one-second mouse-idle grace so SAI can still
+  paint with the mouse, verified in use.
+- **The same conflation in the menu-strip suppression**, which claimed the pen had left range
+  whenever it hovered over SAI's menu row. That is the *"comes back a few seconds into drawing"*
+  half of the same report — passing near the top of the window silently revoked the pen.
+- **The DLL log no longer drowns itself**: the "click dedup: OFF by default" notice was emitted
+  from producer housekeeping on every iteration (2055 spam lines out of 2111 in a field capture).
+
+### Known
+- **SAI's "Discharging of recovery point into file took a fatal error"** (#25) is **not caused by
+  this project**. Reproduced with our DLL entirely out of the process (`WINEDLLOVERRIDES=wintab32=b`),
+  on two SAI builds, two Wine versions, fresh prefixes and reset SAI settings. Workaround:
+  *Others → Options → History and Recovery*. Full investigation recorded in the issue.
+- **The menu-bar pen icon is still missing** (#14).
+
 ## [0.1.9] — 2026-07-27
 
 ### Added
