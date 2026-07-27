@@ -32,6 +32,25 @@ enum PressureCore {
     /// against jitter; both halves of the bridge read the same stored value.
     static var maxPressure = 1023
 
+    /// Which full scale to run at, in precedence order. Pure so the ordering is
+    /// pinned by tests rather than by reading four call sites.
+    ///
+    /// `cached` is the point of this function (issue #27). Detection asks the
+    /// hardware once, at helper startup — and a Bluetooth tablet that has idled
+    /// out answers nothing at that instant, so `detected` is nil for a reason
+    /// that has nothing to do with the tablet's real resolution. Falling
+    /// straight through to 1023 silently cost 4x resolution on a 4096-level pen
+    /// with no warning anywhere. A value the hardware gave us on a previous run
+    /// is a far better guess than the generic default, so remembering the last
+    /// successful answer turns a permanent degradation into, at worst, one
+    /// coarse session on a brand-new install.
+    ///
+    /// An explicit user override still beats everything: they can see the
+    /// result and we cannot.
+    static func resolveMaxPressure(override: Int?, detected: Int?, cached: Int?) -> Int {
+        return override ?? detected ?? cached ?? 1023
+    }
+
     static func clampPressure(_ raw: Int) -> Int { max(0, min(maxPressure, raw)) }
 
     /// PEN FEEL — a response curve applied to the normalised 0…1 pressure
