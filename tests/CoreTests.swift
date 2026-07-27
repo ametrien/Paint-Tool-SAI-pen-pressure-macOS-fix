@@ -23,6 +23,17 @@ struct CoreTests {
         expect(PressureCore.clampPressure(0) == 0,       "clamp: zero stays 0")
         expect(PressureCore.clampPressure(512) == 512,   "clamp: mid passes through")
         expect(PressureCore.clampPressure(1023) == 1023, "clamp: max stays 1023")
+
+        // pen feel: endpoints pinned, middle bends the expected way
+        PressureCore.pressureGamma = 1.0
+        expect(PressureCore.curved(0.5) == 0.5, "curve: linear leaves 0.5 alone")
+        PressureCore.pressureGamma = 0.5
+        expect(PressureCore.curved(0.25) > 0.25, "curve: soft raises a light touch")
+        expect(PressureCore.curved(0.0) == 0.0 && PressureCore.curved(1.0) == 1.0, "curve: soft pins 0 and 1")
+        PressureCore.pressureGamma = 2.0
+        expect(PressureCore.curved(0.5) < 0.5, "curve: firm needs more press")
+        expect(PressureCore.curved(1.0) == 1.0, "curve: firm still reaches full")
+        PressureCore.pressureGamma = 1.0
         expect(PressureCore.clampPressure(4096) == 1023, "clamp: overshoot -> 1023")
 
         // --- mapToVirtual ------------------------------------------------------------
