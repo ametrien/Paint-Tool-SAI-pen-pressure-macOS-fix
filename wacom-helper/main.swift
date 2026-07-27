@@ -364,6 +364,40 @@ func restoreStashedLicenses() {
     }
 }
 
+/// Notice a certificate that is already sitting in the SAI folder the user just
+/// picked, and take it under management. Returns its name if there was one.
+///
+/// Such a file is one they already own, so making them find it again through
+/// "Install…" is asking a question we can answer ourselves. It also closes two
+/// real gaps, because until now setup's `cp -R` was the only thing that moved
+/// it:
+///
+///   - a plain copy lands it wherever it happened to sit in the SOURCE layout,
+///     which may not be where the installed build reads from. SAI's response to
+///     a certificate in the wrong folder is to silently refuse to save — the
+///     same symptom as an invalid licence, with nothing pointing at the cause.
+///   - it never reached the stash, so the next rebuild lost it.
+///
+/// Deliberately does NOT write into the prefix unless SAI is already there:
+/// creating prefix folders before setup has run would leave a half-made prefix
+/// behind if the user stops here. The stash alone is enough — performSetup ends
+/// with restoreStashedLicenses(), which writes every location SAI might read.
+@discardableResult
+func adoptLicenseFromSourceFolder(_ src: String) -> String? {
+    // Look in both places SAI itself uses, since the user's folder mirrors one.
+    let found = [src, "\(src)/settings"]
+        .compactMap { d in slcFiles(in: d).first.map { "\(d)/\($0)" } }
+        .first
+    guard let path = found else { return nil }
+    let name = (path as NSString).lastPathComponent
+    let stash = "\(licenseStashDir())/\(name)"
+    if !FileManager.default.fileExists(atPath: stash) {
+        try? FileManager.default.copyItem(atPath: path, toPath: stash)
+    }
+    if saiInstalledInPrefix() { _ = installLicenseFile(path) }
+    return name
+}
+
 // ---- setup / repair / rebuild ----------------------------------------------
 enum SetupMode {
     case ensure     // install only if nothing usable is there (or the source changed)
@@ -2376,6 +2410,14 @@ final class SetupController: NSObject, NSApplicationDelegate {
     /// nothing but a label (issue #11).
     func adoptSAIFolder(_ path: String) {
         saveSAIPath(path)
+        // If their folder already holds a certificate, say so now rather than
+        // leaving them to hunt for a file they clearly already have.
+        if let lic = adoptLicenseFromSourceFolder(path) {
+            let where_ = installedLicenseName() != nil
+                ? "It's installed in every folder SAI might read it from, and saved so a rebuild can restore it."
+                : "Saved — it will be installed automatically when SAI is set up."
+            alertUser("License detected ✅\n\n\(lic) was already in the folder you picked.\n\n\(where_)")
+        }
         if saiInstalledInPrefix() && prefixIsStale() {
             let c = osa("button returned of (display dialog \"Copy this SAI into the Wine prefix now?\n\nSAI runs from a copy inside \(( prefixSAIDir as NSString).abbreviatingWithTildeInPath). Until it's copied, SAI will keep running the previous version.\" buttons {\"Later\", \"Reinstall now\"} default button \"Reinstall now\" with icon note)")
             if c == "Reinstall now" { doReinstall(mode: .repair) }
