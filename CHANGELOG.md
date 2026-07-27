@@ -5,6 +5,38 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
 
 ## [Unreleased]
 
+## [0.1.11] — 2026-07-27
+
+### Fixed
+- **The pen could not draw at all** (#26) — a regression introduced by 0.1.10's two-finger pan.
+  Clicks were ignored inside parts of the SAI window while hover worked normally, and because a
+  stroke that never starts also has no pressure, it presented as *"pen pressure stopped working"*.
+  It survived reinstalls, so it looked like a broken install; it landed the same evening as a Mac
+  restart, so it looked like a permissions problem. It was neither.
+  Issue #19 had made the click de-dup opt-in with a guard at the **install site**: the message hook
+  simply wasn't installed unless you asked for it, so the hook's existence implied consent and the
+  hook procedure needed no check of its own. Two-finger pan (#24) needed that same hook, and pan is
+  on by default — so the hook began installing for everyone, the install-site guard quietly stopped
+  guarding anything, and `WM_LBUTTONDOWN` was eaten 2 ms after every pen-down again. The log said
+  `dedup=off` the whole time, while the same log recorded it eating clicks.
+  The decision now lives in `wintab_core.h` as `wtc_should_eat_click()`, gated on the resolved flag
+  and covered by native tests — the Win32 version was unreachable from the test suite, which is why
+  this shipped undetected twice. Two-finger pan is unaffected.
+- **Pressure silently ran at a quarter of your tablet's resolution** (#27). The tablet is asked how
+  many levels it has exactly once, at startup — and a Bluetooth tablet that has idled out isn't
+  visible at that moment, so a 4096-level pen quietly ran at 1024 with nothing said anywhere. Both
+  halves of the bridge agreed on the wrong number, so drawing still worked and there was no symptom
+  beyond coarser strokes. The last resolution the hardware actually reported is now remembered
+  across launches, and the tablet is asked once more just before SAI starts — the last moment the
+  answer can still be changed safely. An explicit setting is never second-guessed.
+
+### Internal
+- `CLICK_DEDUP_MS` is shared between the DLL and its tests as `WTC_CLICK_DEDUP_MS`, so the two
+  cannot drift apart on the boundary.
+- The comment at the shared hook's install site claimed each feature *"still decides for itself
+  inside click_hook_proc"*. That half was never written — it is now, along with a warning that a
+  third consumer of that hook needs its own flag rather than widening an existing one.
+
 ## [0.1.10] — 2026-07-27
 
 ### Added
