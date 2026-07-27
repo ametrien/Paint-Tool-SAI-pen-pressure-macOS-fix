@@ -463,6 +463,13 @@ static void win32_wake(void) {
  * so SAI zooms at the cursor instead of the canvas centre, and it is the path
  * already known to work here (two-finger scroll zooms today).
  * Disable: WT_NO_PINCH_ZOOM=1. */
+/* Our injected zoom wheels carry this bit in the low word of wParam, which
+ * normally holds MK_* mouse-button/modifier flags. Bits above MK_XBUTTON2
+ * (0x0040) are unused, so 0x8000 is free and self-describing: the scroll->pan
+ * rewrite below can recognise our own messages without any shared state across
+ * threads (PostMessage is asynchronous, so a flag would race). */
+#define ZOOM_TAG 0x8000
+
 static void post_zoom(int steps) {
     HWND w = g_hwnd ? GetAncestor(g_hwnd, GA_ROOT) : NULL;
     if (!w) return;
@@ -473,7 +480,7 @@ static void post_zoom(int steps) {
     if (n > 8) n = 8;                       /* a violent pinch shouldn't fling the zoom */
     for (int i = 0; i < n; i++) {
         PostMessageW(w, WM_MOUSEWHEEL,
-                     MAKEWPARAM(0, (short)(dir * WHEEL_DELTA)),
+                     MAKEWPARAM(ZOOM_TAG, (short)(dir * WHEEL_DELTA)),
                      MAKELPARAM((short)pt.x, (short)pt.y));
     }
     log_line("pinch: posted %d wheel step(s) at (%ld,%ld)", dir * n, (long)pt.x, (long)pt.y);
@@ -558,9 +565,103 @@ static void check_win32_wake(DWORD now) {
 static HHOOK g_click_hook;
 static unsigned long g_clicks_eaten;
 
+/* ---- TWO-FINGER SCROLL PANS INSTEAD OF ZOOMING (issue #24) ----------------
+ * winemac.drv turns a two-finger scroll into WM_MOUSEWHEEL, and SAI zooms on
+ * the wheel. That is correct Windows behaviour and wrong Mac behaviour: here
+ * pinch zooms (#22), so scroll should pan, as it does in every native app.
+ *
+ * Done inside SAI rather than on the macOS side deliberately. Suppressing the
+ * scroll in our CGEventTap would mean the tap could no longer be listen-only,
+ * which costs the Accessibility permission this project dropped. From in here
+ * we can simply rewrite the message before SAI sees it — no permission at all.
+ *
+ * SAI has no "pan by N pixels" message, but its own shortcut table binds the
+ * arrow keys to Scroll View Up/Down/Left/Right, so we synthesise those.
+ * Disable: WT_NO_SCROLL_PAN=1. */
+/* Movement per emitted arrow press, in raw wheel units.
+ *
+ * A first version divided the incoming delta by WHEEL_DELTA (120) to get whole
+ * notches. That was wrong twice over: integer division DISCARDED everything
+ * below one notch, so a small trackpad gesture moved nothing at all until
+ * enough accumulated and then jumped -- which reads as both "jerky" and "needs
+ * a huge gesture". A Mac trackpad sends many small deltas precisely so that
+ * small movements are possible.
+ *
+ * So accumulate the raw delta instead and emit one arrow press per PAN_UNIT.
+ * Smaller unit = finer and more sensitive; larger = coarser and harder to
+ * trigger by accident. 30 proved TOO sensitive in use -- a palm brushing the
+ * trackpad moved the canvas -- so the default sits well above that. Tune with
+ * WT_PAN_UNIT. */
+#define PAN_UNIT_DEFAULT 70
+static int pan_unit(void) {
+    const char *e = getenv("WT_PAN_UNIT");
+    int v = e ? atoi(e) : 0;
+    return (v >= 5 && v <= 240) ? v : PAN_UNIT_DEFAULT;
+}
+
+/* Leftover delta between messages, so nothing is thrown away and slow gestures
+ * still accumulate into movement.
+ *
+ * The remainder is DISCARDED once scrolling stops, though: otherwise stray
+ * single-unit deltas -- a sleeve, a palm, a hand resting on the trackpad --
+ * quietly add up over minutes and eventually lurch the canvas with no gesture
+ * at all. Carrying a remainder is only meaningful within one continuous
+ * gesture. */
+#define PAN_GESTURE_GAP_MS 250
+static int   g_pan_accum_x, g_pan_accum_y;
+static DWORD g_pan_last_tick;
+
+static void post_pan_keys(HWND w, int vk, int n) {
+    if (n > 6) n = 6;                                  /* cap a flung scroll */
+    for (int i = 0; i < n; i++) {
+        PostMessageW(w, WM_KEYDOWN, vk, 1);
+        PostMessageW(w, WM_KEYUP,   vk, 1 | (1u << 30) | (1u << 31));
+    }
+}
+
+/* raw wheel delta in, arrow presses out. dy > 0 scrolls the view up, matching
+ * the wheel's own sign convention. */
+static void post_pan(HWND w, int rawX, int rawY) {
+    const int unit = pan_unit();
+    DWORD now = GetTickCount();
+    if (now - g_pan_last_tick > PAN_GESTURE_GAP_MS) {   /* new gesture: start clean */
+        g_pan_accum_x = g_pan_accum_y = 0;
+    }
+    g_pan_last_tick = now;
+    g_pan_accum_y += rawY;
+    g_pan_accum_x += rawX;
+    int stepsY = g_pan_accum_y / unit;
+    int stepsX = g_pan_accum_x / unit;
+    g_pan_accum_y -= stepsY * unit;                    /* keep the remainder */
+    g_pan_accum_x -= stepsX * unit;
+    if (stepsY) post_pan_keys(w, stepsY > 0 ? VK_UP   : VK_DOWN,  stepsY > 0 ? stepsY : -stepsY);
+    /* Horizontal is inverted relative to vertical: WM_MOUSEHWHEEL counts
+     * positive to the RIGHT, while WM_MOUSEWHEEL counts positive AWAY from the
+     * user. Mapping both the same way made sideways panning mirror the
+     * trackpad. Flip with WT_PAN_INVERT_X=1 if a device disagrees. */
+    if (stepsX) {
+        int leftFirst = getenv("WT_PAN_INVERT_X") ? 1 : 0;
+        int vk = (stepsX > 0) == (leftFirst != 0) ? VK_LEFT : VK_RIGHT;
+        post_pan_keys(w, vk, stepsX > 0 ? stepsX : -stepsX);
+    }
+}
+
 static LRESULT CALLBACK click_hook_proc(int code, WPARAM wp, LPARAM lp) {
     MSG *m = (MSG *)lp;
     (void)wp;
+    /* scroll -> pan, unless this is one of OUR pinch-zoom wheels */
+    if (code >= 0 && m && g_hwnd && !getenv("WT_NO_SCROLL_PAN") &&
+        (m->message == WM_MOUSEWHEEL || m->message == WM_MOUSEHWHEEL) &&
+        !(LOWORD(m->wParam) & ZOOM_TAG)) {
+        int raw = (short)HIWORD(m->wParam);          /* keep sub-notch precision */
+        HWND root = GetAncestor(g_hwnd, GA_ROOT);
+        if (raw != 0 && root) {
+            if (m->message == WM_MOUSEWHEEL) post_pan(root, 0, raw);
+            else                             post_pan(root, raw, 0);
+        }
+        m->message = WM_NULL; m->wParam = 0; m->lParam = 0;   /* SAI must not also zoom */
+        return CallNextHookEx(g_click_hook, code, wp, lp);
+    }
     if (code >= 0 && m && g_hwnd &&
         (m->message == WM_LBUTTONDOWN || m->message == WM_LBUTTONUP ||
          m->message == WM_LBUTTONDBLCLK)) {
@@ -589,15 +690,21 @@ static LRESULT CALLBACK click_hook_proc(int code, WPARAM wp, LPARAM lp) {
 /* install once SAI's window exists (cheap; called from producer housekeeping) */
 static void ensure_click_dedup(void) {
     if (g_click_hook || !g_hwnd) return;
-    if (getenv("WT_NO_CLICK_DEDUP")) return;   /* explicit off, kept for compat */
-    if (!getenv("WT_CLICK_DEDUP")) {           /* OPT-IN now — see issue #19 */
-        /* Log ONCE. This is called from producer housekeeping on every
-         * iteration, so an unguarded line here drowned the log: a field capture
-         * came back 2055 spam lines out of 2111, hiding the packet flow that
-         * the log exists to show. */
+    /* The hook now serves TWO features, so it is installed if EITHER wants it:
+     * the click de-dup (opt-in since #19) and scroll->pan (#24, on by default).
+     * Each still decides for itself inside click_hook_proc. */
+    int want_dedup = getenv("WT_CLICK_DEDUP") && !getenv("WT_NO_CLICK_DEDUP");
+    int want_pan   = !getenv("WT_NO_SCROLL_PAN");
+    if (!want_dedup && !want_pan) return;
+    {   /* Log ONCE: this runs from producer housekeeping on every iteration, and
+         * an unguarded line here drowned the log — a field capture came back
+         * 2055 spam lines out of 2111, hiding the packet flow it exists to show. */
         static int said;
-        if (!said) { said = 1; log_line("click dedup: OFF by default (set WT_CLICK_DEDUP=1 to enable)"); }
-        return;
+        if (!said) {
+            said = 1;
+            log_line("msg hook: dedup=%s scroll-pan=%s", want_dedup ? "on" : "off",
+                     want_pan ? "on" : "off");
+        }
     }
     HWND root = GetAncestor(g_hwnd, GA_ROOT);
     DWORD tid = GetWindowThreadProcessId(root ? root : g_hwnd, NULL);
