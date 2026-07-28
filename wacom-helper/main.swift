@@ -140,7 +140,7 @@ func timelapseUsage(_ dir: String) -> (total: Int64, canvases: [TLCanvasUsage]) 
     for n in names where n.hasSuffix(".frame") {
         let path = "\(dir)/\(n)"
         let sz = (try? fm.attributesOfItem(atPath: path)[.size] as? Int64) ?? 0
-        total += sz ?? 0
+        total += sz
         // Read only the header, never the pixels: a folder of 2000 frames is
         // gigabytes, and this runs every time the tab refreshes.
         guard let fh = FileHandle(forReadingAtPath: path),
@@ -148,7 +148,7 @@ func timelapseUsage(_ dir: String) -> (total: Int64, canvases: [TLCanvasUsage]) 
         try? fh.close()
         let id = head.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: 40, as: UInt64.self) }
         frames[id, default: 0] += 1
-        bytes[id, default: 0] += sz ?? 0
+        bytes[id, default: 0] += sz
         if labels[id] == nil {
             let raw = head.subdata(in: 48..<112).prefix(while: { $0 != 0 })
             labels[id] = String(decoding: raw, as: UTF8.self)
