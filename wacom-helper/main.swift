@@ -2218,7 +2218,6 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         // all of them to reach any one.
         tabView = NSTabView()
         tabView.translatesAutoresizingMaskIntoConstraints = false
-        tabView.delegate = self
         for (label, view) in [("Setup", content!),
                               ("Recording", recordingTab!),
                               ("Developer", devSection!)] {
@@ -2232,6 +2231,10 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
                           styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "SAI Pen Pressure"
         window.contentView = tabView
+        // Delegate assigned only now: addTabViewItem() above selects a tab
+        // synchronously, and reacting to that before the window exists is what
+        // crashed on launch.
+        tabView.delegate = self
         window.isReleasedWhenClosed = false
         applyLayout()               // sizes the window to whichever tier is showing
         window.center()
@@ -2357,6 +2360,11 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     /// Simple mode hides any requirement that's already satisfied — a finished
     /// setup collapses to a title, one status line and the Launch button.
     func applyLayout() {
+        // addTabViewItem() selects the first tab immediately, which fires
+        // tabView(_:didSelect:) -> applyLayout() while buildWindow() is still
+        // running and `window` is nil. Force-unwrapping it there crashed the app
+        // on launch. Cheap guard, and it also covers any future early caller.
+        guard window != nil else { return }
         for (i, r) in reqs.enumerated() {
             let ok = r.ok()
             rowViews[i].isHidden = advanced ? false : ok
