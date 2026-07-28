@@ -84,6 +84,34 @@ useful because Ver.2 is a rolling preview.
 - **Update SAI in place** when a new build lands, keeping your licence, brushes and preferences
 - Reset, reinstall or uninstall from the same window; logs and a health check when something is odd
 
+## Why not just run a virtual machine?
+
+That is what most people do, and it works. It is also heavy for what you get.
+
+| | Virtual machine | This project |
+|---|---|---|
+| **Cost** | a Windows licence, plus the VM app if it is a paid one | **free, and open source** |
+| Disk | tens of gigabytes | ~300 MB for Wine, plus SAI itself |
+| Memory | a whole second OS running alongside macOS | a translation layer, only while SAI is open |
+| Your tablet | forwarded over virtual USB into the guest | stays on macOS, using the driver you already have |
+| Pen pressure | depends on USB passthrough and the guest's driver | read natively on macOS and handed to SAI |
+| Starting SAI | boot the VM, wait, then launch SAI | double-click |
+| Timelapse | screen-record the window, panels and cursor and all | **built in** — records the canvas itself |
+
+The tablet row is the one that decides it: in a VM your pen has to survive being forwarded through
+virtual USB and picked up again by a Windows driver inside the guest, which is exactly where
+pressure gets lost or arrives late. Latency you would never notice in a spreadsheet is intolerable
+in a brush stroke.
+
+SAI itself is commercial software either way — you need a licence from SYSTEMAX to *save*, whichever
+route you take. What this saves you is the Windows licence and the machine around it.
+
+→ **[The longer version](https://ametrien.github.io/Paint-Tool-SAI-pen-pressure-macOS-fix/#why-not-just-run-a-virtual-machine)**, including the honest
+trade-off: a VM runs real Windows, so when something misbehaves there it is SAI's fault rather than
+the translation layer's.
+
+---
+
 ## Get started
 
 1. **[Download the latest release](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/releases/latest)** and drag the app to Applications.
