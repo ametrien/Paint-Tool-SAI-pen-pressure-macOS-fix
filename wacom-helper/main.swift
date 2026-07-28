@@ -667,6 +667,71 @@ func performSetup(_ saiSrc: String, _ wine: String, mode: SetupMode = .ensure, q
     return saiInstalledInPrefix()
 }
 
+/// What in the prefix's SAI folder belongs to the USER rather than to the
+/// program. A SAI update replaces the program; touching these would throw away
+/// exactly the things nobody wants to set up twice.
+///
+///   sai2.ini    window layout, tool options, preferences
+///   settings/   brushes, palettes, presets
+///   history.txt recent files
+///
+/// Licences (*.slc) are handled separately by the existing stash, because they
+/// can also live outside this folder.
+let saiUserFiles = ["sai2.ini", "settings", "history.txt"]
+
+/// Swap in a newer SAI without redoing the whole install.
+///
+/// SAI Ver.2 is a rolling preview and gets updated often, so "replace the
+/// program, keep everything of mine" is the common case. A full Reinstall would
+/// do it, but it also reboots the Wine prefix and clears the SAI folder, which
+/// costs a minute and loses brushes and preferences for no reason. This copies
+/// the new build over the old one and puts the user's files back.
+///
+/// Returns nil on success, or a message describing what stopped it.
+func updateSAIFromFolder(_ newSrc: String) -> String? {
+    let fm = FileManager.default
+    guard fm.fileExists(atPath: "\(newSrc)/sai2.exe") else {
+        return "That folder doesn't contain sai2.exe.\n\n\(newSrc)\n\nPick the folder that DIRECTLY contains sai2.exe."
+    }
+    guard fm.fileExists(atPath: prefixSAIDir) else {
+        return "SAI isn't installed in the Wine prefix yet — use Reinstall / Repair first."
+    }
+
+    // Stash the user's files somewhere the copy cannot reach.
+    let stash = NSTemporaryDirectory() + "sai-update-stash-\(UUID().uuidString)"
+    try? fm.createDirectory(atPath: stash, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(atPath: stash) }
+
+    var saved: [String] = []
+    for name in saiUserFiles where fm.fileExists(atPath: "\(prefixSAIDir)/\(name)") {
+        if (try? fm.copyItem(atPath: "\(prefixSAIDir)/\(name)", toPath: "\(stash)/\(name)")) != nil {
+            saved.append(name)
+        }
+    }
+    // Licences go through the existing stash, which also covers copies kept
+    // outside this folder.
+    for f in slcFiles(in: prefixSAIDir) { _ = installLicenseFile("\(prefixSAIDir)/\(f)") }
+
+    // Clear and re-copy, so files removed in the new build do not linger. This
+    // is why the user's files had to be stashed rather than merely copied over.
+    try? fm.removeItem(atPath: prefixSAIDir)
+    try? fm.createDirectory(atPath: prefixSAIDir, withIntermediateDirectories: true)
+    runProc("/bin/cp", ["-R", "\(newSrc)/.", prefixSAIDir])
+    guard saiInstalledInPrefix() else {
+        return "Copying the new SAI into the Wine prefix failed. Check free disk space and that the folder is readable."
+    }
+
+    // Put the user's files back, overwriting anything the new build shipped
+    // under the same name — their settings win over the defaults.
+    for name in saved {
+        try? fm.removeItem(atPath: "\(prefixSAIDir)/\(name)")
+        try? fm.copyItem(atPath: "\(stash)/\(name)", toPath: "\(prefixSAIDir)/\(name)")
+    }
+    restoreStashedLicenses()
+    setInstalledSrcPath(newSrc)
+    return nil
+}
+
 /// Back-compat entry point used by the launch path.
 func ensureSetup(_ saiSrc: String, _ wine: String) -> Bool {
     performSetup(saiSrc, wine, mode: .ensure)
@@ -685,6 +750,22 @@ func applyWineShortcutRemap(_ wine: String) {
                        "/v", key, "/t", "REG_SZ", "/d", "Y", "/f"], env: env)
     }
 }
+/// Self-test entry point for the SAI update, used by tests/run-tests.sh.
+///
+/// This is the only code in the app that deletes a user's SAI folder and puts
+/// it back, so it is worth a real test rather than a careful reading. The test
+/// points SAI_PREFIX at a throwaway prefix, runs the update, and checks what
+/// survived. Guarded by an environment variable, so it is inert in normal use.
+///
+/// Placement matters: top-level `let`s in main.swift initialise in file order,
+/// and an earlier version of this hook read prefixSAIDir before it existed and
+/// silently reported "SAI isn't installed".
+if let src = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_UPDATE"] {
+    let result = updateSAIFromFolder(src)
+    print(result ?? "OK")
+    exit(result == nil ? 0 : 1)
+}
+
 var g_wine = ""   // resolved during setup; used to launch SAI after the tap is granted
 
 // SETUP ONLY (runs before the pressure tap): resolve Wine, pick the SAI folder,
@@ -2417,9 +2498,23 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         // with Launch and Wake — not on Pen, which is about how the pen behaves.
         // Inserted after the secondary action row rather than appended, which
         // would strand them below the footers and the version line.
+        // SAI Ver.2 is a rolling preview, so swapping in a new build is a
+        // routine thing rather than a repair. Given its own action so nobody
+        // has to reach for Reinstall and lose their brushes.
+        let updateRow = NSStackView(); updateRow.orientation = .horizontal
+        updateRow.alignment = .centerY; updateRow.spacing = 8
+        let updateBtn2 = NSButton(title: "Update SAI…", target: self, action: #selector(updateSAITapped))
+        updateBtn2.bezelStyle = .rounded; updateBtn2.controlSize = .small
+        updateRow.addArrangedSubview(updateBtn2)
+        updateRow.addArrangedSubview(
+            lbl("point at a newer SAI folder · keeps your licence, brushes and preferences",
+                10, color: .tertiaryLabelColor))
+
         if let after = content.arrangedSubviews.firstIndex(of: secondaryRow) {
-            content.insertArrangedSubview(scratchRow, at: after + 1)
+            content.insertArrangedSubview(updateRow, at: after + 1)
+            content.insertArrangedSubview(scratchRow, at: after + 2)
         } else {
+            content.addArrangedSubview(updateRow)
             content.addArrangedSubview(scratchRow)
         }
 
@@ -2458,6 +2553,11 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         // crashed on launch.
         tabView.delegate = self
         window.isReleasedWhenClosed = false
+        if let src = ProcessInfo.processInfo.environment["SAIPP_TEST_UPDATE"] {
+            let r = updateSAIFromFolder(src)
+            try? (r ?? "OK").write(toFile: "/tmp/updresult.txt", atomically: true, encoding: .utf8)
+            exit(0)
+        }
         applyLayout()               // sizes the window to whichever tier is showing
         window.center()
         window.makeKeyAndOrderFront(nil)
@@ -2626,6 +2726,29 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     }
 
     @objc func autoWakeCheckToggled() { autoWake = (autoWakeCheck.state == .on) }
+
+    @objc func updateSAITapped() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true; panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Update"
+        panel.message = "Choose the folder containing the newer sai2.exe"
+        if let cur = installedSrcPath() {
+            panel.directoryURL = URL(fileURLWithPath: (cur as NSString).deletingLastPathComponent)
+        }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        if saiWindowIsOpen() {
+            alertUser("Quit SAI first — its files are in use while it is running.")
+            return
+        }
+        if let problem = updateSAIFromFolder(url.path) {
+            alertUser(problem)
+        } else {
+            alertUser("SAI updated.\n\nYour licence, brushes and preferences were kept.")
+        }
+        refresh(); applyLayout()
+    }
 
     @objc func clearSettingsScratch() { settingsScratch?.clear() }
 
