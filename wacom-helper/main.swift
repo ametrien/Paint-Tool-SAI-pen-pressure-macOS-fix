@@ -19,6 +19,7 @@
 import AppKit
 import CoreGraphics
 import Foundation
+import AVKit
 import IOKit.hid       // IOHIDCheckAccess/RequestAccess — live Input-Monitoring status
 
 // --version: print the build's version and exit (useful in bug reports).
@@ -1424,10 +1425,17 @@ final class PenScratchView: NSView {
     }
 
     override func draw(_ r: NSRect) {
+        let frame = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
+                                 xRadius: 6, yRadius: 6)
         NSColor.textBackgroundColor.setFill(); r.fill()
         NSColor.separatorColor.setStroke()
-        NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
-                     xRadius: 6, yRadius: 6).stroke()
+        frame.stroke()
+        // Ink must stay inside the box. A drag continues to deliver points once
+        // the pointer leaves the view, which is correct for tracking but must
+        // not paint over the rest of the window.
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        frame.setClip()
 
         if strokes.isEmpty && current.isEmpty {
             let a: [NSAttributedString.Key: Any] = [
@@ -1442,10 +1450,18 @@ final class PenScratchView: NSView {
 
         var all = strokes
         if current.count > 1 { all.append(Stroke(pts: current, finished: nil)) }
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         for stroke in all {
-            NSColor.labelColor.withAlphaComponent(alpha(stroke)).setStroke()
-            // One path per SEGMENT: the width changes along the stroke, and a
-            // single path can only carry one line width.
+            // A stroke is drawn as many round-capped segments, because its width
+            // varies along its length and one path carries only one line width.
+            // Fading them individually made every overlap blend twice, so the
+            // line dissolved into a string of beads. A transparency layer
+            // composites the whole stroke once, at one alpha, so it fades as a
+            // single line.
+            ctx.saveGState()
+            ctx.setAlpha(alpha(stroke))
+            ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+            NSColor.labelColor.setStroke()
             for i in 1..<stroke.pts.count {
                 let seg = NSBezierPath()
                 seg.move(to: stroke.pts[i - 1].p)
@@ -1454,6 +1470,8 @@ final class PenScratchView: NSView {
                 seg.lineCapStyle = .round
                 seg.stroke()
             }
+            ctx.endTransparencyLayer()
+            ctx.restoreGState()
         }
     }
 }
@@ -1581,6 +1599,8 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     var settingsTab: NSStackView!
     var settingsScratch: PenScratchView!
     var recUsageLabel: NSTextField!
+    var recPreview: AVPlayerView!
+    var recPreviewLabel: NSTextField!
     var devCheck: NSButton!
     var console: NSTextView!
     var consoleScroll: NSScrollView!
@@ -2348,7 +2368,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         // immediate, which is the only way to judge "does this feel right".
         settingsScratch = PenScratchView()
         settingsScratch.translatesAutoresizingMaskIntoConstraints = false
-        settingsScratch.heightAnchor.constraint(equalToConstant: 150).isActive = true
+        settingsScratch.heightAnchor.constraint(equalToConstant: 120).isActive = true
         settingsScratch.widthAnchor.constraint(equalToConstant: CGFloat(rowWidth)).isActive = true
         settingsTab.addArrangedSubview(settingsScratch)
         // No Clear button: strokes fade on their own, so the pad is always ready.
@@ -2396,6 +2416,15 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
                               ("Pen", settingsTab!),
                               ("Recording", recordingTab!),
                               ("Developer", devSection!)] {
+            // NSTabViewItem positions its view with the autoresizing mask, not
+            // constraints. Leaving translatesAutoresizingMaskIntoConstraints
+            // false gave every tab a zero-sized stack: the controls were all
+            // there and unhidden, but laid out at (0,0,0,0). The only thing
+            // that showed was the scratch pad, which has explicit size
+            // constraints — and with a zero-bounds parent, nothing clipped it,
+            // so it drew over the whole window.
+            view.translatesAutoresizingMaskIntoConstraints = true
+            view.autoresizingMask = [.width, .height]
             let item = NSTabViewItem(identifier: label)
             item.label = label
             item.view = view
@@ -2481,6 +2510,19 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         btnRow.addArrangedSubview(showBtn)
         recordingTab.addArrangedSubview(btnRow)
 
+        // Preview. Watching the result is how you find out the length or speed
+        // is wrong, and sending people to Finder to check made that a chore.
+        recPreviewLabel = lbl("", 11, color: .secondaryLabelColor)
+        recordingTab.addArrangedSubview(recPreviewLabel)
+        recPreview = AVPlayerView()
+        recPreview.translatesAutoresizingMaskIntoConstraints = false
+        recPreview.controlsStyle = .inline
+        recPreview.videoGravity = .resizeAspect
+        recPreview.heightAnchor.constraint(equalToConstant: 220).isActive = true
+        recPreview.widthAnchor.constraint(equalToConstant: CGFloat(rowWidth)).isActive = true
+        recPreview.isHidden = true
+        recordingTab.addArrangedSubview(recPreview)
+
         recordingTab.addArrangedSubview(
             lbl("Several canvases open at once are recorded separately — you get one video each.",
                 11, color: .tertiaryLabelColor))
@@ -2488,6 +2530,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
             lbl("Undo is captured at your next stroke rather than the moment you press it.",
                 11, color: .tertiaryLabelColor))
         refreshRecordingTab()
+        restorePreview()
     }
 
     func refreshRecordingTab() {
@@ -2516,6 +2559,28 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
             recUsageLabel.stringValue = lines.joined(separator: "\n")
         }
         recFolderLabel?.stringValue = prettyPath(timelapseOutputFolder())
+    }
+
+    /// Show a finished video in the Recording tab. The path is remembered so
+    /// the preview survives a relaunch — otherwise the tab looks empty right
+    /// after the app restarts, as though nothing had ever been made.
+    func showPreview(_ path: String) {
+        guard recPreview != nil else { return }
+        guard FileManager.default.fileExists(atPath: path) else {
+            recPreview.isHidden = true; recPreviewLabel.stringValue = ""; return
+        }
+        try? path.write(toFile: appSupport() + "/timelapse-last.txt",
+                        atomically: true, encoding: .utf8)
+        recPreview.player = AVPlayer(url: URL(fileURLWithPath: path))
+        recPreview.isHidden = false
+        recPreviewLabel.stringValue = "Last video: \(prettyPath(path))"
+        applyLayout()
+    }
+
+    func restorePreview() {
+        guard let p = try? String(contentsOfFile: appSupport() + "/timelapse-last.txt",
+                                  encoding: .utf8) else { return }
+        showPreview(p.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     @objc func clearSettingsScratch() { settingsScratch?.clear() }
@@ -3441,7 +3506,8 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
 
             DispatchQueue.main.async {
                 if p.terminationStatus == 0, FileManager.default.fileExists(atPath: out) {
-                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: out)])
+                    self.showPreview(out)
+                    self.refreshRecordingTab()
                 } else {
                     alertUser("Could not build the video from \(n) frame(s).\n\n\(log)")
                 }
