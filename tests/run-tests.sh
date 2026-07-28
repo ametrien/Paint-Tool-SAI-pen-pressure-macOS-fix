@@ -14,6 +14,15 @@ cc -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all 
 "$WORK/test_wintab_core"
 
 echo ""
+echo "== C core (timelapse_core.h) — under AddressSanitizer + UBSanitizer =="
+# The tile walk runs inside SAI's own process, where an out-of-bounds read is a
+# crash that costs the artist unsaved work. Sanitizers here are the substitute
+# for that being unrecoverable in production.
+cc -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all \
+   -o "$WORK/test_timelapse_core" "$REPO/tests/test_timelapse_core.c"
+"$WORK/test_timelapse_core"
+
+echo ""
 echo "== Swift core (PressureCore.swift) =="
 swiftc -o "$WORK/core-tests" "$REPO/wacom-helper/PressureCore.swift" "$REPO/tests/CoreTests.swift"
 "$WORK/core-tests"
