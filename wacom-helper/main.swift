@@ -78,13 +78,50 @@ let appPrefix: String = {
     return NSString(string: "~/SAI2-pressure").expandingTildeInPath
 }()
 
-/// Is timelapse recording switched on in the menu?
+/// Path whose EXISTENCE means recording is switched OFF.
+///
+/// Inverted on purpose: recording is on by default, so the common case leaves no
+/// file behind and a fresh install records without anyone finding a setting.
+/// dev mode uses the opposite polarity because its default is the opposite.
+func timelapseOffMarker() -> String { appSupport() + "/timelapse-off.txt" }
+
+/// Is timelapse recording switched on?
 ///
 /// A free function reading the flag file directly, because launchSAIApp() is
 /// top-level while the toggle lives on the app delegate. The file IS the source
 /// of truth (same pattern as devmode.txt), so there is nothing to keep in sync.
 func timelapseRecordingEnabled() -> Bool {
-    FileManager.default.fileExists(atPath: appSupport() + "/timelapse.txt")
+    !FileManager.default.fileExists(atPath: timelapseOffMarker())
+}
+
+/// Where finished videos are written. Defaults to ~/Movies; the Recording tab
+/// can point it anywhere.
+func timelapseOutputFolder() -> String {
+    if let s = try? String(contentsOfFile: appSupport() + "/timelapse-folder.txt", encoding: .utf8),
+       case let t = s.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty,
+       FileManager.default.fileExists(atPath: t) {
+        return t
+    }
+    return NSString(string: "~/Movies").expandingTildeInPath
+}
+
+/// Index into the Recording tab's length popup: 30s, 1m, 2m, everything.
+func storedTimelapseLengthIndex() -> Int {
+    guard let s = try? String(contentsOfFile: appSupport() + "/timelapse-length.txt", encoding: .utf8),
+          let i = Int(s.trimmingCharacters(in: .whitespacesAndNewlines)), (0...3).contains(i)
+    else { return 1 }
+    return i
+}
+
+/// Seconds for the chosen length, or 0 meaning "keep every frame".
+func timelapseMaxSeconds() -> Int {
+    [30, 60, 120, 0][storedTimelapseLengthIndex()]
+}
+
+/// Shorten a path for display: the home directory becomes ~.
+func prettyPath(_ p: String) -> String {
+    let h = NSHomeDirectory()
+    return p.hasPrefix(h) ? "~" + p.dropFirst(h.count) : p
 }
 
 func appSupport() -> String {
@@ -1308,7 +1345,7 @@ final class GammaCurveView: NSView {
 }
 
 // ---- App mode: a small setup wizard (AppKit) -------------------------------
-final class SetupController: NSObject, NSApplicationDelegate {
+final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate {
     struct Req {
         let title, detail, fixTitle: String
         let ok: () -> Bool; let fix: () -> Void; let required: Bool
@@ -1375,6 +1412,17 @@ final class SetupController: NSObject, NSApplicationDelegate {
     var autoRunning = false
     var secondaryRow: NSStackView!
     var devSection: NSStackView!
+    // Tabs, added because the single column had grown past a screen: setup,
+    // recording and the developer tools have nothing to do with each other, and
+    // stacking them meant scrolling past all three to reach any one of them.
+    var tabView: NSTabView!
+    var recordingTab: NSStackView!
+    var recFramesLabel: NSTextField!
+    var recCheck: NSButton!
+    var recMakeBtn: NSButton!
+    var recDiscardBtn: NSButton!
+    var recLengthPopup: NSPopUpButton!
+    var recFolderLabel: NSTextField!
     var devCheck: NSButton!
     var console: NSTextView!
     var consoleScroll: NSScrollView!
@@ -2143,7 +2191,8 @@ final class SetupController: NSObject, NSApplicationDelegate {
         console.autoresizingMask = [.width]
         consoleScroll.documentView = console
         devSection.addArrangedSubview(consoleScroll)
-        content.addArrangedSubview(devSection)
+        // Deliberately NOT added to `content` any more — it lives in its own tab.
+        devSection.edgeInsets = NSEdgeInsets(top: 18, left: 24, bottom: 18, right: 24)
 
         // --- version + update check ------------------------------------------
         let verRow = NSStackView(); verRow.orientation = .horizontal; verRow.alignment = .centerY; verRow.spacing = 8
@@ -2162,14 +2211,136 @@ final class SetupController: NSObject, NSApplicationDelegate {
         verRow.addArrangedSubview(updateBtn)
         content.addArrangedSubview(verRow)
 
+        buildRecordingTab()
+
+        // Three tabs rather than one column. Setup, recording and developer
+        // tools are unrelated concerns, and stacking them meant scrolling past
+        // all of them to reach any one.
+        tabView = NSTabView()
+        tabView.translatesAutoresizingMaskIntoConstraints = false
+        tabView.delegate = self
+        for (label, view) in [("Setup", content!),
+                              ("Recording", recordingTab!),
+                              ("Developer", devSection!)] {
+            let item = NSTabViewItem(identifier: label)
+            item.label = label
+            item.view = view
+            tabView.addTabViewItem(item)
+        }
+
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: rowWidth + 48, height: 400),
                           styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "SAI Pen Pressure"
-        window.contentView = content
+        window.contentView = tabView
         window.isReleasedWhenClosed = false
         applyLayout()               // sizes the window to whichever tier is showing
         window.center()
         window.makeKeyAndOrderFront(nil)
+    }
+
+    /// The Recording tab. Everything about the timelapse lives here so the Setup
+    /// tab stays about getting SAI running.
+    func buildRecordingTab() {
+        recordingTab = NSStackView()
+        recordingTab.orientation = .vertical
+        recordingTab.alignment = .leading
+        recordingTab.spacing = 10
+        recordingTab.edgeInsets = NSEdgeInsets(top: 18, left: 24, bottom: 18, right: 24)
+
+        recordingTab.addArrangedSubview(lbl("Canvas timelapse", 18, bold: true))
+        recordingTab.addArrangedSubview(
+            lbl("Captures the canvas itself, not the screen — no panels, no zooming, no cursor.",
+                12, color: .secondaryLabelColor))
+
+        recCheck = NSButton(checkboxWithTitle: "Record a timelapse while I draw",
+                            target: self, action: #selector(recToggle))
+        recordingTab.addArrangedSubview(recCheck)
+        recordingTab.addArrangedSubview(
+            lbl("Takes effect the next time SAI launches.", 11, color: .tertiaryLabelColor))
+
+        recFramesLabel = lbl("", 12)
+        recordingTab.addArrangedSubview(recFramesLabel)
+
+        let lenRow = NSStackView(); lenRow.orientation = .horizontal
+        lenRow.alignment = .centerY; lenRow.spacing = 8
+        lenRow.addArrangedSubview(lbl("Video length", 12, bold: true))
+        recLengthPopup = NSPopUpButton()
+        recLengthPopup.addItems(withTitles: ["30 seconds", "1 minute", "2 minutes", "Everything"])
+        recLengthPopup.selectItem(at: storedTimelapseLengthIndex())
+        recLengthPopup.target = self; recLengthPopup.action = #selector(recLengthChanged)
+        lenRow.addArrangedSubview(recLengthPopup)
+        lenRow.addArrangedSubview(
+            lbl("frames are dropped evenly to hit the target", 11, color: .tertiaryLabelColor))
+        recordingTab.addArrangedSubview(lenRow)
+
+        let folderRow = NSStackView(); folderRow.orientation = .horizontal
+        folderRow.alignment = .centerY; folderRow.spacing = 8
+        folderRow.addArrangedSubview(lbl("Save to", 12, bold: true))
+        recFolderLabel = lbl(prettyPath(timelapseOutputFolder()), 11, color: .secondaryLabelColor)
+        recFolderLabel.lineBreakMode = .byTruncatingMiddle
+        folderRow.addArrangedSubview(recFolderLabel)
+        let chooseBtn = NSButton(title: "Choose…", target: self, action: #selector(chooseTimelapseFolder))
+        chooseBtn.bezelStyle = .rounded; chooseBtn.controlSize = .small
+        folderRow.addArrangedSubview(chooseBtn)
+        recordingTab.addArrangedSubview(folderRow)
+
+        let btnRow = NSStackView(); btnRow.orientation = .horizontal; btnRow.spacing = 8
+        recMakeBtn = NSButton(title: "Make video…", target: self, action: #selector(makeTimelapseVideo))
+        recMakeBtn.bezelStyle = .rounded
+        recMakeBtn.keyEquivalent = "\r"
+        recDiscardBtn = NSButton(title: "Discard recording", target: self,
+                                 action: #selector(discardTimelapseFrames))
+        recDiscardBtn.bezelStyle = .rounded
+        let showBtn = NSButton(title: "Show frames", target: self, action: #selector(revealTimelapseFrames))
+        showBtn.bezelStyle = .rounded
+        btnRow.addArrangedSubview(recMakeBtn)
+        btnRow.addArrangedSubview(recDiscardBtn)
+        btnRow.addArrangedSubview(showBtn)
+        recordingTab.addArrangedSubview(btnRow)
+
+        recordingTab.addArrangedSubview(
+            lbl("Several canvases open at once are recorded separately — you get one video each.",
+                11, color: .tertiaryLabelColor))
+        recordingTab.addArrangedSubview(
+            lbl("Undo is captured at your next stroke rather than the moment you press it.",
+                11, color: .tertiaryLabelColor))
+        refreshRecordingTab()
+    }
+
+    func refreshRecordingTab() {
+        guard recCheck != nil else { return }
+        recCheck.state = timelapseOn ? .on : .off
+        let n = timelapseFrameCount()
+        recFramesLabel.stringValue = n == 0
+            ? (timelapseOn ? "Nothing recorded yet — launch SAI and draw."
+                           : "Recording is off.")
+            : "\(n) frame\(n == 1 ? "" : "s") recorded."
+        recMakeBtn.isEnabled = n > 0
+        recDiscardBtn.isEnabled = n > 0
+        recFolderLabel?.stringValue = prettyPath(timelapseOutputFolder())
+    }
+
+    @objc func recToggle() { timelapseOn = (recCheck.state == .on); refreshRecordingTab() }
+
+    @objc func recLengthChanged() {
+        try? String(recLengthPopup.indexOfSelectedItem)
+            .write(toFile: appSupport() + "/timelapse-length.txt", atomically: true, encoding: .utf8)
+    }
+
+    @objc func chooseTimelapseFolder() {
+        let p = NSOpenPanel()
+        p.canChooseDirectories = true; p.canChooseFiles = false; p.allowsMultipleSelection = false
+        p.prompt = "Choose"
+        p.directoryURL = URL(fileURLWithPath: timelapseOutputFolder())
+        guard p.runModal() == .OK, let url = p.url else { return }
+        try? url.path.write(toFile: appSupport() + "/timelapse-folder.txt",
+                            atomically: true, encoding: .utf8)
+        refreshRecordingTab()
+    }
+
+    func tabView(_ tabView: NSTabView, didSelect item: NSTabViewItem?) {
+        refreshRecordingTab()
+        applyLayout()
     }
 
     @objc func toggleAdvanced() {
@@ -2208,14 +2379,17 @@ final class SetupController: NSObject, NSApplicationDelegate {
         }
         footerLabels.forEach { $0.isHidden = !advanced }
         settingsOnlyViews.forEach { $0.isHidden = !advanced }
-        devSection.isHidden = !advanced
+        // devSection lives in its own tab now; never hide it wholesale.
         devCheck.state = devMode ? .on : .off
         consoleScroll.isHidden = !devMode
         devSection.arrangedSubviews.forEach { if $0 !== devCheck { $0.isHidden = !devMode } }
         advancedBtn.title = advanced ? "Settings ⌃" : "Settings ⌄"
         if devMode && advanced { updateConsole() }
         window.layoutIfNeeded()
-        let fit = content.fittingSize
+        // Measure the tab actually on screen: the tabs differ a lot in height,
+        // and sizing to Setup while Developer is showing clips the console.
+        let shown = (tabView?.selectedTabViewItem?.view as? NSStackView) ?? content
+        let fit = shown!.fittingSize
         let want = NSSize(width: max(rowWidth + 48, fit.width), height: fit.height)
         // Only resize on a real change — applyLayout() runs from the 1s refresh
         // timer, and setting the same size every tick makes the window shimmer.
@@ -2994,12 +3168,14 @@ final class SetupController: NSObject, NSApplicationDelegate {
     // LAUNCHES (it becomes WT_TIMELAPSE in the Wine environment), so toggling it
     // while SAI is already running does nothing until the next launch — the menu
     // title says so rather than leaving people to wonder.
-    var timelapseOn: Bool = FileManager.default.fileExists(atPath: appSupport() + "/timelapse.txt") {
+    var timelapseOn: Bool = timelapseRecordingEnabled() {
         didSet {
-            let p = appSupport() + "/timelapse.txt"
-            if timelapseOn { try? "1".write(toFile: p, atomically: true, encoding: .utf8) }
-            else { try? FileManager.default.removeItem(atPath: p) }
+            // Inverted: the file marks OFF, so the default (no file) records.
+            let p = timelapseOffMarker()
+            if timelapseOn { try? FileManager.default.removeItem(atPath: p) }
+            else { try? "1".write(toFile: p, atomically: true, encoding: .utf8) }
             rebuildMenus()
+            refreshRecordingTab()
         }
     }
     @objc func toggleTimelapse(_ sender: NSMenuItem) { timelapseOn.toggle() }
@@ -3028,8 +3204,7 @@ final class SetupController: NSObject, NSApplicationDelegate {
         }
 
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HHmm"
-        let out = NSString(string: "~/Movies/SAI Timelapse \(f.string(from: Date())).mp4")
-            .expandingTildeInPath
+        let out = "\(timelapseOutputFolder())/SAI Timelapse \(f.string(from: Date())).mp4"
 
         DispatchQueue.global(qos: .userInitiated).async {
             let p = Process()
@@ -3039,7 +3214,7 @@ final class SetupController: NSObject, NSApplicationDelegate {
             // cannot do. Frames are consumed as they encode, so the next session
             // starts clean without anyone having to tidy up.
             p.arguments = ["--frames", self.timelapseFramesDir, "--out", out,
-                           "--fps", "12", "--max-seconds", "60"]
+                           "--fps", "12", "--max-seconds", "\(timelapseMaxSeconds())"]
             let pipe = Pipe(); p.standardOutput = pipe; p.standardError = pipe
             try? p.run()
             let log = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
@@ -3076,6 +3251,7 @@ final class SetupController: NSObject, NSApplicationDelegate {
             try? FileManager.default.removeItem(atPath: "\(timelapseFramesDir)/\(f)")
         }
         rebuildMenus()
+        refreshRecordingTab()
     }
 
     func openPath(_ p: String, createIfMissing: Bool = false) {
