@@ -78,6 +78,15 @@ let appPrefix: String = {
     return NSString(string: "~/SAI2-pressure").expandingTildeInPath
 }()
 
+/// Is timelapse recording switched on in the menu?
+///
+/// A free function reading the flag file directly, because launchSAIApp() is
+/// top-level while the toggle lives on the app delegate. The file IS the source
+/// of truth (same pattern as devmode.txt), so there is nothing to keep in sync.
+func timelapseRecordingEnabled() -> Bool {
+    FileManager.default.fileExists(atPath: appSupport() + "/timelapse.txt")
+}
+
 func appSupport() -> String {
     // where the saved SAI-folder config lives; override with SAIPP_CONFIG_DIR
     // (used to test the first-run wizard without clobbering a real config).
@@ -718,6 +727,11 @@ func launchSAIApp() {
     p.currentDirectoryURL = URL(fileURLWithPath: "\(appPrefix)/drive_c/SAI2")
     var e = ProcessInfo.processInfo.environment
     e["WINEPREFIX"] = appPrefix; e["WINEDEBUG"] = "-all"
+    // Timelapse recording is read by the DLL at load time, so it can only be
+    // decided here — toggling the menu item mid-session has no effect until the
+    // next launch, which is why the menu title says so. An explicit
+    // WT_TIMELAPSE in the environment always wins, for testing.
+    if e["WT_TIMELAPSE"] == nil, timelapseRecordingEnabled() { e["WT_TIMELAPSE"] = "1" }
     p.environment = e
     p.terminationHandler = { _ in
         try? "0".write(toFile: pf, atomically: true, encoding: .ascii)
@@ -1732,6 +1746,19 @@ final class SetupController: NSObject, NSApplicationDelegate {
         }
         add("Wake SAI window (if stuck)   ⌃⌥⌘Space", #selector(wakeSAI))
         add("Auto-wake when returning to SAI", #selector(toggleAutoWake(_:)), state: autoWake ? .on : .off)
+        menu.addItem(.separator())
+        // Timelapse. The frame count is in the title because "is it actually
+        // recording?" is otherwise unanswerable without opening a log.
+        let frames = timelapseFrameCount()
+        add(timelapseOn ? "Record timelapse (on next SAI launch)" : "Record timelapse",
+            #selector(toggleTimelapse(_:)), state: timelapseOn ? .on : .off)
+        if frames > 0 {
+            add("Make video from \(frames) frame\(frames == 1 ? "" : "s")…",
+                #selector(makeTimelapseVideo), indent: 1)
+            add("Discard recording", #selector(discardTimelapseFrames), indent: 1)
+        } else if timelapseOn {
+            add("Nothing recorded yet — draw in SAI", #selector(revealTimelapseFrames), indent: 1)
+        }
         menu.addItem(.separator())
         add("Open Setup window", #selector(showSetupWindow))
         add("Reinstall / Repair…", #selector(reinstallTapped))
@@ -2961,6 +2988,95 @@ final class SetupController: NSObject, NSApplicationDelegate {
         }
     }
     @objc func toggleDevMode(_ sender: NSMenuItem) { devMode.toggle() }
+
+    // ---- timelapse recording -----------------------------------------------
+    // Off by default and persisted, like dev mode. The flag is read when SAI
+    // LAUNCHES (it becomes WT_TIMELAPSE in the Wine environment), so toggling it
+    // while SAI is already running does nothing until the next launch — the menu
+    // title says so rather than leaving people to wonder.
+    var timelapseOn: Bool = FileManager.default.fileExists(atPath: appSupport() + "/timelapse.txt") {
+        didSet {
+            let p = appSupport() + "/timelapse.txt"
+            if timelapseOn { try? "1".write(toFile: p, atomically: true, encoding: .utf8) }
+            else { try? FileManager.default.removeItem(atPath: p) }
+            rebuildMenus()
+        }
+    }
+    @objc func toggleTimelapse(_ sender: NSMenuItem) { timelapseOn.toggle() }
+
+    var timelapseFramesDir: String { "\(appPrefix)/drive_c/sai-timelapse/frames" }
+
+    func timelapseFrameCount() -> Int {
+        (try? FileManager.default.contentsOfDirectory(atPath: timelapseFramesDir))?
+            .filter { $0.hasSuffix(".frame") }.count ?? 0
+    }
+
+    /// Build a video from whatever has been captured. Runs the encoder that
+    /// ships in Resources — signed with the app, so no separate Gatekeeper
+    /// approval — off the main thread, since a long session takes a moment.
+    @objc func makeTimelapseVideo() {
+        let n = timelapseFrameCount()
+        guard n > 0 else {
+            alertUser("No frames recorded yet.\n\nTurn on “Record timelapse”, then launch SAI and draw. "
+                      + "Each finished stroke captures a frame.")
+            return
+        }
+        guard let enc = Bundle.main.resourcePath.map({ "\($0)/sai-timelapse-encoder" }),
+              FileManager.default.isExecutableFile(atPath: enc) else {
+            alertUser("The timelapse encoder is missing from the app bundle.")
+            return
+        }
+
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HHmm"
+        let out = NSString(string: "~/Movies/SAI Timelapse \(f.string(from: Date())).mp4")
+            .expandingTildeInPath
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: enc)
+            // 60s cap: a long session yields thousands of frames, and dropping
+            // evenly spaced ones hits a target length exactly, which raising fps
+            // cannot do. Frames are consumed as they encode, so the next session
+            // starts clean without anyone having to tidy up.
+            p.arguments = ["--frames", self.timelapseFramesDir, "--out", out,
+                           "--fps", "12", "--max-seconds", "60"]
+            let pipe = Pipe(); p.standardOutput = pipe; p.standardError = pipe
+            try? p.run()
+            let log = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            p.waitUntilExit()
+            wlog("timelapse: encoder exited \(p.terminationStatus)\n\(log)")
+
+            DispatchQueue.main.async {
+                if p.terminationStatus == 0, FileManager.default.fileExists(atPath: out) {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: out)])
+                } else {
+                    alertUser("Could not build the video from \(n) frame(s).\n\n\(log)")
+                }
+            }
+        }
+    }
+
+    @objc func revealTimelapseFrames() {
+        try? FileManager.default.createDirectory(atPath: timelapseFramesDir,
+                                                 withIntermediateDirectories: true)
+        NSWorkspace.shared.activateFileViewerSelecting(
+            [URL(fileURLWithPath: timelapseFramesDir)])
+    }
+
+    @objc func discardTimelapseFrames() {
+        let n = timelapseFrameCount()
+        guard n > 0 else { alertUser("Nothing recorded to discard."); return }
+        let a = NSAlert()
+        a.messageText = "Discard \(n) recorded frame(s)?"
+        a.informativeText = "This only deletes the timelapse recording. Your artwork is untouched."
+        a.addButton(withTitle: "Discard"); a.addButton(withTitle: "Cancel")
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        for f in (try? FileManager.default.contentsOfDirectory(atPath: timelapseFramesDir)) ?? []
+        where f.hasSuffix(".frame") {
+            try? FileManager.default.removeItem(atPath: "\(timelapseFramesDir)/\(f)")
+        }
+        rebuildMenus()
+    }
 
     func openPath(_ p: String, createIfMissing: Bool = false) {
         if !FileManager.default.fileExists(atPath: p) {
