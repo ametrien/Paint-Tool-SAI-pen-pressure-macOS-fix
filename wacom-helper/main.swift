@@ -2689,7 +2689,11 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         recDiscardBtn = NSButton(title: "Discard recording", target: self,
                                  action: #selector(discardTimelapseFrames))
         recDiscardBtn.bezelStyle = .rounded
-        let showBtn = NSButton(title: "Show frames", target: self, action: #selector(revealTimelapseFrames))
+        // "Show frames" used to matter when frames sat on disk until you asked
+        // for a video. They are now encoded and deleted within a second of
+        // being captured, so that button opened an empty folder — the finished
+        // videos are the thing anyone actually wants to get to.
+        let showBtn = NSButton(title: "Show videos", target: self, action: #selector(revealTimelapseVideos))
         showBtn.bezelStyle = .rounded
         btnRow.addArrangedSubview(recMakeBtn)
         btnRow.addArrangedSubview(recDiscardBtn)
@@ -3828,6 +3832,14 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         }.count
     }
 
+    @objc func revealTimelapseVideos() {
+        let dir = timelapseOutputFolder()
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: dir)])
+    }
+
+    /// Still reachable from the menu when recording is on but nothing has been
+    /// captured — "where would frames even go?" is a fair question at that point.
     @objc func revealTimelapseFrames() {
         try? FileManager.default.createDirectory(atPath: timelapseFramesDir,
                                                  withIntermediateDirectories: true)
