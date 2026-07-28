@@ -38,6 +38,7 @@ var rangeFrom = 1, rangeTo = 0
 var segmentFrames = 0
 var keepFrames = false
 var watch = false
+var finalizeOnly = false
 
 var args = Array(CommandLine.arguments.dropFirst())
 while let a = args.first {
@@ -53,6 +54,7 @@ while let a = args.first {
     case "--segment-frames": segmentFrames = Int(next()) ?? 0
     case "--keep": keepFrames = true
     case "--watch": watch = true
+    case "--finalize", "--finalise": finalizeOnly = true
     case "-h", "--help":
         print("""
         sai-timelapse-encoder — build a video from captured SAI frames
@@ -65,6 +67,7 @@ while let a = args.first {
           --segment-frames <n> roll a new file every n frames
           --keep               keep frames after encoding
           --watch              encode continuously as frames appear
+          --finalize           stitch --watch segments into one video per canvas
         """)
         exit(0)
     default:
@@ -356,10 +359,104 @@ func finishLive() {
     liveWriters.removeAll()
 }
 
+// --- finalising live segments ----------------------------------------------
+
+/// Stitch the segments produced by --watch into one video per canvas.
+///
+/// Live encoding leaves a numbered segment file every 500 frames, because an
+/// AVAssetWriter that never gets finishWriting() is unplayable and rolling
+/// bounds a crash to one segment. Those are an implementation detail; what
+/// somebody wants at the end is one video.
+///
+/// Concatenation happens through AVMutableComposition, so the encoded frames
+/// are reused rather than decoded and re-encoded. Length is applied with
+/// scaleTimeRange — asking for 30 seconds re-times the whole thing instead of
+/// dropping frames, which is what you want once the frames are already video.
+func finalizeSegments() -> Int {
+    let fm = FileManager.default
+    let base = URL(fileURLWithPath: outPath)
+    let dir = base.deletingLastPathComponent()
+    let stem = base.deletingPathExtension().lastPathComponent
+    guard let names = try? fm.contentsOfDirectory(atPath: dir.path) else { return 0 }
+
+    // <stem>[.label].NNN.mp4  — the trailing number is what marks a segment.
+    var groups: [String: [(Int, URL)]] = [:]
+    for n in names where n.hasPrefix(stem + ".") && n.hasSuffix(".mp4") {
+        let parts = n.dropLast(4).split(separator: ".")
+        guard parts.count >= 2, let idx = Int(parts[parts.count - 1]) else { continue }
+        let label = parts.count >= 3 ? parts[1...(parts.count - 2)].joined(separator: ".") : ""
+        groups[label, default: []].append((idx, dir.appendingPathComponent(n)))
+    }
+    guard !groups.isEmpty else { return 0 }
+
+    var made = 0
+    for (label, segs) in groups.sorted(by: { $0.key < $1.key }) {
+        let ordered = segs.sorted { $0.0 < $1.0 }.map { $0.1 }
+        let comp = AVMutableComposition()
+        guard let track = comp.addMutableTrack(withMediaType: .video,
+                                               preferredTrackID: kCMPersistentTrackID_Invalid)
+        else { continue }
+
+        var at = CMTime.zero
+        for seg in ordered {
+            let asset = AVURLAsset(url: seg)
+            guard let src = asset.tracks(withMediaType: .video).first else { continue }
+            let range = CMTimeRange(start: .zero, duration: asset.duration)
+            try? track.insertTimeRange(range, of: src, at: at)
+            at = CMTimeAdd(at, asset.duration)
+        }
+        guard at.seconds > 0 else { continue }
+
+        // Re-time to the requested length rather than dropping frames: the
+        // frames are already encoded, so speeding them up is both cheaper and
+        // smoother than throwing some away.
+        if maxSeconds > 0, at.seconds > maxSeconds {
+            track.scaleTimeRange(CMTimeRange(start: .zero, duration: at),
+                                 toDuration: CMTime(seconds: maxSeconds, preferredTimescale: 600))
+        }
+
+        let outURL = label.isEmpty ? base
+            : dir.appendingPathComponent("\(stem).\(label).mp4")
+        try? fm.removeItem(at: outURL)
+        guard let ex = AVAssetExportSession(asset: comp, presetName: AVAssetExportPresetHighestQuality)
+        else { continue }
+        ex.outputURL = outURL
+        ex.outputFileType = .mp4
+        let sem = DispatchSemaphore(value: 0)
+        ex.exportAsynchronously { sem.signal() }
+        sem.wait()
+
+        if ex.status == .completed {
+            for seg in ordered { try? fm.removeItem(at: seg) }
+            print(String(format: "wrote %@  (%.1fs)", outURL.path,
+                         maxSeconds > 0 ? min(maxSeconds, at.seconds) : at.seconds))
+            made += 1
+        } else {
+            FileHandle.standardError.write(
+                "could not finalise \(outURL.lastPathComponent): \(ex.error?.localizedDescription ?? "unknown")\n"
+                    .data(using: .utf8)!)
+        }
+    }
+    return made
+}
+
 // --- run -------------------------------------------------------------------
 
 try? FileManager.default.createDirectory(atPath: (outPath as NSString).deletingLastPathComponent,
                                          withIntermediateDirectories: true)
+
+if finalizeOnly {
+    // Anything captured after the watcher stopped is still raw on disk, so
+    // encode it before stitching — otherwise the last few strokes vanish.
+    let leftover = frameFiles(in: framesDir)
+    if !leftover.isEmpty { liveConsume(leftover); finishLive() }
+    let n = finalizeSegments()
+    if n == 0 {
+        FileHandle.standardError.write("nothing to finalise in \(framesDir)\n".data(using: .utf8)!)
+        exit(1)
+    }
+    exit(0)
+}
 
 if watch {
     print("watching \(framesDir) — Ctrl-C to stop")
