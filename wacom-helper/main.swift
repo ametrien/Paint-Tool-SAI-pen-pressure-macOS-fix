@@ -2568,9 +2568,19 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         let auto = storedMaxPressureOverride() == nil
         switch all.count {
         case 0:
-            pressureInfo.stringValue = auto
-                ? "no tablet reported a pressure range — using the safe default \(inUse)"
-                : "set by you: \(inUse) · no tablet connected to check against"
+            // With nothing plugged in, `inUse` is usually the value REMEMBERED
+            // from the last tablet, not a default. Calling it "the safe default"
+            // hid the fact that the app was running on stale information — and
+            // hid the more useful message, which is that no tablet is connected.
+            if !auto {
+                pressureInfo.stringValue = "set by you: \(inUse) · no tablet connected to check against"
+            } else if let cached = cachedDetectedFullScale(), cached + 1 == inUse {
+                pressureInfo.stringValue =
+                    "⚠️ no tablet connected — using \(inUse), remembered from the last one"
+            } else {
+                pressureInfo.stringValue =
+                    "⚠️ no tablet connected — using the safe default \(inUse)"
+            }
         case 1:
             let t = all[0]
             pressureInfo.stringValue = auto
