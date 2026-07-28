@@ -19,6 +19,7 @@
 import AppKit
 import CoreGraphics
 import Foundation
+import AVKit
 import IOKit.hid       // IOHIDCheckAccess/RequestAccess — live Input-Monitoring status
 
 // --version: print the build's version and exit (useful in bug reports).
@@ -77,6 +78,99 @@ let appPrefix: String = {
     }
     return NSString(string: "~/SAI2-pressure").expandingTildeInPath
 }()
+
+/// Path whose EXISTENCE means recording is switched OFF.
+///
+/// Inverted on purpose: recording is on by default, so the common case leaves no
+/// file behind and a fresh install records without anyone finding a setting.
+/// dev mode uses the opposite polarity because its default is the opposite.
+func timelapseOffMarker() -> String { appSupport() + "/timelapse-off.txt" }
+
+/// Is timelapse recording switched on?
+///
+/// A free function reading the flag file directly, because launchSAIApp() is
+/// top-level while the toggle lives on the app delegate. The file IS the source
+/// of truth (same pattern as devmode.txt), so there is nothing to keep in sync.
+func timelapseRecordingEnabled() -> Bool {
+    !FileManager.default.fileExists(atPath: timelapseOffMarker())
+}
+
+/// Where finished videos are written. Defaults to ~/Movies; the Recording tab
+/// can point it anywhere.
+func timelapseOutputFolder() -> String {
+    if let s = try? String(contentsOfFile: appSupport() + "/timelapse-folder.txt", encoding: .utf8),
+       case let t = s.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty,
+       FileManager.default.fileExists(atPath: t) {
+        return t
+    }
+    // Our own folder rather than dumping into ~/Movies alongside everything
+    // else. Created on demand so the Choose panel has somewhere to open.
+    let d = NSString(string: "~/Movies/SAI Timelapses").expandingTildeInPath
+    try? FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true)
+    return d
+}
+
+/// Index into the Recording tab's length popup: 30s, 1m, 2m, everything.
+func storedTimelapseLengthIndex() -> Int {
+    guard let s = try? String(contentsOfFile: appSupport() + "/timelapse-length.txt", encoding: .utf8),
+          let i = Int(s.trimmingCharacters(in: .whitespacesAndNewlines)), (0...3).contains(i)
+    else { return 3 }          // "Everything" — never silently drop someone's work
+    return i
+}
+
+/// Seconds for the chosen length, or 0 meaning "keep every frame".
+func timelapseMaxSeconds() -> Int {
+    [30, 60, 120, 0][storedTimelapseLengthIndex()]
+}
+
+/// What one canvas has cost on disk so far.
+struct TLCanvasUsage { let name: String; let frames: Int; let bytes: Int64 }
+
+/// Frames are raw BGRA, roughly 3 MB each, so the folder grows fast enough that
+/// people deserve to see the number rather than discover it. Grouped by canvas
+/// id (the struct address) exactly as the encoder groups, so the breakdown here
+/// matches the videos that will come out.
+func timelapseUsage(_ dir: String) -> (total: Int64, canvases: [TLCanvasUsage]) {
+    let fm = FileManager.default
+    guard let names = try? fm.contentsOfDirectory(atPath: dir) else { return (0, []) }
+    var total: Int64 = 0
+    var frames: [UInt64: Int] = [:]
+    var bytes: [UInt64: Int64] = [:]
+    var labels: [UInt64: String] = [:]
+    for n in names where n.hasSuffix(".frame") {
+        let path = "\(dir)/\(n)"
+        let sz = (try? fm.attributesOfItem(atPath: path)[.size] as? Int64) ?? 0
+        total += sz ?? 0
+        // Read only the header, never the pixels: a folder of 2000 frames is
+        // gigabytes, and this runs every time the tab refreshes.
+        guard let fh = FileHandle(forReadingAtPath: path),
+              let head = try? fh.read(upToCount: 112), head.count >= 112 else { continue }
+        try? fh.close()
+        let id = head.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: 40, as: UInt64.self) }
+        frames[id, default: 0] += 1
+        bytes[id, default: 0] += sz ?? 0
+        if labels[id] == nil {
+            let raw = head.subdata(in: 48..<112).prefix(while: { $0 != 0 })
+            labels[id] = String(decoding: raw, as: UTF8.self)
+        }
+    }
+    let list = frames.keys.sorted().map {
+        TLCanvasUsage(name: labels[$0] ?? String(format: "canvas-%llx", $0),
+                      frames: frames[$0] ?? 0, bytes: bytes[$0] ?? 0)
+    }
+    return (total, list)
+}
+
+func prettyBytes(_ b: Int64) -> String {
+    let mb = Double(b) / 1_048_576
+    return mb >= 1024 ? String(format: "%.1f GB", mb / 1024) : String(format: "%.0f MB", mb)
+}
+
+/// Shorten a path for display: the home directory becomes ~.
+func prettyPath(_ p: String) -> String {
+    let h = NSHomeDirectory()
+    return p.hasPrefix(h) ? "~" + p.dropFirst(h.count) : p
+}
 
 func appSupport() -> String {
     // where the saved SAI-folder config lives; override with SAIPP_CONFIG_DIR
@@ -718,6 +812,11 @@ func launchSAIApp() {
     p.currentDirectoryURL = URL(fileURLWithPath: "\(appPrefix)/drive_c/SAI2")
     var e = ProcessInfo.processInfo.environment
     e["WINEPREFIX"] = appPrefix; e["WINEDEBUG"] = "-all"
+    // Timelapse recording is read by the DLL at load time, so it can only be
+    // decided here — toggling the menu item mid-session has no effect until the
+    // next launch, which is why the menu title says so. An explicit
+    // WT_TIMELAPSE in the environment always wins, for testing.
+    if e["WT_TIMELAPSE"] == nil, timelapseRecordingEnabled() { e["WT_TIMELAPSE"] = "1" }
     p.environment = e
     p.terminationHandler = { _ in
         try? "0".write(toFile: pf, atomically: true, encoding: .ascii)
@@ -1253,6 +1352,143 @@ final class PressureBar: NSView {
 /// Live plot of the pen-feel curve: input pressure across, output up. The
 /// diagonal is linear (gamma 1); the dot is where the pen is right now, so you
 /// can press and watch the mapping instead of interpreting a number.
+/// Draw-here area for the pen test. The pressure bar proves a signal arrives;
+/// this proves it FEELS right — taper at the ends of a stroke is the thing
+/// people actually care about, and a number cannot show it.
+///
+/// Pressure comes from the event when macOS provides it, falling back to the
+/// value our own tablet tap last saw, so it still works for input paths that
+/// report no NSEvent pressure.
+final class PenScratchView: NSView {
+    private typealias Point = (p: CGPoint, w: CGFloat)
+    private struct Stroke { var pts: [Point]; var finished: Date? }
+
+    private var strokes: [Stroke] = []
+    private var current: [Point] = []
+    private var fade: Timer?
+
+    /// How long a finished stroke stays solid, then how long it takes to vanish.
+    /// Long enough to judge the taper, short enough that the pad is clean again
+    /// by the time you come back to it — so there is nothing to press to reset.
+    private let holdSeconds: TimeInterval = 2.0
+    private let fadeSeconds: TimeInterval = 2.0
+
+    override var isFlipped: Bool { true }
+    override var acceptsFirstResponder: Bool { true }
+
+    func clear() { strokes.removeAll(); current.removeAll(); stopFade(); needsDisplay = true }
+
+    private func alpha(_ s: Stroke) -> CGFloat {
+        guard let f = s.finished else { return 1 }              // still drawing
+        let age = Date().timeIntervalSince(f) - holdSeconds
+        if age <= 0 { return 1 }
+        return max(0, 1 - CGFloat(age / fadeSeconds))
+    }
+
+    private func startFade() {
+        guard fade == nil else { return }
+        // 20fps is plenty for a fade and costs nothing; it stops itself as soon
+        // as the pad is empty, so an idle window does no work at all.
+        let t = Timer(timeInterval: 1.0 / 20.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.strokes.removeAll { self.alpha($0) <= 0 }
+            self.needsDisplay = true
+            if self.strokes.isEmpty && self.current.isEmpty { self.stopFade() }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        fade = t
+    }
+    private func stopFade() { fade?.invalidate(); fade = nil }
+
+    /// Runs the same pipeline the helper uses before sending a value to SAI, so
+    /// the pad shows what the settings above it actually do rather than a
+    /// prettier approximation of it.
+    private func width(for e: NSEvent) -> CGFloat {
+        // 1. raw 0…1. NSEvent carries pressure for tablet input; fall back to
+        //    whatever our own tap last saw for paths that report none.
+        var p = Double(e.pressure)
+        if p <= 0 { p = Double(max(0, lastKeyP)) / Double(max(1, PressureCore.maxPressure)) }
+        p = min(1, max(0, p))
+
+        // 2. quantise to the configured level count, so picking 1024 against
+        //    8192 is visible as steppier width rather than being invisible.
+        let levels = Double(max(1, PressureCore.maxPressure))
+        p = (p * levels).rounded() / levels
+
+        // 3. pen feel and the feel curve are the same knob — both write
+        //    PressureCore.pressureGamma — so one call covers both.
+        p = PressureCore.curved(p)
+
+        return 1 + CGFloat(p) * 22     // tapered without becoming a blob
+    }
+
+    override func mouseDown(with e: NSEvent) {
+        current = [(convert(e.locationInWindow, from: nil), width(for: e))]
+        needsDisplay = true
+    }
+    override func mouseDragged(with e: NSEvent) {
+        current.append((convert(e.locationInWindow, from: nil), width(for: e)))
+        needsDisplay = true
+    }
+    override func mouseUp(with e: NSEvent) {
+        if current.count > 1 { strokes.append(Stroke(pts: current, finished: Date())) }
+        current.removeAll()
+        startFade()
+        needsDisplay = true
+    }
+
+    override func draw(_ r: NSRect) {
+        let frame = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
+                                 xRadius: 6, yRadius: 6)
+        NSColor.textBackgroundColor.setFill(); r.fill()
+        NSColor.separatorColor.setStroke()
+        frame.stroke()
+        // Ink must stay inside the box. A drag continues to deliver points once
+        // the pointer leaves the view, which is correct for tracking but must
+        // not paint over the rest of the window.
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        frame.setClip()
+
+        if strokes.isEmpty && current.isEmpty {
+            let a: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 11),
+                .foregroundColor: NSColor.tertiaryLabelColor]
+            let t = "Draw here with your pen — strokes taper with pressure, then fade"
+            let sz = t.size(withAttributes: a)
+            t.draw(at: NSPoint(x: (bounds.width - sz.width) / 2,
+                               y: (bounds.height - sz.height) / 2), withAttributes: a)
+            return
+        }
+
+        var all = strokes
+        if current.count > 1 { all.append(Stroke(pts: current, finished: nil)) }
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        for stroke in all {
+            // A stroke is drawn as many round-capped segments, because its width
+            // varies along its length and one path carries only one line width.
+            // Fading them individually made every overlap blend twice, so the
+            // line dissolved into a string of beads. A transparency layer
+            // composites the whole stroke once, at one alpha, so it fades as a
+            // single line.
+            ctx.saveGState()
+            ctx.setAlpha(alpha(stroke))
+            ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+            NSColor.labelColor.setStroke()
+            for i in 1..<stroke.pts.count {
+                let seg = NSBezierPath()
+                seg.move(to: stroke.pts[i - 1].p)
+                seg.line(to: stroke.pts[i].p)
+                seg.lineWidth = (stroke.pts[i - 1].w + stroke.pts[i].w) / 2
+                seg.lineCapStyle = .round
+                seg.stroke()
+            }
+            ctx.endTransparencyLayer()
+            ctx.restoreGState()
+        }
+    }
+}
+
 final class GammaCurveView: NSView {
     var gamma: Double = 1.0 { didSet { if gamma != oldValue { needsDisplay = true } } }
     var live: Double = 0 { didSet { if live != oldValue { needsDisplay = true } } }   // 0...1 input
@@ -1294,7 +1530,7 @@ final class GammaCurveView: NSView {
 }
 
 // ---- App mode: a small setup wizard (AppKit) -------------------------------
-final class SetupController: NSObject, NSApplicationDelegate {
+final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate {
     struct Req {
         let title, detail, fixTitle: String
         let ok: () -> Bool; let fix: () -> Void; let required: Bool
@@ -1353,7 +1589,6 @@ final class SetupController: NSObject, NSApplicationDelegate {
     var content: NSStackView!
     var rowViews: [NSStackView] = []
     var footerLabels: [NSTextField] = []
-    var settingsOnlyViews: [NSView] = []
     var advanced = false
     var advancedBtn: NSButton!
     var allSetLabel: NSTextField!
@@ -1361,6 +1596,25 @@ final class SetupController: NSObject, NSApplicationDelegate {
     var autoRunning = false
     var secondaryRow: NSStackView!
     var devSection: NSStackView!
+    // Tabs, added because the single column had grown past a screen: setup,
+    // recording and the developer tools have nothing to do with each other, and
+    // stacking them meant scrolling past all three to reach any one of them.
+    var tabView: NSTabView!
+    var recordingTab: NSStackView!
+    var recFramesLabel: NSTextField!
+    var recCheck: NSButton!
+    var recMakeBtn: NSButton!
+    var recDiscardBtn: NSButton!
+    var recLengthPopup: NSPopUpButton!
+    var recFolderLabel: NSTextField!
+    var settingsTab: NSStackView!
+    var settingsScratch: PenScratchView!
+    var scratchRow: NSStackView!
+    var autoWakeCheck: NSButton!
+    var recUsageLabel: NSTextField!
+    var recPreview: AVPlayerView!
+    var recPreviewLabel: NSTextField!
+    var recHidePreviewBtn: NSButton!
     var devCheck: NSButton!
     var console: NSTextView!
     var consoleScroll: NSScrollView!
@@ -1730,22 +1984,22 @@ final class SetupController: NSObject, NSApplicationDelegate {
             if let s = state { it.state = s }
             menu.addItem(it)
         }
+        // Kept deliberately short. Everything else lives in the Setup, Pen,
+        // Recording and Developer tabs, and duplicating it here just made a menu
+        // nobody could scan. What survives is what you want WITHOUT opening the
+        // window: unstick SAI, see at a glance whether recording is on, and get
+        // to the window itself.
         add("Wake SAI window (if stuck)   ⌃⌥⌘Space", #selector(wakeSAI))
-        add("Auto-wake when returning to SAI", #selector(toggleAutoWake(_:)), state: autoWake ? .on : .off)
+        menu.addItem(.separator())
+        let frames = timelapseFrameCount()
+        add(timelapseOn ? "Recording timelapse" : "Timelapse recording is off",
+            #selector(toggleTimelapse(_:)), state: timelapseOn ? .on : .off)
+        if frames > 0 {
+            add("Make video from \(frames) frame\(frames == 1 ? "" : "s")…",
+                #selector(makeTimelapseVideo), indent: 1)
+        }
         menu.addItem(.separator())
         add("Open Setup window", #selector(showSetupWindow))
-        add("Reinstall / Repair…", #selector(reinstallTapped))
-        add("Install License (.slc)…", #selector(licenseTapped))
-        menu.addItem(.separator())
-        // Dev mode: a checkbox that reveals the diagnostic items beneath it.
-        add("Developer mode", #selector(toggleDevMode(_:)), state: devMode ? .on : .off)
-        if devMode {
-            add("Copy diagnostics", #selector(copyDiagnostics), indent: 1)
-            add("Reveal Wine prefix in Finder", #selector(revealPrefix), indent: 1)
-            add("Open helper log", #selector(openHelperLog), indent: 1)
-            add("Open wake log", #selector(openWakeLog), indent: 1)
-            add("Open DLL log", #selector(openDLLLog), indent: 1)
-        }
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         return menu
@@ -1950,23 +2204,23 @@ final class SetupController: NSObject, NSApplicationDelegate {
         content.addArrangedSubview(launchBtn)
 
         // --- secondary actions, side by side instead of stacked ---------------
-        testBtn = NSButton(title: "Test pen", target: self, action: #selector(testTapped))
-        testBtn.bezelStyle = .rounded; testBtn.controlSize = .small
         let wakeBtn = NSButton(title: "Wake SAI (if stuck)", target: self, action: #selector(wakeSAI))
         wakeBtn.bezelStyle = .rounded; wakeBtn.controlSize = .small
-        advancedBtn = NSButton(title: "Settings ⌄", target: self, action: #selector(toggleAdvanced))
+        advancedBtn = NSButton(title: "Show all steps ⌄", target: self, action: #selector(toggleAdvanced))
         advancedBtn.bezelStyle = .rounded; advancedBtn.controlSize = .small
         secondaryRow = NSStackView(); secondaryRow.orientation = .horizontal
         secondaryRow.alignment = .centerY; secondaryRow.spacing = 8
-        secondaryRow.addArrangedSubview(testBtn)
         secondaryRow.addArrangedSubview(wakeBtn)
+        autoWakeCheck = NSButton(checkboxWithTitle: "Auto-wake", target: self,
+                                 action: #selector(autoWakeCheckToggled))
+        autoWakeCheck.controlSize = .small
+        secondaryRow.addArrangedSubview(autoWakeCheck)
         secondaryRow.addArrangedSubview(advancedBtn)
         content.addArrangedSubview(secondaryRow)
 
         testHint = lbl("Press your pen on the tablet — the bar should move.", 10, color: .secondaryLabelColor)
         testHint.preferredMaxLayoutWidth = rowWidth
         testHint.isHidden = true
-        content.addArrangedSubview(testHint)
         barRow = NSStackView(); barRow.orientation = .horizontal; barRow.alignment = .centerY; barRow.spacing = 10
         pressureBar = PressureBar()
         pressureBar.widthAnchor.constraint(equalToConstant: 240).isActive = true
@@ -1978,7 +2232,7 @@ final class SetupController: NSObject, NSApplicationDelegate {
         pressureLabel.widthAnchor.constraint(equalToConstant: 150).isActive = true
         barRow.addArrangedSubview(pressureBar); barRow.addArrangedSubview(pressureLabel)
         barRow.isHidden = true
-        content.addArrangedSubview(barRow)
+
 
         // --- pressure resolution, in Settings ---------------------------------
         // Auto follows the tablet's own HID report; the explicit choices are an
@@ -1988,6 +2242,20 @@ final class SetupController: NSObject, NSApplicationDelegate {
         pRow.alignment = .centerY
         pRow.addArrangedSubview(lbl("Pressure levels", 12, bold: true))
         pressurePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        settingsTab = NSStackView()
+        settingsTab.orientation = .vertical; settingsTab.alignment = .leading; settingsTab.spacing = 10
+        settingsTab.edgeInsets = NSEdgeInsets(top: 18, left: 24, bottom: 18, right: 24)
+        settingsTab.addArrangedSubview(lbl("Pen settings", 18, bold: true))
+        // Defended explicitly: a stack short of room compresses by this
+        // priority, and the default let real controls collapse silently.
+        defer {
+            settingsTab.arrangedSubviews.forEach {
+                if !($0 is PenScratchView) {
+                    $0.setContentCompressionResistancePriority(.required, for: .vertical)
+                }
+            }
+        }
+
         pressurePopup.controlSize = .small
         pressurePopup.target = self
         pressurePopup.action = #selector(pressureChoiceChanged)
@@ -1996,8 +2264,7 @@ final class SetupController: NSObject, NSApplicationDelegate {
         pRow.addArrangedSubview(pressurePopup)
         pressureInfo = lbl("", 10, color: .tertiaryLabelColor)
         pRow.addArrangedSubview(pressureInfo)
-        settingsOnlyViews.append(pRow)
-        content.addArrangedSubview(pRow)
+        settingsTab.addArrangedSubview(pRow)
 
         // Pen feel: applied on our side before the value is sent, so it needs no
         // agreement with the DLL and no SAI restart. Stacks with the Wacom
@@ -2011,14 +2278,13 @@ final class SetupController: NSObject, NSApplicationDelegate {
         for (name, _) in feelChoices { feelPopup.addItem(withTitle: name) }
         fRow.addArrangedSubview(feelPopup)
         fRow.addArrangedSubview(lbl("how hard you press for a full-width stroke · applies instantly", 10, color: .tertiaryLabelColor))
-        settingsOnlyViews.append(fRow)
-        content.addArrangedSubview(fRow)
+        settingsTab.addArrangedSubview(fRow)
 
         // --- one-button recovery, in Settings ---------------------------------
         // The whole point: a single obvious action that rebuilds everything, for
         // when the prefix is broken and you don't want to reason about which
         // half is at fault.
-        let scratchRow = NSStackView(); scratchRow.orientation = .horizontal; scratchRow.spacing = 8
+        scratchRow = NSStackView(); scratchRow.orientation = .horizontal; scratchRow.spacing = 8
         let scratchBtn = NSButton(title: "Reset everything & reinstall…", target: self, action: #selector(installFromScratch))
         scratchBtn.bezelStyle = .rounded; scratchBtn.controlSize = .small
         scratchRow.addArrangedSubview(scratchBtn)
@@ -2029,8 +2295,7 @@ final class SetupController: NSObject, NSApplicationDelegate {
         scratchRow.addArrangedSubview(scratchHint)
         // NOT appended to rowViews — that array is index-locked to `reqs` and an
         // extra entry would desync applyLayout()'s loop. It's Settings-only.
-        settingsOnlyViews.append(scratchRow)
-        content.addArrangedSubview(scratchRow)
+        settingsTab.addArrangedSubview(scratchRow)
 
         // --- footers: explanation, only in Settings ---------------------------
         // Kept to ONE line each — these wrapped to two and made the window tall.
@@ -2099,10 +2364,27 @@ final class SetupController: NSObject, NSApplicationDelegate {
         curveView.widthAnchor.constraint(equalToConstant: 84).isActive = true
         curveView.heightAnchor.constraint(equalToConstant: 46).isActive = true
         gRow.addArrangedSubview(curveView)
-        devSection.addArrangedSubview(gRow)
+        settingsTab.addArrangedSubview(gRow)
         let gHint = lbl("1.00 = exactly what the tablet reports · below = lighter touch goes further · above = press harder", 9, color: .tertiaryLabelColor)
         gHint.preferredMaxLayoutWidth = rowWidth
-        devSection.addArrangedSubview(gHint)
+        settingsTab.addArrangedSubview(gHint)
+        testBtn = NSButton(title: "Test pen", target: self, action: #selector(testTapped))
+        testBtn.bezelStyle = .rounded; testBtn.controlSize = .small
+        settingsTab.addArrangedSubview(testBtn)
+        settingsTab.addArrangedSubview(barRow)
+        settingsTab.addArrangedSubview(testHint)
+
+        // The scratch pad is NOT here on purpose. It repeatedly cost the pen
+        // settings their place on this tab — most recently by absorbing the
+        // stack's layout in a way that pushed them out — and the settings
+        // matter more than a nice-to-have preview of the pen feel. The
+        // PenScratchView class is kept because it works and may find a better
+        // home (its own tab, or a sheet), but nothing on this tab uses it.
+
+        // Re-adding moves it to the end: destructive actions belong at the
+        // bottom, not wedged between pen feel and the feel curve.
+        settingsTab.addArrangedSubview(scratchRow)
+        // No Clear button: strokes fade on their own, so the pad is always ready.
         // Live console: the tail of the wake log, so you can watch auto-wake and
         // setup decisions without leaving the window.
         consoleScroll = NSScrollView()
@@ -2116,7 +2398,8 @@ final class SetupController: NSObject, NSApplicationDelegate {
         console.autoresizingMask = [.width]
         consoleScroll.documentView = console
         devSection.addArrangedSubview(consoleScroll)
-        content.addArrangedSubview(devSection)
+        // Deliberately NOT added to `content` any more — it lives in its own tab.
+        devSection.edgeInsets = NSEdgeInsets(top: 18, left: 24, bottom: 18, right: 24)
 
         // --- version + update check ------------------------------------------
         let verRow = NSStackView(); verRow.orientation = .horizontal; verRow.alignment = .centerY; verRow.spacing = 8
@@ -2135,14 +2418,236 @@ final class SetupController: NSObject, NSApplicationDelegate {
         verRow.addArrangedSubview(updateBtn)
         content.addArrangedSubview(verRow)
 
+        buildRecordingTab()
+
+        // Three tabs rather than one column. Setup, recording and developer
+        // tools are unrelated concerns, and stacking them meant scrolling past
+        // all of them to reach any one.
+        tabView = NSTabView()
+        tabView.translatesAutoresizingMaskIntoConstraints = false
+        for (label, view) in [("Setup", content!),
+                              ("Pen", settingsTab!),
+                              ("Recording", recordingTab!),
+                              ("Developer", devSection!)] {
+            // NSTabViewItem positions its view with the autoresizing mask, not
+            // constraints. Leaving translatesAutoresizingMaskIntoConstraints
+            // false gave every tab a zero-sized stack: the controls were all
+            // there and unhidden, but laid out at (0,0,0,0). The only thing
+            // that showed was the scratch pad, which has explicit size
+            // constraints — and with a zero-bounds parent, nothing clipped it,
+            // so it drew over the whole window.
+            view.translatesAutoresizingMaskIntoConstraints = true
+            view.autoresizingMask = [.width, .height]
+            let item = NSTabViewItem(identifier: label)
+            item.label = label
+            item.view = view
+            tabView.addTabViewItem(item)
+        }
+
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: rowWidth + 48, height: 400),
                           styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "SAI Pen Pressure"
-        window.contentView = content
+        window.contentView = tabView
+        // Delegate assigned only now: addTabViewItem() above selects a tab
+        // synchronously, and reacting to that before the window exists is what
+        // crashed on launch.
+        tabView.delegate = self
         window.isReleasedWhenClosed = false
         applyLayout()               // sizes the window to whichever tier is showing
         window.center()
         window.makeKeyAndOrderFront(nil)
+    }
+
+    /// The Recording tab. Everything about the timelapse lives here so the Setup
+    /// tab stays about getting SAI running.
+    func buildRecordingTab() {
+        recordingTab = NSStackView()
+        recordingTab.orientation = .vertical
+        recordingTab.alignment = .leading
+        recordingTab.spacing = 10
+        recordingTab.edgeInsets = NSEdgeInsets(top: 18, left: 24, bottom: 18, right: 24)
+
+        recordingTab.addArrangedSubview(lbl("Canvas timelapse", 18, bold: true))
+        recordingTab.addArrangedSubview(
+            lbl("Captures the canvas itself, not the screen — no panels, no zooming, no cursor.",
+                12, color: .secondaryLabelColor))
+
+        recCheck = NSButton(checkboxWithTitle: "Record a timelapse while I draw",
+                            target: self, action: #selector(recToggle))
+        recordingTab.addArrangedSubview(recCheck)
+        recordingTab.addArrangedSubview(
+            lbl("Takes effect the next time SAI launches.", 11, color: .tertiaryLabelColor))
+
+        recFramesLabel = lbl("", 12)
+        recordingTab.addArrangedSubview(recFramesLabel)
+        recUsageLabel = lbl("", 11, color: .secondaryLabelColor)
+        recUsageLabel.usesSingleLineMode = false
+        recUsageLabel.lineBreakMode = .byWordWrapping
+        recUsageLabel.maximumNumberOfLines = 8
+        recordingTab.addArrangedSubview(recUsageLabel)
+
+        let lenRow = NSStackView(); lenRow.orientation = .horizontal
+        lenRow.alignment = .centerY; lenRow.spacing = 8
+        lenRow.addArrangedSubview(lbl("Video length", 12, bold: true))
+        recLengthPopup = NSPopUpButton()
+        recLengthPopup.addItems(withTitles: ["30 seconds", "1 minute", "2 minutes", "Everything"])
+        recLengthPopup.selectItem(at: storedTimelapseLengthIndex())
+        recLengthPopup.target = self; recLengthPopup.action = #selector(recLengthChanged)
+        lenRow.addArrangedSubview(recLengthPopup)
+        lenRow.addArrangedSubview(
+            lbl("frames are dropped evenly to hit the target", 11, color: .tertiaryLabelColor))
+        recordingTab.addArrangedSubview(lenRow)
+
+        let folderRow = NSStackView(); folderRow.orientation = .horizontal
+        folderRow.alignment = .centerY; folderRow.spacing = 8
+        folderRow.addArrangedSubview(lbl("Save to", 12, bold: true))
+        recFolderLabel = lbl(prettyPath(timelapseOutputFolder()), 11, color: .secondaryLabelColor)
+        recFolderLabel.lineBreakMode = .byTruncatingMiddle
+        folderRow.addArrangedSubview(recFolderLabel)
+        let chooseBtn = NSButton(title: "Choose…", target: self, action: #selector(chooseTimelapseFolder))
+        chooseBtn.bezelStyle = .rounded; chooseBtn.controlSize = .small
+        folderRow.addArrangedSubview(chooseBtn)
+        recordingTab.addArrangedSubview(folderRow)
+
+        let btnRow = NSStackView(); btnRow.orientation = .horizontal; btnRow.spacing = 8
+        recMakeBtn = NSButton(title: "Make video…", target: self, action: #selector(makeTimelapseVideo))
+        recMakeBtn.bezelStyle = .rounded
+        recMakeBtn.keyEquivalent = "\r"
+        recDiscardBtn = NSButton(title: "Discard recording", target: self,
+                                 action: #selector(discardTimelapseFrames))
+        recDiscardBtn.bezelStyle = .rounded
+        let showBtn = NSButton(title: "Show frames", target: self, action: #selector(revealTimelapseFrames))
+        showBtn.bezelStyle = .rounded
+        btnRow.addArrangedSubview(recMakeBtn)
+        btnRow.addArrangedSubview(recDiscardBtn)
+        btnRow.addArrangedSubview(showBtn)
+        recordingTab.addArrangedSubview(btnRow)
+
+        // Preview. Watching the result is how you find out the length or speed
+        // is wrong, and sending people to Finder to check made that a chore.
+        // The preview is remembered across launches, which is useful right
+        // after making a video and confusing a week later when it shows
+        // something unrelated to what is on screen now. So it can be dismissed.
+        let previewRow = NSStackView(); previewRow.orientation = .horizontal
+        previewRow.alignment = .centerY; previewRow.spacing = 8
+        recPreviewLabel = lbl("", 11, color: .secondaryLabelColor)
+        previewRow.addArrangedSubview(recPreviewLabel)
+        recHidePreviewBtn = NSButton(title: "Hide preview", target: self,
+                                     action: #selector(hidePreview))
+        recHidePreviewBtn.bezelStyle = .rounded; recHidePreviewBtn.controlSize = .small
+        recHidePreviewBtn.isHidden = true
+        previewRow.addArrangedSubview(recHidePreviewBtn)
+        recordingTab.addArrangedSubview(previewRow)
+        recPreview = AVPlayerView()
+        recPreview.translatesAutoresizingMaskIntoConstraints = false
+        recPreview.controlsStyle = .inline
+        recPreview.videoGravity = .resizeAspect
+        recPreview.heightAnchor.constraint(equalToConstant: 220).isActive = true
+        recPreview.widthAnchor.constraint(equalToConstant: CGFloat(rowWidth)).isActive = true
+        recPreview.isHidden = true
+        recordingTab.addArrangedSubview(recPreview)
+
+        recordingTab.addArrangedSubview(
+            lbl("Several canvases open at once are recorded separately — you get one video each.",
+                11, color: .tertiaryLabelColor))
+        recordingTab.addArrangedSubview(
+            lbl("Undo is captured at your next stroke rather than the moment you press it.",
+                11, color: .tertiaryLabelColor))
+        refreshRecordingTab()
+        restorePreview()
+    }
+
+    func refreshRecordingTab() {
+        guard recCheck != nil else { return }
+        recCheck.state = timelapseOn ? .on : .off
+        let n = timelapseFrameCount()
+        recFramesLabel.stringValue = n == 0
+            ? (timelapseOn ? "Nothing recorded yet — launch SAI and draw."
+                           : "Recording is off.")
+            : "\(n) frame\(n == 1 ? "" : "s") recorded."
+        recMakeBtn.isEnabled = n > 0
+        recDiscardBtn.isEnabled = n > 0
+        let use = timelapseUsage(timelapseFramesDir)
+        if use.total == 0 {
+            recUsageLabel.stringValue = ""
+        } else {
+            var lines = ["Using \(prettyBytes(use.total)) on disk"
+                         + (use.canvases.count > 1 ? " across \(use.canvases.count) canvases:" : ":")]
+            for c in use.canvases.prefix(6) {
+                lines.append("   \(c.name.isEmpty ? "(unnamed)" : c.name) — "
+                             + "\(c.frames) frame\(c.frames == 1 ? "" : "s"), \(prettyBytes(c.bytes))")
+            }
+            if use.canvases.count > 6 { lines.append("   …and \(use.canvases.count - 6) more") }
+            lines.append("Frames are deleted as they are encoded. Beyond ~2 GB the oldest detail is "
+                         + "thinned (every 2nd frame) rather than losing the start.")
+            recUsageLabel.stringValue = lines.joined(separator: "\n")
+        }
+        recFolderLabel?.stringValue = prettyPath(timelapseOutputFolder())
+    }
+
+    /// Show a finished video in the Recording tab. The path is remembered so
+    /// the preview survives a relaunch — otherwise the tab looks empty right
+    /// after the app restarts, as though nothing had ever been made.
+    func showPreview(_ path: String) {
+        guard recPreview != nil else { return }
+        guard FileManager.default.fileExists(atPath: path) else {
+            recPreview.isHidden = true; recPreviewLabel.stringValue = ""; return
+        }
+        try? path.write(toFile: appSupport() + "/timelapse-last.txt",
+                        atomically: true, encoding: .utf8)
+        recPreview.player = AVPlayer(url: URL(fileURLWithPath: path))
+        recPreview.isHidden = false
+        recHidePreviewBtn?.isHidden = false
+        recPreviewLabel.stringValue = "Last video: \(prettyPath(path))"
+        applyLayout()
+    }
+
+    /// Dismiss the preview and forget the video, so it does not reappear on the
+    /// next launch. The file itself is untouched.
+    @objc func hidePreview() {
+        recPreview?.player?.pause()
+        recPreview?.player = nil
+        recPreview?.isHidden = true
+        recHidePreviewBtn?.isHidden = true
+        recPreviewLabel?.stringValue = ""
+        try? FileManager.default.removeItem(atPath: appSupport() + "/timelapse-last.txt")
+        applyLayout()
+    }
+
+    func restorePreview() {
+        guard let p = try? String(contentsOfFile: appSupport() + "/timelapse-last.txt",
+                                  encoding: .utf8) else { return }
+        showPreview(p.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    @objc func autoWakeCheckToggled() { autoWake = (autoWakeCheck.state == .on) }
+
+    @objc func clearSettingsScratch() { settingsScratch?.clear() }
+
+    @objc func recToggle() { timelapseOn = (recCheck.state == .on); refreshRecordingTab() }
+
+    @objc func recLengthChanged() {
+        try? String(recLengthPopup.indexOfSelectedItem)
+            .write(toFile: appSupport() + "/timelapse-length.txt", atomically: true, encoding: .utf8)
+    }
+
+    @objc func chooseTimelapseFolder() {
+        let p = NSOpenPanel()
+        p.canChooseDirectories = true; p.canChooseFiles = false; p.allowsMultipleSelection = false
+        p.prompt = "Choose"
+        p.directoryURL = URL(fileURLWithPath: timelapseOutputFolder())
+        guard p.runModal() == .OK, let url = p.url else { return }
+        try? url.path.write(toFile: appSupport() + "/timelapse-folder.txt",
+                            atomically: true, encoding: .utf8)
+        refreshRecordingTab()
+    }
+
+    func tabView(_ tabView: NSTabView, didSelect item: NSTabViewItem?) {
+        refreshRecordingTab()
+        // The console only refreshed while the old "Settings" disclosure was
+        // open, so in the tabbed layout it showed as an empty black box.
+        if item?.identifier as? String == "Developer" { updateConsole() }
+        applyLayout()
     }
 
     @objc func toggleAdvanced() {
@@ -2159,6 +2664,11 @@ final class SetupController: NSObject, NSApplicationDelegate {
     /// Simple mode hides any requirement that's already satisfied — a finished
     /// setup collapses to a title, one status line and the Launch button.
     func applyLayout() {
+        // addTabViewItem() selects the first tab immediately, which fires
+        // tabView(_:didSelect:) -> applyLayout() while buildWindow() is still
+        // running and `window` is nil. Force-unwrapping it there crashed the app
+        // on launch. Cheap guard, and it also covers any future early caller.
+        guard window != nil else { return }
         for (i, r) in reqs.enumerated() {
             let ok = r.ok()
             rowViews[i].isHidden = advanced ? false : ok
@@ -2180,16 +2690,31 @@ final class SetupController: NSObject, NSApplicationDelegate {
             allSetLabel.isHidden = true
         }
         footerLabels.forEach { $0.isHidden = !advanced }
-        settingsOnlyViews.forEach { $0.isHidden = !advanced }
-        devSection.isHidden = !advanced
+        // devSection lives in its own tab now; never hide it wholesale.
         devCheck.state = devMode ? .on : .off
         consoleScroll.isHidden = !devMode
         devSection.arrangedSubviews.forEach { if $0 !== devCheck { $0.isHidden = !devMode } }
-        advancedBtn.title = advanced ? "Settings ⌃" : "Settings ⌄"
+        autoWakeCheck?.state = autoWake ? .on : .off
+        advancedBtn.title = advanced ? "Show all steps ⌃" : "Show all steps ⌄"
         if devMode && advanced { updateConsole() }
         window.layoutIfNeeded()
-        let fit = content.fittingSize
-        let want = NSSize(width: max(rowWidth + 48, fit.width), height: fit.height)
+        // Measure the tab actually on screen: the tabs differ a lot in height,
+        // and sizing to Setup while Developer is showing clips the console.
+        let shown = (tabView?.selectedTabViewItem?.view as? NSStackView) ?? content
+        let fit = shown!.fittingSize
+        // The tab bar and its insets are NOT part of the tab's content area, so
+        // sizing the window to the stack's fittingSize alone left the bottom of
+        // every tab clipped by roughly the height of the tab strip.
+        var chromeW: CGFloat = 0, chromeH: CGFloat = 0
+        if let tv = tabView {
+            chromeW = max(0, tv.frame.width - tv.contentRect.width)
+            chromeH = max(0, tv.frame.height - tv.contentRect.height)
+        }
+        // A couple of points of slack. Measuring chrome from the current frame
+        // is inherently one layout behind, and being even slightly short is not
+        // a cosmetic problem — the stack compresses its contents to fit.
+        let want = NSSize(width: max(rowWidth + 48, fit.width + chromeW),
+                          height: fit.height + chromeH + 4)
         // Only resize on a real change — applyLayout() runs from the 1s refresh
         // timer, and setting the same size every tick makes the window shimmer.
         if abs(window.contentLayoutRect.height - want.height) > 0.5
@@ -2276,9 +2801,19 @@ final class SetupController: NSObject, NSApplicationDelegate {
         let auto = storedMaxPressureOverride() == nil
         switch all.count {
         case 0:
-            pressureInfo.stringValue = auto
-                ? "no tablet reported a pressure range — using the safe default \(inUse)"
-                : "set by you: \(inUse) · no tablet connected to check against"
+            // With nothing plugged in, `inUse` is usually the value REMEMBERED
+            // from the last tablet, not a default. Calling it "the safe default"
+            // hid the fact that the app was running on stale information — and
+            // hid the more useful message, which is that no tablet is connected.
+            if !auto {
+                pressureInfo.stringValue = "set by you: \(inUse) · no tablet connected to check against"
+            } else if let cached = cachedDetectedFullScale(), cached + 1 == inUse {
+                pressureInfo.stringValue =
+                    "⚠️ no tablet connected — using \(inUse), remembered from the last one"
+            } else {
+                pressureInfo.stringValue =
+                    "⚠️ no tablet connected — using the safe default \(inUse)"
+            }
         case 1:
             let t = all[0]
             pressureInfo.stringValue = auto
@@ -2962,6 +3497,98 @@ final class SetupController: NSObject, NSApplicationDelegate {
     }
     @objc func toggleDevMode(_ sender: NSMenuItem) { devMode.toggle() }
 
+    // ---- timelapse recording -----------------------------------------------
+    // Off by default and persisted, like dev mode. The flag is read when SAI
+    // LAUNCHES (it becomes WT_TIMELAPSE in the Wine environment), so toggling it
+    // while SAI is already running does nothing until the next launch — the menu
+    // title says so rather than leaving people to wonder.
+    var timelapseOn: Bool = timelapseRecordingEnabled() {
+        didSet {
+            // Inverted: the file marks OFF, so the default (no file) records.
+            let p = timelapseOffMarker()
+            if timelapseOn { try? FileManager.default.removeItem(atPath: p) }
+            else { try? "1".write(toFile: p, atomically: true, encoding: .utf8) }
+            rebuildMenus()
+            refreshRecordingTab()
+        }
+    }
+    @objc func toggleTimelapse(_ sender: NSMenuItem) { timelapseOn.toggle() }
+
+    var timelapseFramesDir: String { "\(appPrefix)/drive_c/sai-timelapse/frames" }
+
+    func timelapseFrameCount() -> Int {
+        (try? FileManager.default.contentsOfDirectory(atPath: timelapseFramesDir))?
+            .filter { $0.hasSuffix(".frame") }.count ?? 0
+    }
+
+    /// Build a video from whatever has been captured. Runs the encoder that
+    /// ships in Resources — signed with the app, so no separate Gatekeeper
+    /// approval — off the main thread, since a long session takes a moment.
+    @objc func makeTimelapseVideo() {
+        let n = timelapseFrameCount()
+        guard n > 0 else {
+            alertUser("No frames recorded yet.\n\nTurn on “Record timelapse”, then launch SAI and draw. "
+                      + "Each finished stroke captures a frame.")
+            return
+        }
+        guard let enc = Bundle.main.resourcePath.map({ "\($0)/sai-timelapse-encoder" }),
+              FileManager.default.isExecutableFile(atPath: enc) else {
+            alertUser("The timelapse encoder is missing from the app bundle.")
+            return
+        }
+
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HHmm"
+        let out = "\(timelapseOutputFolder())/SAI Timelapse \(f.string(from: Date())).mp4"
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: enc)
+            // 60s cap: a long session yields thousands of frames, and dropping
+            // evenly spaced ones hits a target length exactly, which raising fps
+            // cannot do. Frames are consumed as they encode, so the next session
+            // starts clean without anyone having to tidy up.
+            p.arguments = ["--frames", self.timelapseFramesDir, "--out", out,
+                           "--fps", "12", "--max-seconds", "\(timelapseMaxSeconds())"]
+            let pipe = Pipe(); p.standardOutput = pipe; p.standardError = pipe
+            try? p.run()
+            let log = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            p.waitUntilExit()
+            wlog("timelapse: encoder exited \(p.terminationStatus)\n\(log)")
+
+            DispatchQueue.main.async {
+                if p.terminationStatus == 0, FileManager.default.fileExists(atPath: out) {
+                    self.showPreview(out)
+                    self.refreshRecordingTab()
+                } else {
+                    alertUser("Could not build the video from \(n) frame(s).\n\n\(log)")
+                }
+            }
+        }
+    }
+
+    @objc func revealTimelapseFrames() {
+        try? FileManager.default.createDirectory(atPath: timelapseFramesDir,
+                                                 withIntermediateDirectories: true)
+        NSWorkspace.shared.activateFileViewerSelecting(
+            [URL(fileURLWithPath: timelapseFramesDir)])
+    }
+
+    @objc func discardTimelapseFrames() {
+        let n = timelapseFrameCount()
+        guard n > 0 else { alertUser("Nothing recorded to discard."); return }
+        let a = NSAlert()
+        a.messageText = "Discard \(n) recorded frame(s)?"
+        a.informativeText = "This only deletes the timelapse recording. Your artwork is untouched."
+        a.addButton(withTitle: "Discard"); a.addButton(withTitle: "Cancel")
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        for f in (try? FileManager.default.contentsOfDirectory(atPath: timelapseFramesDir)) ?? []
+        where f.hasSuffix(".frame") {
+            try? FileManager.default.removeItem(atPath: "\(timelapseFramesDir)/\(f)")
+        }
+        rebuildMenus()
+        refreshRecordingTab()
+    }
+
     func openPath(_ p: String, createIfMissing: Bool = false) {
         if !FileManager.default.fileExists(atPath: p) {
             guard createIfMissing else { alertUser("Nothing there yet:\n\n\(p)"); return }
@@ -3267,6 +3894,8 @@ final class SetupController: NSObject, NSApplicationDelegate {
         g_rawSeen.removeAll()          // fresh census per test run
         testBtn.title = "Stop Test"
         testHint.isHidden = false; barRow.isHidden = false
+        settingsScratch?.clear()
+        applyLayout()
         // fast (~60fps), .common-mode timer so the bar tracks the pen instantly and
         // keeps updating even while the window is being interacted with. The bar is
         // custom-drawn (no easing), so it jumps to the real value like the % does.
@@ -3296,6 +3925,7 @@ final class SetupController: NSObject, NSApplicationDelegate {
         if testBtn != nil { testBtn.title = "Test pen" }
         if testHint != nil { testHint.isHidden = true }
         if barRow != nil { barRow.isHidden = true }
+        applyLayout()
     }
 
     @objc func launchTapped() {
