@@ -31,6 +31,22 @@ else
   echo "  host architecture only (UNIVERSAL=0)"
 fi
 
+# The timelapse encoder is a SEPARATE binary, not part of the helper. The
+# helper's job is realtime pen input; an encoder doing video work and disk I/O
+# in the same process invites jitter on exactly the path this project exists to
+# protect. It is also far easier to test standalone against a folder of frames.
+echo "Building timelapse encoder..."
+if [ "${UNIVERSAL:-1}" = "1" ]; then
+  ( cd "$REPO/timelapse-encoder" \
+    && swiftc -O -target x86_64-apple-macos12.0 -o .enc-x86 EncoderCore.swift main.swift \
+    && swiftc -O -target arm64-apple-macos12.0  -o .enc-arm EncoderCore.swift main.swift \
+    && lipo -create -output sai-timelapse-encoder .enc-x86 .enc-arm \
+    && rm -f .enc-x86 .enc-arm )
+else
+  ( cd "$REPO/timelapse-encoder" \
+    && swiftc -O -o sai-timelapse-encoder EncoderCore.swift main.swift )
+fi
+
 echo "Assembling bundle..."
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
@@ -45,6 +61,11 @@ chmod +x "$APP/Contents/MacOS/SAIPenPressure"
 cp "$REPO/wintab-src/wintab32.dll"  "$APP/Contents/Resources/wintab32.dll"
 cp "$REPO/install-wine.sh"          "$APP/Contents/Resources/install-wine.sh"
 chmod +x "$APP/Contents/Resources/install-wine.sh"
+# Ships inside the bundle so it is signed with the app and needs no separate
+# Gatekeeper approval. Lives in Resources rather than MacOS: it is a tool the
+# app invokes, not a second launchable app.
+cp "$REPO/timelapse-encoder/sai-timelapse-encoder" "$APP/Contents/Resources/sai-timelapse-encoder"
+chmod +x "$APP/Contents/Resources/sai-timelapse-encoder"
 
 # App icon — render the pen emoji to a 1024px PNG, then build an .icns.
 # Best-effort: if anything fails the app just uses the default icon (non-fatal).
