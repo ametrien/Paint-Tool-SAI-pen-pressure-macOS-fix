@@ -182,11 +182,25 @@ not one integer per build.
 
 ## Phase 1 — canvas reader
 
+**Status: done.** Files as built:
+
 | File | Contents |
 |---|---|
-| `wintab-src/timelapse_core.h` | Pure logic — no Win32, no I/O. Fully testable. |
-| `wintab-src/timelapse.c` | Threading, SEH, file output, env flags. |
-| `wintab-src/sai_offsets.ini` | Per-build offset table, shipped into the prefix. |
+| `wintab-src/timelapse_core.h` | Pure logic — no Win32, no I/O. 40 tests, no SAI needed. |
+| `wintab-src/timelapse_win.h` | Win32 glue: validated read, capture thread, frame files. |
+| `tests/test_timelapse_core.c` | Synthetic address space; wired into `run-tests.sh`. |
+
+Two deviations from the design, both forced:
+
+**The glue is a header, not `timelapse.c`.** The build command is written out in
+`README.md`, `CONTRIBUTING.md`, `TESTING.md`, `.github/workflows/build.yml` and the header of
+`wintab32.c`. A second translation unit would need adding to all five, and whichever was
+missed would hand somebody a link error. Included by `wintab32.c` instead, exactly as
+`wintab_core.h` already is.
+
+**`sai_offsets.ini` deferred.** Offsets are a `TLC_LAYOUT` struct for now — still data rather
+than scattered constants, so moving it to a file later is mechanical. Not worth the file I/O
+and parser inside SAI's process until there is a second build to support.
 
 **Testability seam.** Every memory access goes through:
 
@@ -209,7 +223,14 @@ Unlike art-timelapse, a bad pointer here kills SAI and unsaved work.
 - **Validate before every read** — `VirtualQuery`; require committed + readable. An external
   reader gets a harmless error on a bad pointer; in-process we get an access violation, so
   this check is doing real work.
-- **SEH backstop** — `__try`/`__except` around the walk (mingw supports it on x86-64).
+- **~~SEH backstop~~ — not possible.** `__try`/`__except` is an MSVC extension;
+  `x86_64-w64-mingw32-gcc` rejects it (verified, not assumed). The defence is therefore
+  inverted: rather than catching faults we make them impossible, via the `VirtualQuery`
+  validation above plus the core's plausibility guards. A vectored exception handler
+  (`AddVectoredExceptionHandler`, which *does* work) latches the feature off if a fault ever
+  occurs, but does not attempt to resume — recovering would mean `longjmp` out of a VEH
+  (undefined) or rewriting `RIP`, and adding a fragile mechanism to guard a case validated
+  reads already prevent is a bad trade. `tl: FAULT` in the log is the signal to revisit.
 - **Fault latch** — on any fault or failed check: log, disable permanently, never retry.
 - **Plausibility caps** — dimensions in range, `count_x * count_y` under a ceiling, tile
   pointers non-null. A wrong `session_offset` must fail these, not walk garbage.
