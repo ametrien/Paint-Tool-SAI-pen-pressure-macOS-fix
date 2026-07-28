@@ -6,7 +6,8 @@
 [![license](https://img.shields.io/github/license/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix)](LICENSE)
 
 Run **PaintTool SAI Ver.2** on a Mac (via Wine) **with real Wacom pen pressure** — the one
-thing that normally doesn't survive the trip through Wine.
+thing that normally doesn't survive the trip through Wine — and **record a timelapse of your
+canvas** while you draw.
 
 macOS + Wine already run SAI and move the cursor fine, but Wine's Mac driver throws away pen
 **pressure**. This project adds it back with a tiny two-part bridge:
@@ -16,6 +17,13 @@ macOS + Wine already run SAI and move the cursor fine, but Wine's Mac driver thr
 
 The result: pressure-sensitive strokes that taper with how hard you press, plus your mouse/
 trackpad still paint normally.
+
+**And since v0.2.0, it records timelapses.** SAI has no recording feature of its own, so the usual
+answer is to screen-record and edit afterwards. This reads the canvas straight out of SAI instead
+and captures **one frame per finished brush stroke** — so the video is the artwork alone, with no
+panels, no cursor, and no camera lurching about when you zoom or pan. Layer opacity and blend modes
+come through, several open canvases become one video each, and it is on by default.
+[More below.](#canvas-timelapse)
 
 ## What it looks like
 
