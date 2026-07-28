@@ -5,6 +5,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-07-28
+
+### Fixed
+- **Making a video no longer stops the recording.** "Make video…" has to pause the encoder to
+  finish the video off, but it never started it again — so you got one video per SAI session, and
+  the only way to record more was to quit SAI and relaunch. Nothing about the button implied that,
+  which is why it went unnoticed: it did what it said, and quietly did something else too.
+- **The Recording tab updates while you watch it.** It showed whatever it said when you switched to
+  it, so drawing for ten minutes still read "Nothing recorded yet".
+- **Recording survives restarting the app.** The encoder only ever started when the app launched
+  SAI, so reopening the app while SAI was already running left the rest of that session unrecorded,
+  silently. It now starts whenever recording is on and SAI is up, and restarts if it stops.
+- **Each recording gets its own filename.** Every session wrote to `SAI Timelapse.mp4`, so making a
+  second video — or simply drawing again the next day — replaced the previous one without asking.
+  Sessions are timestamped now.
+- **Recordings are no longer stranded by an app update.** Counting and finishing were tied to the
+  current session's name, so a recording made before an update became invisible: still on disk, no
+  way to turn it into a video.
+
 ## [0.2.1] — 2026-07-28
 
 ### Changed
