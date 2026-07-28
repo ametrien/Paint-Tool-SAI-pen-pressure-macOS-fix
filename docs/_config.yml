@@ -1,5 +1,5 @@
-title: SAI Pen Pressure for macOS
-description: Pen pressure for PaintTool SAI Ver.2 running under Wine on macOS.
+title: SAI Pen Pressure & Timelapse Recorder for macOS
+description: Real pen pressure and canvas timelapse recording for PaintTool SAI Ver.2 under Wine on macOS.
 theme: jekyll-theme-cayman
 # GitHub Pages builds this with its own Jekyll — no Node, no build step, no
 # dependencies to keep up to date. Deliberately minimal: the appeal of this

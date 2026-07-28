@@ -1,5 +1,5 @@
 ---
-title: SAI Pen Pressure for macOS
+title: SAI Pen Pressure & Timelapse Recorder for macOS
 ---
 
 PaintTool SAI Ver.2 runs on macOS under Wine. It launches, it draws, it looks right — and every
