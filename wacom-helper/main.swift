@@ -1400,13 +1400,26 @@ final class PenScratchView: NSView {
     }
     private func stopFade() { fade?.invalidate(); fade = nil }
 
+    /// Runs the same pipeline the helper uses before sending a value to SAI, so
+    /// the pad shows what the settings above it actually do rather than a
+    /// prettier approximation of it.
     private func width(for e: NSEvent) -> CGFloat {
-        var p = CGFloat(e.pressure)
-        if p <= 0 {
-            let raw = max(0, lastKeyP)
-            p = CGFloat(raw) / CGFloat(max(1, PressureCore.maxPressure))
-        }
-        return 1 + p * 22          // visibly tapered without becoming a blob
+        // 1. raw 0…1. NSEvent carries pressure for tablet input; fall back to
+        //    whatever our own tap last saw for paths that report none.
+        var p = Double(e.pressure)
+        if p <= 0 { p = Double(max(0, lastKeyP)) / Double(max(1, PressureCore.maxPressure)) }
+        p = min(1, max(0, p))
+
+        // 2. quantise to the configured level count, so picking 1024 against
+        //    8192 is visible as steppier width rather than being invisible.
+        let levels = Double(max(1, PressureCore.maxPressure))
+        p = (p * levels).rounded() / levels
+
+        // 3. pen feel and the feel curve are the same knob — both write
+        //    PressureCore.pressureGamma — so one call covers both.
+        p = PressureCore.curved(p)
+
+        return 1 + CGFloat(p) * 22     // tapered without becoming a blob
     }
 
     override func mouseDown(with e: NSEvent) {
@@ -2350,17 +2363,17 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         // immediate, which is the only way to judge "does this feel right".
         settingsScratch = PenScratchView()
         settingsScratch.translatesAutoresizingMaskIntoConstraints = false
-        settingsScratch.heightAnchor.constraint(equalToConstant: 120).isActive = true
+        settingsScratch.heightAnchor.constraint(equalToConstant: 110).isActive = true
         settingsScratch.widthAnchor.constraint(equalToConstant: CGFloat(rowWidth)).isActive = true
         testBtn = NSButton(title: "Test pen", target: self, action: #selector(testTapped))
         testBtn.bezelStyle = .rounded; testBtn.controlSize = .small
         settingsTab.addArrangedSubview(testBtn)
         settingsTab.addArrangedSubview(barRow)
         settingsTab.addArrangedSubview(testHint)
-        // TEMPORARILY OUT. The settings above were reported missing while the
-        // pad was the only thing showing, so it is parked until the tab is
-        // confirmed good. Re-add this line to bring it back.
-        // settingsTab.addArrangedSubview(settingsScratch)
+        settingsTab.addArrangedSubview(settingsScratch)
+        settingsTab.addArrangedSubview(
+            lbl("Strokes use the settings above — change one and draw again to compare.",
+                10, color: .tertiaryLabelColor))
         // Re-adding moves it to the end: destructive actions belong at the
         // bottom, not wedged between pen feel and the feel curve.
         settingsTab.addArrangedSubview(scratchRow)
