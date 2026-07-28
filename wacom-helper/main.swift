@@ -2368,31 +2368,19 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         let gHint = lbl("1.00 = exactly what the tablet reports · below = lighter touch goes further · above = press harder", 9, color: .tertiaryLabelColor)
         gHint.preferredMaxLayoutWidth = rowWidth
         settingsTab.addArrangedSubview(gHint)
-        // A curve you cannot feel is a number. Draw here and the change is
-        // immediate, which is the only way to judge "does this feel right".
-        settingsScratch = PenScratchView()
-        settingsScratch.translatesAutoresizingMaskIntoConstraints = false
-        // The height is a PREFERENCE, not a requirement. As a required
-        // constraint the pad could not give way when the stack was short of
-        // room, so the whole deficit was absorbed by the rows above it — which
-        // NSStackView does by compressing them, to zero if need be. That is
-        // what made every pen setting disappear the moment the pad was added.
-        // Now the pad shrinks first and the settings keep their height.
-        let padHeight = settingsScratch.heightAnchor.constraint(equalToConstant: 110)
-        padHeight.priority = .defaultLow
-        padHeight.isActive = true
-        settingsScratch.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
-        settingsScratch.widthAnchor.constraint(lessThanOrEqualToConstant: CGFloat(rowWidth)).isActive = true
-        settingsScratch.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         testBtn = NSButton(title: "Test pen", target: self, action: #selector(testTapped))
         testBtn.bezelStyle = .rounded; testBtn.controlSize = .small
         settingsTab.addArrangedSubview(testBtn)
         settingsTab.addArrangedSubview(barRow)
         settingsTab.addArrangedSubview(testHint)
-        settingsTab.addArrangedSubview(settingsScratch)
-        settingsTab.addArrangedSubview(
-            lbl("Strokes use the settings above — change one and draw again to compare.",
-                10, color: .tertiaryLabelColor))
+
+        // The scratch pad is NOT here on purpose. It repeatedly cost the pen
+        // settings their place on this tab — most recently by absorbing the
+        // stack's layout in a way that pushed them out — and the settings
+        // matter more than a nice-to-have preview of the pen feel. The
+        // PenScratchView class is kept because it works and may find a better
+        // home (its own tab, or a sheet), but nothing on this tab uses it.
+
         // Re-adding moves it to the end: destructive actions belong at the
         // bottom, not wedged between pen feel and the feel curve.
         settingsTab.addArrangedSubview(scratchRow)
