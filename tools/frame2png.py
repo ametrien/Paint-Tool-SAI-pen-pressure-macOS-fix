@@ -36,6 +36,16 @@ def main():
     if len(sys.argv) < 2:
         print(__doc__)
         return 2
+
+    # --dims prints "WxH" and nothing else, so the assembler can group frames by
+    # size before encoding. Mixed sizes in one video are not hypothetical: the
+    # scratch pad and any canvas resize both produce them.
+    if sys.argv[1] == "--dims":
+        blob = Path(sys.argv[2]).read_bytes()
+        _, w, h, _, _, _, _ = HDR.unpack_from(blob, 0)
+        print(f"{w}x{h}")
+        return 0
+
     src = Path(sys.argv[1])
     dst = Path(sys.argv[2]) if len(sys.argv) > 2 else src.with_suffix(".png")
 
