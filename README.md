@@ -17,6 +17,29 @@ macOS + Wine already run SAI and move the cursor fine, but Wine's Mac driver thr
 The result: pressure-sensitive strokes that taper with how hard you press, plus your mouse/
 trackpad still paint normally.
 
+## What it looks like
+
+Everything is in one window — four tabs, no terminal.
+
+<p align="center">
+  <img src="docs/assets/screenshots/setup.png" alt="Setup tab: status of Wine, SAI, licence and Input Monitoring, with a Launch button" width="49%">
+  <img src="docs/assets/screenshots/pen.png" alt="Pen tab: pressure levels, pen feel, and the pen feel curve" width="49%">
+</p>
+<p align="center">
+  <img src="docs/assets/screenshots/recording.png" alt="Recording tab: canvas timelapse settings" width="49%">
+  <img src="docs/assets/screenshots/developer.png" alt="Developer tab: logs, diagnostics and a health check" width="49%">
+</p>
+
+**Setup** gets SAI running and tells you which of the four prerequisites are missing.
+**Update SAI…** swaps in a newer SAI build without touching your licence, brushes or preferences —
+useful because Ver.2 is a rolling preview.
+**Pen** is pressure levels, pen feel and the response curve.
+**Recording** is the canvas timelapse.
+**Developer** holds the logs, a diagnostics dump and a health check.
+
+---
+
+
 > **Status:** working. Position + pressure + hover tracking + mouse coexistence all work, plus
 > multi-monitor and Mac-style Cmd shortcuts. See [Limitations](#limitations).
 >
@@ -206,26 +229,6 @@ bash ./launch-sai2-pressure.sh
 
 **Kill switch** if anything ever misbehaves: `echo 0 > <prefix>/drive_c/wt_pressure.txt`, or
 just close SAI / quit the helper.
-
----
-
-## The app
-
-<p align="center">
-  <img src="docs/assets/screenshots/setup.png" alt="Setup tab: status of Wine, SAI, licence and Input Monitoring, with a Launch button" width="49%">
-  <img src="docs/assets/screenshots/pen.png" alt="Pen tab: pressure levels, pen feel, and the pen feel curve" width="49%">
-</p>
-<p align="center">
-  <img src="docs/assets/screenshots/recording.png" alt="Recording tab: canvas timelapse settings" width="49%">
-  <img src="docs/assets/screenshots/developer.png" alt="Developer tab: logs, diagnostics and a health check" width="49%">
-</p>
-
-**Setup** gets SAI running and tells you which of the four prerequisites are missing.
-**Update SAI…** swaps in a newer SAI build without touching your licence, brushes or preferences —
-useful because Ver.2 is a rolling preview.
-**Pen** is pressure levels, pen feel and the response curve.
-**Recording** is the canvas timelapse.
-**Developer** holds the logs, a diagnostics dump and a health check.
 
 ---
 
