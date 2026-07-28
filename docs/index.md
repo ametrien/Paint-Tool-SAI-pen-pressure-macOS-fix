@@ -88,7 +88,8 @@ and a pen that behaves like a pen.
 
 ## Canvas timelapse
 
-*Requires v0.2.0 or later.*
+*Requires v0.2.0 or later. macOS only — on Windows or Linux use
+[art-timelapse](https://github.com/cromachina/art-timelapse), which is where this idea came from.*
 
 Recording is built in and on by default. It captures **one frame per finished brush stroke**, so a
 long session becomes a couple of minutes of video.

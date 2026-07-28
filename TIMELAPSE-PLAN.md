@@ -71,9 +71,17 @@ It also means the encoder can be tested standalone against a folder of synthetic
 
 ## Derived offsets — sai2.exe Alpha.2026.07.27
 
-MD5 `96b7a5b218b6953647405874528936e1`. Derived independently with
-`tools/sai-offset-scan` against a live process (see [Licensing](#licensing)) — **not** copied
-from art-timelapse, whose newest entry is the 2026.07.12 build.
+MD5 `96b7a5b218b6953647405874528936e1`. Every value here was **verified against a live process**
+with `tools/sai-offset-scan`. Their provenance differs and it is worth being exact about which is
+which (see [Licensing](#licensing)):
+
+- **`session_offset` was found by our scanner.** It had to be: art-timelapse's newest entry is the
+  2026.07.12 build and ours is 07.27, so there was nothing to look up.
+- **The field layout was informed by art-timelapse's**, then confirmed. Reading their `sai.py` is
+  what told us to expect `width` at `+0x28` and `name` at `+0x8f8`; the scanner used those as its
+  hypothesis and checked them against five canvases of deliberately awkward geometry. So this is
+  independent *verification* of published facts, not clean-room derivation, and calling it the
+  latter would be overstating it.
 
 | | Value |
 |---|---|
@@ -335,9 +343,18 @@ code naming the trap it protects.
 
 ## Licensing
 
-art-timelapse is **GPL-3.0**; this repo is **MIT**. We do not copy its offset table or struct
-definitions. Offsets are derived independently via `WT_TIMELAPSE_SCAN`, and the method is
-documented here so the provenance is clear.
+art-timelapse is **GPL-3.0**; this repo is **MIT**. **No code was copied** — not a line.
+
+What was taken is the *idea*: that SAI's canvas can be read out of the running process, and roughly
+where in a canvas structure to look. Those offsets are facts about SYSTEMAX's binary rather than
+anyone's creative work, and every one of them was verified here against a live process. The thing
+that would have been a problem — transcribing their offset table as a table — is the thing we did
+not do, and could not have: their table has no entry for this SAI build.
+
+Being precise rather than flattering: the field layout was **informed by** reading their `sai.py`
+and then verified, not discovered blind. Only `session_offset` was genuinely found from scratch.
+The architecture differs substantially — they read SAI from outside the process, we run inside it —
+but the debt for the idea is real and is credited in the README.
 
 ---
 

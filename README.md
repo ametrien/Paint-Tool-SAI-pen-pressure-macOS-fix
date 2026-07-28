@@ -243,6 +243,10 @@ just close SAI / quit the helper.
 ## Canvas timelapse
 
 > **Requires v0.2.0 or later.** Earlier releases have no recording.
+>
+> **macOS only.** On **Windows or Linux**, use
+> [cromachina/art-timelapse](https://github.com/cromachina/art-timelapse) — it does the same job on
+> those platforms, and it is where the idea came from. See [credit](#credit) below.
 
 Records your drawing as a video — **one frame per finished brush stroke**, so hours of work
 collapse into a couple of minutes.
@@ -335,6 +339,26 @@ swiftc -O -o wacom-pressure-helper main.swift PressureCore.swift
 Contributions welcome — especially testing on other tablets and Macs.
 
 ---
+
+## Credit
+
+The timelapse exists because of [**cromachina/art-timelapse**](https://github.com/cromachina/art-timelapse),
+which has been doing this on Windows and Linux for a while. The insight — that SAI's canvas can be
+read out of the running process, so a timelapse can show the artwork rather than a recording of the
+application — is theirs, and so is the knowledge of roughly where to look inside a canvas structure.
+
+**On Windows or Linux, go and use it.** It is the right tool there, and this project has nothing to
+offer those platforms.
+
+The implementations differ substantially. art-timelapse reads SAI from *outside* the process, which
+on macOS would need a debugger entitlement and a permission prompt; this reads it from *inside*,
+because a tablet bridge already runs in there for pressure — which also means a finished brush
+stroke is something we are told rather than something inferred from mouse events. No code was
+copied. The memory offsets are facts about SAI's binary and were verified here against a live
+process, though the field layout was informed by theirs rather than found blind; the full account is
+in [TIMELAPSE-PLAN.md](TIMELAPSE-PLAN.md).
+
+art-timelapse is GPL-3.0 and this project is MIT, which is why the boundary was worth keeping clear.
 
 ## License & attribution
 
