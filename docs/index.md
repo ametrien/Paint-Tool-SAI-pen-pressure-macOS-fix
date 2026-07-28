@@ -91,6 +91,12 @@ and a pen that behaves like a pen.
 *Requires v0.2.0 or later. macOS only — on Windows or Linux use
 [art-timelapse](https://github.com/cromachina/art-timelapse), which is where this idea came from.*
 
+<p align="center">
+  <img src="assets/demo/timelapse-example.gif" alt="A short canvas timelapse: handwriting appearing stroke by stroke" width="600">
+  <br>
+  <em>Fifteen strokes played back — the canvas alone, nothing else in frame.</em>
+</p>
+
 Recording is built in and on by default. It captures **one frame per finished brush stroke**, so a
 long session becomes a couple of minutes of video.
 
