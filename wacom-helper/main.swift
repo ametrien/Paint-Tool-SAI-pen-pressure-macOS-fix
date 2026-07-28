@@ -2700,6 +2700,9 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         recordingTab.addArrangedSubview(recPreview)
 
         recordingTab.addArrangedSubview(
+            lbl("You can make a video while SAI is still open — recording carries on afterwards.",
+                11, color: .tertiaryLabelColor))
+        recordingTab.addArrangedSubview(
             lbl("Several canvases open at once are recorded separately — you get one video each.",
                 11, color: .tertiaryLabelColor))
         recordingTab.addArrangedSubview(
@@ -2917,6 +2920,14 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     }
 
     func refresh() {
+        // Keep the Recording tab current while it is being looked at. Without
+        // this it showed whatever it said when you switched to it, so drawing
+        // for ten minutes still read "Nothing recorded yet". Only when that tab
+        // is actually selected: it stats the frames folder, and there is no
+        // reason to do that once a second behind a tab nobody is looking at.
+        if (tabView?.selectedTabViewItem?.identifier as? String) == "Recording" {
+            refreshRecordingTab()
+        }
         // The STATUS ROWS always update, even while SAI is running (issue #12).
         // They used to be skipped entirely once `running` was set, so changing
         // the SAI folder or installing a licence mid-session showed no change at
@@ -3751,6 +3762,12 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
                 .filter { !$0.isEmpty }
 
             DispatchQueue.main.async {
+                // Recording continues if SAI is still open. Stopping the
+                // encoder to finalise is a means, not an intention — leaving it
+                // stopped meant one video per SAI session and no way back
+                // except quitting SAI, which is not what "Make video" implies.
+                if saiWindowIsOpen() { startLiveEncoder() }
+
                 if p.terminationStatus == 0, let first = made.first {
                     self.showPreview(first)
                     if made.count > 1 {
@@ -3812,6 +3829,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
             }
         }
         rebuildMenus()
+        if saiWindowIsOpen() { startLiveEncoder() }
         refreshRecordingTab()
     }
 
