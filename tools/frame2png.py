@@ -14,7 +14,7 @@ import sys
 import zlib
 from pathlib import Path
 
-HDR = struct.Struct("<8sIIIIQQ")   # magic, w, h, stride, format, seq, tick_ms
+HDR = struct.Struct("<8sIIIIQQQ64s")  # + canvas_id, name (header v2)
 
 
 def write_png(path, width, height, rgb_rows):
@@ -42,7 +42,7 @@ def main():
     # scratch pad and any canvas resize both produce them.
     if sys.argv[1] == "--dims":
         blob = Path(sys.argv[2]).read_bytes()
-        _, w, h, _, _, _, _ = HDR.unpack_from(blob, 0)
+        _, w, h, _, _, _, _, _, _ = HDR.unpack_from(blob, 0)
         print(f"{w}x{h}")
         return 0
 
@@ -50,11 +50,12 @@ def main():
     dst = Path(sys.argv[2]) if len(sys.argv) > 2 else src.with_suffix(".png")
 
     blob = src.read_bytes()
-    magic, w, h, stride, fmt, seq, tick = HDR.unpack_from(blob, 0)
+    magic, w, h, stride, fmt, seq, tick, cid, nm = HDR.unpack_from(blob, 0)
     magic = magic.rstrip(b"\x00").decode("ascii", "replace")
+    nm = nm.rstrip(b"\x00").decode("utf-8", "replace")
     print(f"{src.name}: magic={magic!r} {w}x{h} stride={stride} format={fmt} "
-          f"seq={seq} tick={tick}ms")
-    if magic != "SAITLF1":
+          f"seq={seq} tick={tick}ms canvas={cid:#x} name={nm!r}")
+    if magic != "SAITLF2":
         print("  !! unexpected magic — wrong file or the header layout drifted")
         return 1
 

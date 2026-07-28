@@ -13,8 +13,8 @@ import Foundation
 /// Layout (little-endian, no padding): magic[8], width, height, stride, format
 /// as UInt32, then seq and tickMs as UInt64. 40 bytes total.
 struct FrameHeader: Equatable {
-    static let byteCount = 40
-    static let magic = "SAITLF1"
+    static let byteCount = 112
+    static let magic = "SAITLF2"
 
     let width: Int
     let height: Int
@@ -22,6 +22,14 @@ struct FrameHeader: Equatable {
     let format: UInt32       // 0 = BGRA8
     let seq: UInt64
     let tickMs: UInt64
+    /// Canvas struct address. STABLE IDENTITY for one document: SAI allocates a
+    /// canvas once and never moves it. Deliberately not the name — renaming a
+    /// canvas would otherwise split its recording in two, and two canvases
+    /// sharing a name would merge into one video.
+    let canvasId: UInt64
+    /// Display label only, used to name the output file. Last one seen wins, so
+    /// renaming mid-session simply relabels the finished video.
+    let name: String
 
     /// Returns nil rather than throwing for a bad header: a partially written
     /// file is an expected condition while recording is live, not an error.
@@ -40,8 +48,11 @@ struct FrameHeader: Equatable {
         let w = Int(u32(8)), h = Int(u32(12)), s = Int(u32(16))
         // Guard before anyone allocates or indexes based on these.
         guard w > 0, h > 0, w <= 100_000, h <= 100_000, s >= w * 4 else { return nil }
+        let nameBytes = d.subdata(in: 48..<112).prefix(while: { $0 != 0 })
         return FrameHeader(width: w, height: h, stride: s,
-                           format: u32(20), seq: u64(24), tickMs: u64(32))
+                           format: u32(20), seq: u64(24), tickMs: u64(32),
+                           canvasId: u64(40),
+                           name: String(decoding: nameBytes, as: UTF8.self))
     }
 
     var pixelByteCount: Int { stride * height }
@@ -112,4 +123,22 @@ enum EncoderCore {
 
 private extension Int {
     var double: Double { Double(self) }
+}
+
+
+extension EncoderCore {
+    /// Turn a canvas name into something safe for a filename. Empty or
+    /// all-punctuation names fall back to the id so two canvases can never
+    /// collide on disk.
+    static func outputName(base: URL, canvasName: String, canvasId: UInt64,
+                           multipleCanvases: Bool) -> URL {
+        guard multipleCanvases else { return base }
+        let bad = CharacterSet(charactersIn: "/\\:?%*|\"<>")
+        let cleaned = canvasName.components(separatedBy: bad).joined()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let label = cleaned.isEmpty ? String(format: "canvas-%llx", canvasId) : cleaned
+        let ext = base.pathExtension.isEmpty ? "mp4" : base.pathExtension
+        return base.deletingPathExtension()
+            .appendingPathExtension("\(label).\(ext)")
+    }
 }

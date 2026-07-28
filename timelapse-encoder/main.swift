@@ -163,8 +163,36 @@ func frameFiles(in dir: String) -> [URL] {
         .map { URL(fileURLWithPath: dir).appendingPathComponent($0) }
 }
 
+/// Split frames by canvas before encoding, so several open documents become
+/// several videos rather than one interleaved mess. Grouping is by canvas ID
+/// (the struct address), never by name — see FrameHeader.canvasId.
+func encodeAll(_ files: [URL]) -> Int {
+    var groups: [UInt64: [URL]] = [:]
+    var labels: [UInt64: String] = [:]
+    for f in files {
+        guard let fh = try? FileHandle(forReadingAtPath: f.path),
+              let head = try? fh.read(upToCount: FrameHeader.byteCount),
+              let hdr = FrameHeader.parse(head) else { continue }
+        try? fh.close()
+        groups[hdr.canvasId, default: []].append(f)
+        labels[hdr.canvasId] = hdr.name        // last seen wins, so renames relabel
+    }
+    guard !groups.isEmpty else { return 0 }
+    if groups.count > 1 {
+        print("\(groups.count) canvases recorded — one video each")
+    }
+    let base = URL(fileURLWithPath: outPath)
+    var total = 0
+    for (id, group) in groups.sorted(by: { $0.key < $1.key }) {
+        let out = EncoderCore.outputName(base: base, canvasName: labels[id] ?? "",
+                                         canvasId: id, multipleCanvases: groups.count > 1)
+        total += encode(group.sorted { $0.lastPathComponent < $1.lastPathComponent }, to: out)
+    }
+    return total
+}
+
 @discardableResult
-func encode(_ files: [URL]) -> Int {
+func encode(_ files: [URL], to outURL: URL) -> Int {
     guard !files.isEmpty else { return 0 }
 
     let range = EncoderCore.clampRange(from: rangeFrom, to: rangeTo, count: files.count)
@@ -175,7 +203,7 @@ func encode(_ files: [URL]) -> Int {
         print("resampling \(ranged.count) frames down to \(keep.count) for a \(Int(maxSeconds))s video")
     }
 
-    let base = URL(fileURLWithPath: outPath)
+    let base = outURL
     var segment: Segment?
     var segmentIndex = 0
     var written = 0
@@ -224,7 +252,7 @@ func encode(_ files: [URL]) -> Int {
     if written > 0 {
         let secs = Double(written) / Double(fps)
         print(String(format: "wrote %@  (%d frames at %dfps = %.1fs, %.1fs elapsed)",
-                     outPath, written, fps, secs, Date().timeIntervalSince(started)))
+                     outURL.path, written, fps, secs, Date().timeIntervalSince(started)))
     }
     return written
 }
@@ -241,7 +269,7 @@ if watch {
     // machinery for no gain.
     while true {
         let files = frameFiles(in: framesDir)
-        if !files.isEmpty { encode(files) }
+        if !files.isEmpty { _ = encodeAll(files) }
         Thread.sleep(forTimeInterval: 1.0)
     }
 } else {
@@ -251,7 +279,7 @@ if watch {
         exit(1)
     }
     print("found \(files.count) frame(s)")
-    if encode(files) == 0 {
+    if encodeAll(files) == 0 {
         FileHandle.standardError.write("nothing encoded\n".data(using: .utf8)!)
         exit(1)
     }

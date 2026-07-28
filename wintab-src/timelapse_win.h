@@ -57,13 +57,23 @@
 #define TL_DEFAULT_DEBOUNCE 150          /* ms of zero pressure = stroke end  */
 #define TL_SETTLE_MS       120           /* let SAI finish compositing        */
 
+/* Frame header, v2. 112 bytes, naturally aligned, little-endian.
+ *
+ * canvas_id and name were added so several open documents can be recorded as
+ * separate videos. IDENTITY IS THE STRUCT ADDRESS, not the name: SAI allocates
+ * a canvas once and never moves it, whereas a name can be changed at any time.
+ * Keying on the name would split one document in two the moment it was renamed,
+ * and merge two documents that happened to share a name. The name rides along
+ * only as a label for the output file — last one seen wins. */
 typedef struct {
-    char     magic[8];        /* "SAITLF1"                                    */
+    char     magic[8];        /* "SAITLF2"                                    */
     uint32_t width, height;
     uint32_t stride;          /* bytes per row                                */
     uint32_t format;          /* 0 = BGRA8, matches kCVPixelFormatType_32BGRA */
     uint64_t seq;
     uint64_t tick_ms;
+    uint64_t canvas_id;       /* canvas struct address — stable identity      */
+    char     name[64];        /* UTF-8, NUL-padded; display label only        */
 } TL_FRAME_HDR;
 
 static volatile LONG  g_tl_disabled = 0;   /* latched off after a fault       */
@@ -74,7 +84,24 @@ static HANDLE         g_tl_evt = NULL;
 static HANDLE         g_tl_thread = NULL;
 static TLC_STROKE     g_tl_stroke;
 static uint64_t       g_tl_image_base = 0;
-static uint64_t       g_tl_last_hash = 0;
+/* Dedup state is PER CANVAS. A single global last-hash meant switching between
+ * two open documents compared each against the other, so every switch looked
+ * like a change and produced a frame, while a genuine no-op stroke right after
+ * a switch could be missed. */
+#define TL_MAX_TRACKED 8
+static struct { uint64_t canvas, hash; } g_tl_seen[TL_MAX_TRACKED];
+
+static uint64_t *tl_hash_slot(uint64_t canvas) {
+    int i, oldest = 0;
+    for (i = 0; i < TL_MAX_TRACKED; i++)
+        if (g_tl_seen[i].canvas == canvas) return &g_tl_seen[i].hash;
+    for (i = 0; i < TL_MAX_TRACKED; i++)
+        if (!g_tl_seen[i].canvas) { g_tl_seen[i].canvas = canvas; return &g_tl_seen[i].hash; }
+    /* More than TL_MAX_TRACKED canvases: evict slot 0. Worst case is one
+     * redundant frame, which the encoder happily accepts. */
+    g_tl_seen[oldest].canvas = canvas; g_tl_seen[oldest].hash = 0;
+    return &g_tl_seen[oldest].hash;
+}
 /* What caused the pending capture: 0 = pen pressure, 1 = mouse button. Only
  * used for the log, so a racy write between the two trigger paths is fine. */
 static volatile LONG  g_tl_trigger = 0;
@@ -206,16 +233,22 @@ static int tl_ensure_buf(uint8_t **buf, size_t *cap, size_t need) {
 /* Write .tmp then rename, so the macOS-side encoder never observes a partial
  * frame. The filesystem is the queue: no socket, no backpressure protocol, and
  * an encoder restart loses nothing. */
-static int tl_write_frame(const uint8_t *px, uint32_t w, uint32_t h) {
+static int tl_write_frame(const uint8_t *px, uint32_t w, uint32_t h,
+                          uint64_t canvas, const char *name) {
     char tmp[MAX_PATH], fin[MAX_PATH];
     TL_FRAME_HDR hdr;
     FILE *fp;
     size_t bytes = (size_t)w * h * 4u;
 
     memset(&hdr, 0, sizeof hdr);
-    memcpy(hdr.magic, "SAITLF1", 7);
+    memcpy(hdr.magic, "SAITLF2", 7);
     hdr.width = w; hdr.height = h; hdr.stride = w * 4u; hdr.format = 0;
     hdr.seq = ++g_tl_seq; hdr.tick_ms = GetTickCount64();
+    hdr.canvas_id = canvas;
+    /* memcpy not strncpy: the name is already bounded and NUL-padded by the
+     * memset above, and gcc warns about strncpy truncation here. */
+    if (name) { size_t nl = strlen(name); if (nl > sizeof hdr.name - 1) nl = sizeof hdr.name - 1;
+                memcpy(hdr.name, name, nl); }
 
     snprintf(tmp, sizeof tmp, "%s\\%08llu.tmp", TL_FRAMEDIR, (unsigned long long)hdr.seq);
     snprintf(fin, sizeof fin, "%s\\%08llu.frame", TL_FRAMEDIR, (unsigned long long)hdr.seq);
@@ -267,19 +300,26 @@ static void tl_capture_once(void) {
 
     /* Undo, pan, zoom and toolbar clicks all end a "stroke" without changing a
      * pixel. Dropping them here keeps them out of the video AND off the disk. */
+    {
+    uint64_t *slot = tl_hash_slot(canvas);
+    char cname[64];
+    if (!tlc_canvas_name(tl_read, NULL, g_tl_layout, canvas, cname, sizeof cname))
+        cname[0] = 0;
     hash = tlc_hash(g_tl_frame, (size_t)w * h * 4u);
-    if (hash == g_tl_last_hash) {
+    if (hash == *slot) {
         /* Logged, not silent: "why did I get fewer frames than strokes?" is
          * otherwise unanswerable, and the answer is usually that the trigger
          * was a toolbar click rather than a lost stroke. */
         log_line("tl: no pixel change (%s) — skipped", g_tl_trigger ? "mouse" : "pen");
         return;
     }
-    g_tl_last_hash = hash;
+    *slot = hash;
 
-    if (tl_write_frame(g_tl_frame, w, h))
-        log_line("tl: frame %llu  %ux%u  level=%d  (%s)", (unsigned long long)g_tl_seq,
-                 w, h, level, g_tl_trigger ? "mouse" : "pen");
+    if (tl_write_frame(g_tl_frame, w, h, canvas, cname))
+        log_line("tl: frame %llu  %ux%u  level=%d  (%s)  \"%s\"",
+                 (unsigned long long)g_tl_seq, w, h, level,
+                 g_tl_trigger ? "mouse" : "pen", cname);
+    }
 }
 
 /* WT_TIMELAPSE_INTERVAL=<ms>: capture on a timer instead of waiting for a
