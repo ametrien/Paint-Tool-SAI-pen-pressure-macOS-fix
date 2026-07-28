@@ -50,8 +50,14 @@ apps with a stable signing identity. So add it manually, once:
 3. Press **⇧⌘G**, paste (**⌘V**), choose the app, and switch it **on**.
 4. **Quit and reopen the app** — macOS only applies a grant on a fresh launch.
 
+**This also means you must re-grant it after upgrading.** Ad-hoc signing gives every build its
+own identity, so macOS sees a new app and silently drops the old permission — without re-showing
+the prompt. If pressure stops working right after you install a new version, this is the first
+thing to check, before suspecting the release.
+
 *Building from source on a Mac with an Apple Development certificate avoids all of this:
-`make-app.sh` signs automatically and macOS then prompts normally.*
+`make-app.sh` signs automatically, the identity stays stable across rebuilds, and macOS then
+prompts normally.*
 
 ## 5. Turn on WinTab in SAI
 
@@ -64,7 +70,12 @@ You can draw and test pressure without one — it's needed only to **save**.
 
 Buy from SYSTEMAX, get your **System ID** from *Others → System ID*, download the `.slc` from
 [the licence page](https://www.systemax.jp/en/license.html), then use **Install…** on the
-*SAI license* row. It's copied into every folder SAI might read it from.
+*SAI license* row. It's copied into every folder SAI might read it from, and kept so rebuilding
+the Wine prefix can restore it.
+
+If the `.slc` is already sitting in your SAI folder, you don't need to do anything: since
+**v0.1.12** it's picked up automatically — when you choose the folder, and again on every install
+or reinstall — and the *SAI license* row will say so.
 
 *This project cannot supply, generate or activate a licence.*
 

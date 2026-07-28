@@ -48,12 +48,18 @@ That is what most people have done, and it works. It is also heavy for what you 
 
 | | Virtual machine | This project |
 |---|---|---|
+| **Cost** | a Windows licence, plus the VM app if it's a paid one | **free, and open source** |
 | Windows licence | required | none |
 | Disk | tens of gigabytes | ~300 MB (Wine) + SAI itself, a few MB |
 | Memory | a whole second OS, running alongside macOS | a translation layer, only while SAI is open |
 | Your tablet | forwarded over virtual USB into the guest | stays on macOS, using the driver you already installed |
 | Pen pressure | depends on USB passthrough and the guest's tablet driver | read natively on macOS and handed to SAI |
 | Starting SAI | boot the VM, wait, then launch SAI | double-click |
+
+To be straight about that first row: **SAI itself is commercial software either way.** You need a
+licence from SYSTEMAX to *save* your work, whichever route you take — and you can draw, and test
+that pressure works, before buying one. What this project costs you is nothing; what it saves you
+is the Windows licence and the virtual machine around it.
 
 The tablet row is the one that decides it. In a VM your pen has to survive being forwarded
 through virtual USB and picked up again by a Windows driver inside the guest — which is precisely
