@@ -105,3 +105,17 @@ overwritten on each launch. It shows exactly what SAI received.
 ---
 
 [Home](index.md) · [Install](install.md) · [Troubleshooting](troubleshooting.md) · [How it works](how-it-works.md) · [Engineering notes](notes.md) · [GitHub](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix)
+
+---
+
+## Fast curves come out boxy
+
+
+- **Connect the tablet by USB for smooth fast strokes.** A Wacom over **Bluetooth reports at
+  only ~130 Hz**, versus **~200 Hz over USB**. At that lower rate, quickly-drawn *curves come out
+  boxy* (too few points to trace the curve) — the bridge draws every point it's given, so the
+  limit is the tablet's Bluetooth report rate, not the software. Plug in a **data** USB cable
+  (not charge-only) for the higher sample rate and noticeably smoother fast lines. Bluetooth is
+  fine for slower, deliberate drawing.
+- If you must stay wireless, raising SAI's own **Stabilizer** setting smooths the path (at the
+  cost of a little stroke "drag").
