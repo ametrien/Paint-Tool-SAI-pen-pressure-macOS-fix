@@ -86,3 +86,54 @@ Trouble? → [Troubleshooting](troubleshooting.md)
 ---
 
 [Home](index.md) · [Install](install.md) · [Troubleshooting](troubleshooting.md) · [How it works](how-it-works.md) · [Engineering notes](notes.md) · [GitHub](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix)
+
+---
+
+## Manual install, from the command line
+
+The app does all of this for you. This route exists for people who would rather see the
+steps, or who are working on the project itself.
+
+
+1. **Install Wine.** Download `wine-staging-*-osx64.tar.xz` (or the `.app`) from the
+   [Gcenx releases](https://github.com/Gcenx/macOS_Wine_builds/releases) and put
+   **Wine Staging.app** in `/Applications`.
+
+2. **Download & unzip SAI Ver.2** from systemax. Note the folder that contains `sai2.exe`.
+
+3. **Run the installer** (from this repo):
+   ```bash
+   ./install.sh
+   ```
+   It creates a Wine prefix, copies SAI into it, installs the custom `wintab32.dll`, sets the
+   DLL override, and generates your personal one-click launcher. It will ask where your SAI
+   folder is (or set `SAI2_SRC=/path/to/sai2-folder ./install.sh`).
+
+4. **Grant permission.** System Settings → **Privacy & Security** → grant your terminal app
+   (Terminal / iTerm) **Input Monitoring**, then fully quit and reopen the terminal. (That's the
+   only permission needed; the helper captures nothing without it. Cmd→Ctrl shortcuts are handled
+   by Wine, so no Accessibility permission is required.)
+
+5. **Add your license** (to be able to save): drop your `sai-*.slc` file into the prefix's SAI
+   folder — the installer prints the exact path — and restart SAI. SAI reads the license only
+   at startup.
+
+6. **Turn on WinTab in SAI:** Others → Options → **Pen Tablet** → **Use WinTab API**, then
+   restart SAI.
+
+## Daily use
+
+
+**Double-click `Start SAI2 with pen pressure.command`** (the installer places one configured
+for your setup). It starts the pressure helper and SAI together, and stops the helper when you
+close SAI.
+
+Or from a terminal:
+```bash
+WT_PRESSURE_FILE="$HOME/SAI2-pressure/drive_c/wt_pressure.txt" \
+  ./wacom-helper/wacom-pressure-helper &     # in a terminal with the permissions
+bash ./launch-sai2-pressure.sh
+```
+
+**Kill switch** if anything ever misbehaves: `echo 0 > <prefix>/drive_c/wt_pressure.txt`, or
+just close SAI / quit the helper.
