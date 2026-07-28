@@ -122,6 +122,49 @@ func timelapseMaxSeconds() -> Int {
     [30, 60, 120, 0][storedTimelapseLengthIndex()]
 }
 
+/// What one canvas has cost on disk so far.
+struct TLCanvasUsage { let name: String; let frames: Int; let bytes: Int64 }
+
+/// Frames are raw BGRA, roughly 3 MB each, so the folder grows fast enough that
+/// people deserve to see the number rather than discover it. Grouped by canvas
+/// id (the struct address) exactly as the encoder groups, so the breakdown here
+/// matches the videos that will come out.
+func timelapseUsage(_ dir: String) -> (total: Int64, canvases: [TLCanvasUsage]) {
+    let fm = FileManager.default
+    guard let names = try? fm.contentsOfDirectory(atPath: dir) else { return (0, []) }
+    var total: Int64 = 0
+    var frames: [UInt64: Int] = [:]
+    var bytes: [UInt64: Int64] = [:]
+    var labels: [UInt64: String] = [:]
+    for n in names where n.hasSuffix(".frame") {
+        let path = "\(dir)/\(n)"
+        let sz = (try? fm.attributesOfItem(atPath: path)[.size] as? Int64) ?? 0
+        total += sz ?? 0
+        // Read only the header, never the pixels: a folder of 2000 frames is
+        // gigabytes, and this runs every time the tab refreshes.
+        guard let fh = FileHandle(forReadingAtPath: path),
+              let head = try? fh.read(upToCount: 112), head.count >= 112 else { continue }
+        try? fh.close()
+        let id = head.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: 40, as: UInt64.self) }
+        frames[id, default: 0] += 1
+        bytes[id, default: 0] += sz ?? 0
+        if labels[id] == nil {
+            let raw = head.subdata(in: 48..<112).prefix(while: { $0 != 0 })
+            labels[id] = String(decoding: raw, as: UTF8.self)
+        }
+    }
+    let list = frames.keys.sorted().map {
+        TLCanvasUsage(name: labels[$0] ?? String(format: "canvas-%llx", $0),
+                      frames: frames[$0] ?? 0, bytes: bytes[$0] ?? 0)
+    }
+    return (total, list)
+}
+
+func prettyBytes(_ b: Int64) -> String {
+    let mb = Double(b) / 1_048_576
+    return mb >= 1024 ? String(format: "%.1f GB", mb / 1024) : String(format: "%.0f MB", mb)
+}
+
 /// Shorten a path for display: the home directory becomes ~.
 func prettyPath(_ p: String) -> String {
     let h = NSHomeDirectory()
@@ -1316,12 +1359,45 @@ final class PressureBar: NSView {
 /// value our own tablet tap last saw, so it still works for input paths that
 /// report no NSEvent pressure.
 final class PenScratchView: NSView {
-    private var strokes: [[(p: CGPoint, w: CGFloat)]] = []
-    private var current: [(p: CGPoint, w: CGFloat)] = []
+    private typealias Point = (p: CGPoint, w: CGFloat)
+    private struct Stroke { var pts: [Point]; var finished: Date? }
+
+    private var strokes: [Stroke] = []
+    private var current: [Point] = []
+    private var fade: Timer?
+
+    /// How long a finished stroke stays solid, then how long it takes to vanish.
+    /// Long enough to judge the taper, short enough that the pad is clean again
+    /// by the time you come back to it — so there is nothing to press to reset.
+    private let holdSeconds: TimeInterval = 2.0
+    private let fadeSeconds: TimeInterval = 2.0
+
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
 
-    func clear() { strokes.removeAll(); current.removeAll(); needsDisplay = true }
+    func clear() { strokes.removeAll(); current.removeAll(); stopFade(); needsDisplay = true }
+
+    private func alpha(_ s: Stroke) -> CGFloat {
+        guard let f = s.finished else { return 1 }              // still drawing
+        let age = Date().timeIntervalSince(f) - holdSeconds
+        if age <= 0 { return 1 }
+        return max(0, 1 - CGFloat(age / fadeSeconds))
+    }
+
+    private func startFade() {
+        guard fade == nil else { return }
+        // 20fps is plenty for a fade and costs nothing; it stops itself as soon
+        // as the pad is empty, so an idle window does no work at all.
+        let t = Timer(timeInterval: 1.0 / 20.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.strokes.removeAll { self.alpha($0) <= 0 }
+            self.needsDisplay = true
+            if self.strokes.isEmpty && self.current.isEmpty { self.stopFade() }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        fade = t
+    }
+    private func stopFade() { fade?.invalidate(); fade = nil }
 
     private func width(for e: NSEvent) -> CGFloat {
         var p = CGFloat(e.pressure)
@@ -1341,35 +1417,40 @@ final class PenScratchView: NSView {
         needsDisplay = true
     }
     override func mouseUp(with e: NSEvent) {
-        if current.count > 1 { strokes.append(current) }
+        if current.count > 1 { strokes.append(Stroke(pts: current, finished: Date())) }
         current.removeAll()
+        startFade()
         needsDisplay = true
     }
 
     override func draw(_ r: NSRect) {
         NSColor.textBackgroundColor.setFill(); r.fill()
         NSColor.separatorColor.setStroke()
-        let border = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 6, yRadius: 6)
-        border.stroke()
+        NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
+                     xRadius: 6, yRadius: 6).stroke()
+
         if strokes.isEmpty && current.isEmpty {
             let a: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 11),
                 .foregroundColor: NSColor.tertiaryLabelColor]
-            let t = "Draw here with your pen — strokes should taper as you lift"
+            let t = "Draw here with your pen — strokes taper with pressure, then fade"
             let sz = t.size(withAttributes: a)
             t.draw(at: NSPoint(x: (bounds.width - sz.width) / 2,
                                y: (bounds.height - sz.height) / 2), withAttributes: a)
             return
         }
-        NSColor.labelColor.setStroke()
-        // One path per SEGMENT, because the width changes along the stroke —
-        // a single path can only carry one line width.
-        for stroke in strokes + (current.count > 1 ? [current] : []) {
-            for i in 1..<stroke.count {
+
+        var all = strokes
+        if current.count > 1 { all.append(Stroke(pts: current, finished: nil)) }
+        for stroke in all {
+            NSColor.labelColor.withAlphaComponent(alpha(stroke)).setStroke()
+            // One path per SEGMENT: the width changes along the stroke, and a
+            // single path can only carry one line width.
+            for i in 1..<stroke.pts.count {
                 let seg = NSBezierPath()
-                seg.move(to: stroke[i - 1].p)
-                seg.line(to: stroke[i].p)
-                seg.lineWidth = (stroke[i - 1].w + stroke[i].w) / 2
+                seg.move(to: stroke.pts[i - 1].p)
+                seg.line(to: stroke.pts[i].p)
+                seg.lineWidth = (stroke.pts[i - 1].w + stroke.pts[i].w) / 2
                 seg.lineCapStyle = .round
                 seg.stroke()
             }
@@ -1497,6 +1578,9 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     var recDiscardBtn: NSButton!
     var recLengthPopup: NSPopUpButton!
     var recFolderLabel: NSTextField!
+    var settingsTab: NSStackView!
+    var settingsScratch: PenScratchView!
+    var recUsageLabel: NSTextField!
     var devCheck: NSButton!
     var console: NSTextView!
     var consoleScroll: NSScrollView!
@@ -2143,6 +2227,11 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         pRow.alignment = .centerY
         pRow.addArrangedSubview(lbl("Pressure levels", 12, bold: true))
         pressurePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        settingsTab = NSStackView()
+        settingsTab.orientation = .vertical; settingsTab.alignment = .leading; settingsTab.spacing = 10
+        settingsTab.edgeInsets = NSEdgeInsets(top: 18, left: 24, bottom: 18, right: 24)
+        settingsTab.addArrangedSubview(lbl("Pen settings", 18, bold: true))
+
         pressurePopup.controlSize = .small
         pressurePopup.target = self
         pressurePopup.action = #selector(pressureChoiceChanged)
@@ -2151,8 +2240,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         pRow.addArrangedSubview(pressurePopup)
         pressureInfo = lbl("", 10, color: .tertiaryLabelColor)
         pRow.addArrangedSubview(pressureInfo)
-        settingsOnlyViews.append(pRow)
-        content.addArrangedSubview(pRow)
+        settingsTab.addArrangedSubview(pRow)
 
         // Pen feel: applied on our side before the value is sent, so it needs no
         // agreement with the DLL and no SAI restart. Stacks with the Wacom
@@ -2166,8 +2254,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         for (name, _) in feelChoices { feelPopup.addItem(withTitle: name) }
         fRow.addArrangedSubview(feelPopup)
         fRow.addArrangedSubview(lbl("how hard you press for a full-width stroke · applies instantly", 10, color: .tertiaryLabelColor))
-        settingsOnlyViews.append(fRow)
-        content.addArrangedSubview(fRow)
+        settingsTab.addArrangedSubview(fRow)
 
         // --- one-button recovery, in Settings ---------------------------------
         // The whole point: a single obvious action that rebuilds everything, for
@@ -2184,8 +2271,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         scratchRow.addArrangedSubview(scratchHint)
         // NOT appended to rowViews — that array is index-locked to `reqs` and an
         // extra entry would desync applyLayout()'s loop. It's Settings-only.
-        settingsOnlyViews.append(scratchRow)
-        content.addArrangedSubview(scratchRow)
+        settingsTab.addArrangedSubview(scratchRow)
 
         // --- footers: explanation, only in Settings ---------------------------
         // Kept to ONE line each — these wrapped to two and made the window tall.
@@ -2254,10 +2340,18 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         curveView.widthAnchor.constraint(equalToConstant: 84).isActive = true
         curveView.heightAnchor.constraint(equalToConstant: 46).isActive = true
         gRow.addArrangedSubview(curveView)
-        devSection.addArrangedSubview(gRow)
+        settingsTab.addArrangedSubview(gRow)
         let gHint = lbl("1.00 = exactly what the tablet reports · below = lighter touch goes further · above = press harder", 9, color: .tertiaryLabelColor)
         gHint.preferredMaxLayoutWidth = rowWidth
-        devSection.addArrangedSubview(gHint)
+        settingsTab.addArrangedSubview(gHint)
+        // A curve you cannot feel is a number. Draw here and the change is
+        // immediate, which is the only way to judge "does this feel right".
+        settingsScratch = PenScratchView()
+        settingsScratch.translatesAutoresizingMaskIntoConstraints = false
+        settingsScratch.heightAnchor.constraint(equalToConstant: 150).isActive = true
+        settingsScratch.widthAnchor.constraint(equalToConstant: CGFloat(rowWidth)).isActive = true
+        settingsTab.addArrangedSubview(settingsScratch)
+        // No Clear button: strokes fade on their own, so the pad is always ready.
         // Live console: the tail of the wake log, so you can watch auto-wake and
         // setup decisions without leaving the window.
         consoleScroll = NSScrollView()
@@ -2299,6 +2393,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         tabView = NSTabView()
         tabView.translatesAutoresizingMaskIntoConstraints = false
         for (label, view) in [("Setup", content!),
+                              ("Pen", settingsTab!),
                               ("Recording", recordingTab!),
                               ("Developer", devSection!)] {
             let item = NSTabViewItem(identifier: label)
@@ -2343,6 +2438,11 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
 
         recFramesLabel = lbl("", 12)
         recordingTab.addArrangedSubview(recFramesLabel)
+        recUsageLabel = lbl("", 11, color: .secondaryLabelColor)
+        recUsageLabel.usesSingleLineMode = false
+        recUsageLabel.lineBreakMode = .byWordWrapping
+        recUsageLabel.maximumNumberOfLines = 8
+        recordingTab.addArrangedSubview(recUsageLabel)
 
         let lenRow = NSStackView(); lenRow.orientation = .horizontal
         lenRow.alignment = .centerY; lenRow.spacing = 8
@@ -2400,8 +2500,25 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
             : "\(n) frame\(n == 1 ? "" : "s") recorded."
         recMakeBtn.isEnabled = n > 0
         recDiscardBtn.isEnabled = n > 0
+        let use = timelapseUsage(timelapseFramesDir)
+        if use.total == 0 {
+            recUsageLabel.stringValue = ""
+        } else {
+            var lines = ["Using \(prettyBytes(use.total)) on disk"
+                         + (use.canvases.count > 1 ? " across \(use.canvases.count) canvases:" : ":")]
+            for c in use.canvases.prefix(6) {
+                lines.append("   \(c.name.isEmpty ? "(unnamed)" : c.name) — "
+                             + "\(c.frames) frame\(c.frames == 1 ? "" : "s"), \(prettyBytes(c.bytes))")
+            }
+            if use.canvases.count > 6 { lines.append("   …and \(use.canvases.count - 6) more") }
+            lines.append("Frames are deleted as they are encoded. Beyond ~2 GB the oldest detail is "
+                         + "thinned (every 2nd frame) rather than losing the start.")
+            recUsageLabel.stringValue = lines.joined(separator: "\n")
+        }
         recFolderLabel?.stringValue = prettyPath(timelapseOutputFolder())
     }
+
+    @objc func clearSettingsScratch() { settingsScratch?.clear() }
 
     @objc func recToggle() { timelapseOn = (recCheck.state == .on); refreshRecordingTab() }
 
