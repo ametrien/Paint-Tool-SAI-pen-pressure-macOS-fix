@@ -105,8 +105,17 @@ from SYSTEMAX. Everything else the app handles.
 > [art-timelapse](https://github.com/cromachina/art-timelapse), which is where this idea came
 > from. See [credit](#credit).
 
-Recording is on by default. Draw, quit SAI, then press **Make video…** — the result appears in
-the Recording tab and lands in `~/Movies/SAI Timelapses`.
+<p align="center">
+  <img src="docs/assets/demo/timelapse-example.gif" alt="A short canvas timelapse: handwriting appearing stroke by stroke on a white canvas" width="600">
+  <br>
+  <em>Fifteen strokes, recorded and played back — the canvas alone, with nothing else in frame.</em>
+  <br>
+  <a href="docs/assets/demo/timelapse-example.mp4">Watch the original video</a>
+</p>
+
+Recording is on by default. Draw, press **Make video…** — the result appears in the Recording tab
+and lands in `~/Movies/SAI Timelapses`. You do not have to quit SAI first; recording carries on
+afterwards.
 
 It reads SAI's canvas out of memory rather than capturing the screen, so the video is the artwork
 alone: no panels, no cursor, and no camera movement when you zoom, pan or rotate while working.
