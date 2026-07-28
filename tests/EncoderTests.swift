@@ -17,7 +17,8 @@ func expect(_ cond: Bool, _ name: String, line: Int = #line) {
 /// Build a header exactly as the DLL writes it, so the test fails if either
 /// side's layout drifts.
 func makeHeader(width: Int, height: Int, stride: Int? = nil,
-                magic: String = "SAITLF1", seq: UInt64 = 1) -> Data {
+                magic: String = "SAITLF2", seq: UInt64 = 1,
+                canvasId: UInt64 = 0x8516000, name: String = "NewCanvas1") -> Data {
     var d = Data()
     var m = Array(magic.utf8); while m.count < 8 { m.append(0) }
     d.append(contentsOf: m.prefix(8))
@@ -26,6 +27,9 @@ func makeHeader(width: Int, height: Int, stride: Int? = nil,
     put32(UInt32(width)); put32(UInt32(height))
     put32(UInt32(stride ?? width * 4)); put32(0)
     put64(seq); put64(123_456)
+    put64(canvasId)
+    var nm = Array(name.utf8); while nm.count < 64 { nm.append(0) }
+    d.append(contentsOf: nm.prefix(64))
     return d
 }
 
@@ -43,6 +47,10 @@ do {
     expect(h?.stride == 4000, "header: stride")
     expect(h?.pixelByteCount == 4000 * 700, "header: pixel byte count")
     expect(h?.seq == 1, "header: sequence number")
+    expect(h?.canvasId == 0x8516000, "header: canvas id is the struct address")
+    expect(h?.name == "NewCanvas1", "header: canvas name")
+    expect(FrameHeader.parse(makeHeader(width: 10, height: 10, magic: "SAITLF1")) == nil,
+           "header: the older v1 magic is rejected")
 
     expect(FrameHeader.parse(makeHeader(width: 10, height: 10, magic: "NOPE")) == nil,
            "header: wrong magic rejected")
@@ -113,6 +121,28 @@ do {
            "resample: no frames gives no indices")
     expect(EncoderCore.resampleIndices(frameCount: 10, fps: 0, maxSeconds: 5).isEmpty,
            "resample: zero fps gives no indices")
+}
+
+// --- per-canvas output naming ----------------------------------------------
+do {
+    let base = URL(fileURLWithPath: "/tmp/SAI Timelapse.mp4")
+    expect(EncoderCore.outputName(base: base, canvasName: "Sketch", canvasId: 1,
+                                  multipleCanvases: false) == base,
+           "naming: a single canvas keeps the plain output name")
+    expect(EncoderCore.outputName(base: base, canvasName: "Sketch", canvasId: 1,
+                                  multipleCanvases: true).lastPathComponent
+           == "SAI Timelapse.Sketch.mp4",
+           "naming: several canvases get the canvas name appended")
+    // A name is a LABEL, never identity. Two canvases sharing a name must still
+    // land in different files, which the id fallback guarantees for empty names
+    // and the caller guarantees by grouping on id.
+    expect(EncoderCore.outputName(base: base, canvasName: "", canvasId: 0x8516000,
+                                  multipleCanvases: true).lastPathComponent
+           == "SAI Timelapse.canvas-8516000.mp4",
+           "naming: an empty name falls back to the canvas id")
+    expect(!EncoderCore.outputName(base: base, canvasName: "a/b:c*d", canvasId: 1,
+                                   multipleCanvases: true).lastPathComponent.contains("/"),
+           "naming: path separators are stripped from canvas names")
 }
 
 // --- range clamping --------------------------------------------------------
