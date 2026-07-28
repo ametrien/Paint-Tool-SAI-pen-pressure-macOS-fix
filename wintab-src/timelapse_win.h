@@ -168,11 +168,22 @@ static uint64_t tl_first_user_canvas(void) {
 }
 
 static uint64_t tl_target_canvas(void) {
-    uint64_t active = 0;
+    uint64_t active = 0, head = 0;
     TLC_CANVAS cv;
     /* Prefer the active-canvas hint so drawing on the second of two open
-     * documents records the right one — but only if it validates. */
-    if (tl_read(NULL, g_tl_image_base + TL_ACTIVE_OFFSET, &active, 8) && active &&
+     * documents records the right one — but only if it validates AND is not
+     * the scratch pad.
+     *
+     * The scratch-pad check is not theoretical. First real capture run logged:
+     *     tl: frame 1  199x878   level=0      <- ScratchPad1
+     *     tl: frame 2  1000x700  level=0      <- the actual canvas
+     * Before any document is open the hint points at the scratch pad, which
+     * validates as a perfectly good canvas, so it bypassed the skip-node-0 rule
+     * that only governs the list walk. Rejecting the head covers it: the scratch
+     * pad is always node 0. */
+    if (!tlc_list_head(tl_read, NULL, g_tl_layout, g_tl_image_base, &head)) return 0;
+    if (tl_read(NULL, g_tl_image_base + TL_ACTIVE_OFFSET, &active, 8) &&
+        active && active != head &&
         tlc_canvas_read(tl_read, NULL, g_tl_layout, active, &cv))
         return active;
     return tl_first_user_canvas();
@@ -261,10 +272,18 @@ static void tl_capture_once(void) {
         log_line("tl: frame %llu  %ux%u  level=%d", (unsigned long long)g_tl_seq, w, h, level);
 }
 
+/* WT_TIMELAPSE_INTERVAL=<ms>: capture on a timer instead of waiting for a
+ * stroke to end. A TEST AID, not a feature — it decouples "does the pixel
+ * reading work" (stride, BGRA order, cropping) from "does the pen trigger
+ * work", so the image path can be verified by drawing with a mouse and no
+ * tablet connected. Stroke-driven capture is what ships. */
+static uint32_t g_tl_interval = 0;
+
 static DWORD WINAPI tl_thread(LPVOID arg) {
     (void)arg;
     for (;;) {
-        if (WaitForSingleObject(g_tl_evt, INFINITE) != WAIT_OBJECT_0) break;
+        DWORD w = WaitForSingleObject(g_tl_evt, g_tl_interval ? g_tl_interval : INFINITE);
+        if (w != WAIT_OBJECT_0 && w != WAIT_TIMEOUT) break;
         if (g_tl_disabled) break;
         /* SAI composites the finished stroke into the tile map slightly after
          * the pen leaves the surface; reading immediately can catch the frame
@@ -342,6 +361,10 @@ static void tl_startup(void) {
         long v = strtol(e, NULL, 10);
         if (v >= 64 && v <= 8192) g_tl_target = (uint32_t)v;
     }
+    if ((e = getenv("WT_TIMELAPSE_INTERVAL")) != NULL) {
+        long v = strtol(e, NULL, 10);
+        if (v >= 200 && v <= 60000) g_tl_interval = (uint32_t)v;
+    }
     tlc_stroke_init(&g_tl_stroke, TL_DEFAULT_DEBOUNCE);
     if ((e = getenv("WT_TIMELAPSE_DEBOUNCE")) != NULL) {
         long v = strtol(e, NULL, 10);
@@ -357,9 +380,9 @@ static void tl_startup(void) {
     if (!g_tl_thread) { log_line("tl: CreateThread failed"); return; }
 
     g_tl_on = 1;
-    log_line("tl: recording enabled  base=%#llx target=%upx debounce=%ums -> %s",
+    log_line("tl: recording enabled  base=%#llx target=%upx debounce=%ums interval=%ums -> %s",
              (unsigned long long)g_tl_image_base, g_tl_target,
-             g_tl_stroke.debounce_ms, TL_FRAMEDIR);
+             g_tl_stroke.debounce_ms, g_tl_interval, TL_FRAMEDIR);
 }
 
 #endif /* TIMELAPSE_WIN_H */
