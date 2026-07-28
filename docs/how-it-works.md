@@ -47,6 +47,34 @@ packet matters less than a delayed one; a stale pressure value is worse than a m
 Both of the above, plus Wine, the SAI folder, and licence handling, behind one window. It is
 mostly there to make the fiddly parts unfiddly.
 
+## Recording the canvas
+
+*Requires v0.2.0 or later.*
+
+The timelapse does not screen-record. It reads SAI's canvas out of SAI's own memory, which is why
+the video contains the artwork and nothing else — no panels, no cursor, and no camera movement when
+you zoom or pan while drawing.
+
+That is possible because of where the bridge already lives. `wintab32.dll` is loaded *inside*
+`sai2.exe`, so reading the canvas is an ordinary memory read rather than something requiring a
+debugger, a permission prompt, or a second process. Being the tablet driver also means a finished
+stroke is a fact we are told, not one guessed at from mouse movement — which is what makes "one
+frame per brush stroke" possible at all.
+
+SAI stores the canvas as a pyramid of 256×256 tiles, one level per zoom step. The reader walks the
+smallest level still larger than the target size, stitches the tiles into a single image, and hashes
+it: if a stroke changed nothing — an undo, a pan, a toolbar click — no frame is written. Frames go to
+disk as raw images, and a small bundled encoder turns them into H.264 with AVFoundation.
+
+The one cost of living inside SAI is that a bad pointer would take SAI down, along with unsaved work.
+So every read is checked against the memory map before it happens, the canvas structures are
+validated before anything inside them is followed, and a fault of any kind switches recording off for
+the session rather than trying again.
+
+The offsets those structures live at are specific to each SAI build, and change with every release.
+They are recorded in a table, and there is a scanner in the repository that derives them from a
+running SAI — which is how support for a new build gets added.
+
 ## Where your files actually go
 
 This is the single most common misunderstanding, and it has cost people whole evenings.

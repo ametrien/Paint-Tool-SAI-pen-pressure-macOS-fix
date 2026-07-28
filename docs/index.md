@@ -21,6 +21,9 @@ This project is that translator.
 - [**How it works**](how-it-works.md) — the architecture, and the file-layout question that trips up nearly everyone.
 - [**Engineering notes**](notes.md) — decisions, mistakes, and the reasoning behind both.
 
+New in v0.2.0: [**canvas timelapse recording**](#canvas-timelapse) — one frame per brush stroke,
+reading the canvas itself rather than the screen.
+
 ## What you need
 
 | | |
@@ -55,6 +58,7 @@ That is what most people have done, and it works. It is also heavy for what you 
 | Your tablet | forwarded over virtual USB into the guest | stays on macOS, using the driver you already installed |
 | Pen pressure | depends on USB passthrough and the guest's tablet driver | read natively on macOS and handed to SAI |
 | Starting SAI | boot the VM, wait, then launch SAI | double-click |
+| Timelapse of your drawing | screen-record the VM window, panels, cursor and all | **built in** — records the canvas itself |
 
 To be straight about that first row: **SAI itself is commercial software either way.** You need a
 licence from SYSTEMAX to *save* your work, whichever route you take — and you can draw, and test
@@ -70,11 +74,42 @@ Wine takes the opposite approach: there is no guest operating system. SAI's Wind
 translated as they happen, and the pen never leaves macOS — it is read by the driver you already
 have, and delivered straight into SAI. Nothing is emulated, so nothing is slowed down.
 
+The recording row is a smaller thing, but it is the kind of smaller thing that decides an
+afternoon. Screen-recording a VM window gives you a video of *the application* — panels, cursor,
+and the camera lurching every time you zoom or pan. This project reads SAI's canvas out of memory
+instead, so the video is the artwork alone, one frame per brush stroke. See
+[Canvas timelapse](#canvas-timelapse) below.
+
 The honest trade-off: a VM runs *real Windows*, so if something misbehaves it is SAI's fault, not
 the translation layer's. Here, some rough edges belong to Wine — the
 [known issues](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues) are
 explicit about which. In exchange you get no Windows licence, a fraction of the disk and memory,
 and a pen that behaves like a pen.
+
+## Canvas timelapse
+
+*Requires v0.2.0 or later.*
+
+Recording is built in and on by default. It captures **one frame per finished brush stroke**, so a
+long session becomes a couple of minutes of video.
+
+The difference from screen recording is what it reads. Rather than photographing the window, it
+reads SAI's canvas directly out of memory — so the video shows the flat artwork with no panels, no
+cursor, and no camera movement when you zoom, pan or rotate while working. Because what is
+recorded is the *composited* canvas, layer opacity and blend modes appear exactly as you see them.
+
+Draw, quit SAI, then press **Make video…** on the Recording tab. Videos land in
+`~/Movies/SAI Timelapses`.
+
+A few things worth knowing before you rely on it:
+
+- **Several open canvases are recorded separately** — one video each. They are tracked by identity
+  rather than by name, so renaming a canvas mid-session relabels its video instead of splitting it.
+- **Video length is a duration, not a frame rate.** Frames are captured per stroke, so asking for
+  "1 minute" drops frames evenly to reach it. The default keeps everything.
+- **Undo is captured at your next stroke**, not the moment you press it.
+- **Frames are large** while a session is in progress. Past 2 GB every second frame is dropped,
+  which halves the size while still spanning the whole session rather than losing its beginning.
 
 ## An honest word about scope
 
