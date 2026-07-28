@@ -8,6 +8,7 @@
 wintab-src/wintab32_res.o
 wacom-helper/wacom-pressure-helper
 make-icon
+tools/sai-offset-scan
 
 # NEVER commit proprietary SAI files or licenses
 *.exe
