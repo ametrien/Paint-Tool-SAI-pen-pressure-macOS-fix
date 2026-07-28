@@ -514,6 +514,16 @@ func performSetup(_ saiSrc: String, _ wine: String, mode: SetupMode = .ensure, q
         return false
     }
 
+    // Take any certificate in the SOURCE folder under management before we touch
+    // anything. Adopting only when the user PICKS a folder (adoptSAIFolder) was
+    // not enough: anyone who chose their folder in an earlier version never
+    // picks again, so the stash stayed empty and a rebuild still lost the
+    // licence — the fix shipped without reaching the people who needed it.
+    // Doing it here covers first setup, repair and rebuild alike, and it must
+    // happen BEFORE the prefix is deleted. Reading from saiSrc, which we never
+    // modify, so a rebuild cannot destroy what we are about to copy.
+    adoptLicenseFromSourceFolder(saiSrc)
+
     if !quiet {
         let what = mode == .rebuild ? "Rebuilding the Wine prefix from scratch"
                  : (saiInstalledInPrefix() ? "Reinstalling SAI into the Wine prefix"
@@ -528,7 +538,12 @@ func performSetup(_ saiSrc: String, _ wine: String, mode: SetupMode = .ensure, q
     stopWineForPrefix(wine)
     if mode == .rebuild {
         // The whole point of a rebuild: nothing from the old prefix survives.
-        // The licence is restored afterwards from our own stash, not from here.
+        // The licence is restored afterwards from our own stash, not from here —
+        // so anything the prefix holds and the stash does not must be rescued
+        // NOW. The later "keep any certificate already in there" step cannot
+        // help: it guards prefixSAIDir, and the line below deletes the whole
+        // prefix above it.
+        adoptLicenseFromSourceFolder(prefixSAIDir)
         progress?(0.06, 0.12, "Removing the old Wine prefix…", 3)
         try? FileManager.default.removeItem(atPath: appPrefix)
     }
