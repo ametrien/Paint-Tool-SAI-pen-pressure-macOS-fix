@@ -62,6 +62,7 @@ useful because Ver.2 is a rolling preview.
 
 - **Real pen pressure** in SAI, with adjustable levels (up to 8192) and pen feel
 - **Mouse and trackpad still paint normally** — no need to unplug anything
+- Works over **Bluetooth as well as USB** (USB samples faster, which shows on quick strokes)
 - Works across **multiple monitors**
 
 **It behaves like a Mac app, not Windows in a box**
