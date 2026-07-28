@@ -257,6 +257,105 @@ func encode(_ files: [URL], to outURL: URL) -> Int {
     return written
 }
 
+// --- live encoding ---------------------------------------------------------
+
+/// One canvas being encoded AS IT IS DRAWN, rather than after the fact.
+///
+/// The point is disk. Raw frames are ~3 MB each, so a session that is not
+/// encoded until you ask for it accumulates gigabytes; encoding as frames
+/// arrive keeps only the handful not yet consumed. That is how art-timelapse
+/// has always worked, and it is the better trade — the video becomes the
+/// storage, instead of being built from storage.
+///
+/// The writer stays OPEN across polls, which is the whole difference from the
+/// original --watch: that opened a fresh writer each pass, and since a new
+/// AVAssetWriter truncates its output file, every poll silently threw away
+/// everything encoded before it.
+final class LiveWriter {
+    private let base: URL
+    private let label: String
+    private let fps: Int
+    private let maxFramesPerSegment: Int
+    private var segment: Segment?
+    private var index = 0
+    private(set) var total = 0
+
+    init(base: URL, label: String, fps: Int, maxFramesPerSegment: Int) {
+        self.base = base; self.label = label; self.fps = fps
+        self.maxFramesPerSegment = maxFramesPerSegment
+    }
+
+    /// Segments are separate FILES, not one growing file, because an
+    /// AVAssetWriter that never gets finishWriting() produces something no
+    /// player will open. Rolling periodically bounds a crash to one segment
+    /// instead of the whole session.
+    private func url(for i: Int) -> URL {
+        let stem = base.deletingPathExtension().lastPathComponent
+        let name = label.isEmpty ? stem : "\(stem).\(label)"
+        return base.deletingLastPathComponent()
+            .appendingPathComponent(String(format: "%@.%03d.mp4", name, i))
+    }
+
+    func append(_ px: Data, stride: Int, width: Int, height: Int) -> Bool {
+        if EncoderCore.shouldRoll(current: segment.map { ($0.width, $0.height) },
+                                  next: (width, height),
+                                  framesInSegment: segment?.frameCount ?? 0,
+                                  maxFramesPerSegment: maxFramesPerSegment) {
+            if segment != nil { segment?.finish(); index += 1 }
+            guard let s = Segment(url: url(for: index), width: width, height: height, fps: fps)
+            else { return false }
+            segment = s
+            print("segment \(url(for: index).lastPathComponent)")
+        }
+        guard segment?.append(bgra: px, stride: stride, fps: fps) == true else { return false }
+        total += 1
+        return true
+    }
+
+    func finish() { segment?.finish(); segment = nil }
+}
+
+var liveWriters: [UInt64: LiveWriter] = [:]
+var signalSources: [DispatchSourceSignal] = []
+
+/// Consume whatever frames are present, appending them to the open writers and
+/// deleting each one only once it is safely inside a video.
+func liveConsume(_ files: [URL]) {
+    for f in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+        guard let data = try? Data(contentsOf: f),
+              let hdr = FrameHeader.parse(data),
+              data.count >= FrameHeader.byteCount + hdr.pixelByteCount else {
+            // Still being written, or truncated. Leave it: the next pass will
+            // find it complete. Deleting here would lose a real frame.
+            continue
+        }
+        let px = data.subdata(in: FrameHeader.byteCount..<(FrameHeader.byteCount + hdr.pixelByteCount))
+        let (ew, eh) = EncoderCore.evenSize(hdr.width, hdr.height)
+
+        let w = liveWriters[hdr.canvasId] ?? {
+            let bad = CharacterSet(charactersIn: "/\\:?%*|\"<>")
+            let clean = hdr.name.components(separatedBy: bad).joined()
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let label = clean.isEmpty ? String(format: "canvas-%llx", hdr.canvasId) : clean
+            let nw = LiveWriter(base: URL(fileURLWithPath: outPath), label: label,
+                                fps: fps, maxFramesPerSegment: segmentFrames > 0 ? segmentFrames : 500)
+            liveWriters[hdr.canvasId] = nw
+            return nw
+        }()
+
+        if w.append(px, stride: hdr.stride, width: ew, height: eh), !keepFrames {
+            try? FileManager.default.removeItem(at: f)
+        }
+    }
+}
+
+func finishLive() {
+    for (_, w) in liveWriters { w.finish() }
+    let n = liveWriters.values.reduce(0) { $0 + $1.total }
+    if n > 0 { print("finished \(liveWriters.count) canvas(es), \(n) frame(s)") }
+    liveWriters.removeAll()
+}
+
 // --- run -------------------------------------------------------------------
 
 try? FileManager.default.createDirectory(atPath: (outPath as NSString).deletingLastPathComponent,
@@ -264,14 +363,28 @@ try? FileManager.default.createDirectory(atPath: (outPath as NSString).deletingL
 
 if watch {
     print("watching \(framesDir) — Ctrl-C to stop")
+    // A half-written video is unplayable, so the writers MUST be closed on the
+    // way out. signal() alone is not enough: only async-signal-safe calls are
+    // legal in a handler, and finishing an AVAssetWriter is nowhere near that.
+    // DispatchSource delivers it as an ordinary event instead.
+    for sig in [SIGINT, SIGTERM] {
+        signal(sig, SIG_IGN)
+        let src = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+        src.setEventHandler { finishLive(); exit(0) }
+        src.resume()
+        signalSources.append(src)
+    }
     // Deliberately simple polling. The frames directory changes at drawing
     // speed, a few times a second at most, so an FSEvents stream would be
     // machinery for no gain.
-    while true {
-        let files = frameFiles(in: framesDir)
-        if !files.isEmpty { _ = encodeAll(files) }
-        Thread.sleep(forTimeInterval: 1.0)
+    DispatchQueue.global().async {
+        while true {
+            let files = frameFiles(in: framesDir)
+            if !files.isEmpty { liveConsume(files) }
+            Thread.sleep(forTimeInterval: 1.0)
+        }
     }
+    dispatchMain()
 } else {
     let files = frameFiles(in: framesDir)
     if files.isEmpty {
