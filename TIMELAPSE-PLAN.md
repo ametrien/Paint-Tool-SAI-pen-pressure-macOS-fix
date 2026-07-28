@@ -260,7 +260,30 @@ consumer stalls. TCP on 47801 is the optimisation if churn becomes real — not 
 
 ---
 
-## Phase 3 — encoder
+## Phase 3 — encoder — **done**
+
+`timelapse-encoder/` builds `sai-timelapse-encoder`, shipped in the app bundle's
+Resources so it is signed with the app and needs no separate Gatekeeper approval.
+
+| File | Contents |
+|---|---|
+| `timelapse-encoder/EncoderCore.swift` | Pure logic: header parsing, segment rolling, resample, range. 31 tests. |
+| `timelapse-encoder/main.swift` | AVFoundation + filesystem glue. |
+| `tests/EncoderTests.swift` | Synthesised headers; no AVFoundation, no frames, no SAI. |
+
+Options: `--fps` (speed), `--max-seconds` (cap length by dropping evenly spaced
+frames — the better control, and what art-timelapse does), `--from`/`--to`
+(trim), `--segment-frames` (roll), `--keep`, `--watch` (encode as frames appear).
+
+Replaces the ffmpeg scaffolding in `tools/`. Roughly an order of magnitude
+faster, since the old path decoded every frame to PNG first.
+
+Frames are deleted as they are consumed unless `--keep`, so disk stays bounded
+during a long session.
+
+---
+
+## Phase 3 — original design notes
 
 New Swift binary `sai-timelapse-encoder`, built alongside the helper in `make-app.sh`.
 

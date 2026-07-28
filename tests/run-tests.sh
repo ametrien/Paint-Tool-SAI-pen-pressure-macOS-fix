@@ -28,4 +28,9 @@ swiftc -o "$WORK/core-tests" "$REPO/wacom-helper/PressureCore.swift" "$REPO/test
 "$WORK/core-tests"
 
 echo ""
+echo "== Swift core (EncoderCore.swift) =="
+swiftc -o "$WORK/encoder-tests" "$REPO/timelapse-encoder/EncoderCore.swift" "$REPO/tests/EncoderTests.swift"
+"$WORK/encoder-tests"
+
+echo ""
 echo "All test suites passed."
