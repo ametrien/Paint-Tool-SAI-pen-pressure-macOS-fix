@@ -1551,7 +1551,6 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     // "Test Tablet Pressure" widgets — a live 0–100% bar so the user can confirm
     // the pen works BEFORE launching SAI.
     var testBtn: NSButton!
-    var scratch: PenScratchView!
     var testHint: NSTextField!
     var barRow: NSStackView!
     var pressureBar: PressureBar!
@@ -1577,7 +1576,6 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     var content: NSStackView!
     var rowViews: [NSStackView] = []
     var footerLabels: [NSTextField] = []
-    var settingsOnlyViews: [NSView] = []
     var advanced = false
     var advancedBtn: NSButton!
     var allSetLabel: NSTextField!
@@ -1598,6 +1596,8 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     var recFolderLabel: NSTextField!
     var settingsTab: NSStackView!
     var settingsScratch: PenScratchView!
+    var scratchRow: NSStackView!
+    var autoWakeCheck: NSButton!
     var recUsageLabel: NSTextField!
     var recPreview: AVPlayerView!
     var recPreviewLabel: NSTextField!
@@ -1970,35 +1970,22 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
             if let s = state { it.state = s }
             menu.addItem(it)
         }
+        // Kept deliberately short. Everything else lives in the Setup, Pen,
+        // Recording and Developer tabs, and duplicating it here just made a menu
+        // nobody could scan. What survives is what you want WITHOUT opening the
+        // window: unstick SAI, see at a glance whether recording is on, and get
+        // to the window itself.
         add("Wake SAI window (if stuck)   ⌃⌥⌘Space", #selector(wakeSAI))
-        add("Auto-wake when returning to SAI", #selector(toggleAutoWake(_:)), state: autoWake ? .on : .off)
         menu.addItem(.separator())
-        // Timelapse. The frame count is in the title because "is it actually
-        // recording?" is otherwise unanswerable without opening a log.
         let frames = timelapseFrameCount()
-        add(timelapseOn ? "Record timelapse (on next SAI launch)" : "Record timelapse",
+        add(timelapseOn ? "Recording timelapse" : "Timelapse recording is off",
             #selector(toggleTimelapse(_:)), state: timelapseOn ? .on : .off)
         if frames > 0 {
             add("Make video from \(frames) frame\(frames == 1 ? "" : "s")…",
                 #selector(makeTimelapseVideo), indent: 1)
-            add("Discard recording", #selector(discardTimelapseFrames), indent: 1)
-        } else if timelapseOn {
-            add("Nothing recorded yet — draw in SAI", #selector(revealTimelapseFrames), indent: 1)
         }
         menu.addItem(.separator())
         add("Open Setup window", #selector(showSetupWindow))
-        add("Reinstall / Repair…", #selector(reinstallTapped))
-        add("Install License (.slc)…", #selector(licenseTapped))
-        menu.addItem(.separator())
-        // Dev mode: a checkbox that reveals the diagnostic items beneath it.
-        add("Developer mode", #selector(toggleDevMode(_:)), state: devMode ? .on : .off)
-        if devMode {
-            add("Copy diagnostics", #selector(copyDiagnostics), indent: 1)
-            add("Reveal Wine prefix in Finder", #selector(revealPrefix), indent: 1)
-            add("Open helper log", #selector(openHelperLog), indent: 1)
-            add("Open wake log", #selector(openWakeLog), indent: 1)
-            add("Open DLL log", #selector(openDLLLog), indent: 1)
-        }
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         return menu
@@ -2203,29 +2190,23 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         content.addArrangedSubview(launchBtn)
 
         // --- secondary actions, side by side instead of stacked ---------------
-        testBtn = NSButton(title: "Test pen", target: self, action: #selector(testTapped))
-        testBtn.bezelStyle = .rounded; testBtn.controlSize = .small
         let wakeBtn = NSButton(title: "Wake SAI (if stuck)", target: self, action: #selector(wakeSAI))
         wakeBtn.bezelStyle = .rounded; wakeBtn.controlSize = .small
-        advancedBtn = NSButton(title: "Settings ⌄", target: self, action: #selector(toggleAdvanced))
+        advancedBtn = NSButton(title: "Show all steps ⌄", target: self, action: #selector(toggleAdvanced))
         advancedBtn.bezelStyle = .rounded; advancedBtn.controlSize = .small
         secondaryRow = NSStackView(); secondaryRow.orientation = .horizontal
         secondaryRow.alignment = .centerY; secondaryRow.spacing = 8
-        secondaryRow.addArrangedSubview(testBtn)
         secondaryRow.addArrangedSubview(wakeBtn)
+        autoWakeCheck = NSButton(checkboxWithTitle: "Auto-wake", target: self,
+                                 action: #selector(autoWakeCheckToggled))
+        autoWakeCheck.controlSize = .small
+        secondaryRow.addArrangedSubview(autoWakeCheck)
         secondaryRow.addArrangedSubview(advancedBtn)
         content.addArrangedSubview(secondaryRow)
 
         testHint = lbl("Press your pen on the tablet — the bar should move.", 10, color: .secondaryLabelColor)
         testHint.preferredMaxLayoutWidth = rowWidth
         testHint.isHidden = true
-        content.addArrangedSubview(testHint)
-        scratch = PenScratchView()
-        scratch.translatesAutoresizingMaskIntoConstraints = false
-        scratch.heightAnchor.constraint(equalToConstant: 130).isActive = true
-        scratch.widthAnchor.constraint(equalToConstant: CGFloat(rowWidth)).isActive = true
-        scratch.isHidden = true
-        content.addArrangedSubview(scratch)
         barRow = NSStackView(); barRow.orientation = .horizontal; barRow.alignment = .centerY; barRow.spacing = 10
         pressureBar = PressureBar()
         pressureBar.widthAnchor.constraint(equalToConstant: 240).isActive = true
@@ -2237,7 +2218,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         pressureLabel.widthAnchor.constraint(equalToConstant: 150).isActive = true
         barRow.addArrangedSubview(pressureBar); barRow.addArrangedSubview(pressureLabel)
         barRow.isHidden = true
-        content.addArrangedSubview(barRow)
+
 
         // --- pressure resolution, in Settings ---------------------------------
         // Auto follows the tablet's own HID report; the explicit choices are an
@@ -2280,7 +2261,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         // The whole point: a single obvious action that rebuilds everything, for
         // when the prefix is broken and you don't want to reason about which
         // half is at fault.
-        let scratchRow = NSStackView(); scratchRow.orientation = .horizontal; scratchRow.spacing = 8
+        scratchRow = NSStackView(); scratchRow.orientation = .horizontal; scratchRow.spacing = 8
         let scratchBtn = NSButton(title: "Reset everything & reinstall…", target: self, action: #selector(installFromScratch))
         scratchBtn.bezelStyle = .rounded; scratchBtn.controlSize = .small
         scratchRow.addArrangedSubview(scratchBtn)
@@ -2370,7 +2351,15 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         settingsScratch.translatesAutoresizingMaskIntoConstraints = false
         settingsScratch.heightAnchor.constraint(equalToConstant: 120).isActive = true
         settingsScratch.widthAnchor.constraint(equalToConstant: CGFloat(rowWidth)).isActive = true
+        testBtn = NSButton(title: "Test pen", target: self, action: #selector(testTapped))
+        testBtn.bezelStyle = .rounded; testBtn.controlSize = .small
+        settingsTab.addArrangedSubview(testBtn)
+        settingsTab.addArrangedSubview(barRow)
+        settingsTab.addArrangedSubview(testHint)
         settingsTab.addArrangedSubview(settingsScratch)
+        // Re-adding moves it to the end: destructive actions belong at the
+        // bottom, not wedged between pen feel and the feel curve.
+        settingsTab.addArrangedSubview(scratchRow)
         // No Clear button: strokes fade on their own, so the pad is always ready.
         // Live console: the tail of the wake log, so you can watch auto-wake and
         // setup decisions without leaving the window.
@@ -2583,6 +2572,8 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         showPreview(p.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
+    @objc func autoWakeCheckToggled() { autoWake = (autoWakeCheck.state == .on) }
+
     @objc func clearSettingsScratch() { settingsScratch?.clear() }
 
     @objc func recToggle() { timelapseOn = (recCheck.state == .on); refreshRecordingTab() }
@@ -2651,19 +2642,28 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
             allSetLabel.isHidden = true
         }
         footerLabels.forEach { $0.isHidden = !advanced }
-        settingsOnlyViews.forEach { $0.isHidden = !advanced }
         // devSection lives in its own tab now; never hide it wholesale.
         devCheck.state = devMode ? .on : .off
         consoleScroll.isHidden = !devMode
         devSection.arrangedSubviews.forEach { if $0 !== devCheck { $0.isHidden = !devMode } }
-        advancedBtn.title = advanced ? "Settings ⌃" : "Settings ⌄"
+        autoWakeCheck?.state = autoWake ? .on : .off
+        advancedBtn.title = advanced ? "Show all steps ⌃" : "Show all steps ⌄"
         if devMode && advanced { updateConsole() }
         window.layoutIfNeeded()
         // Measure the tab actually on screen: the tabs differ a lot in height,
         // and sizing to Setup while Developer is showing clips the console.
         let shown = (tabView?.selectedTabViewItem?.view as? NSStackView) ?? content
         let fit = shown!.fittingSize
-        let want = NSSize(width: max(rowWidth + 48, fit.width), height: fit.height)
+        // The tab bar and its insets are NOT part of the tab's content area, so
+        // sizing the window to the stack's fittingSize alone left the bottom of
+        // every tab clipped by roughly the height of the tab strip.
+        var chromeW: CGFloat = 0, chromeH: CGFloat = 0
+        if let tv = tabView {
+            chromeW = max(0, tv.frame.width - tv.contentRect.width)
+            chromeH = max(0, tv.frame.height - tv.contentRect.height)
+        }
+        let want = NSSize(width: max(rowWidth + 48, fit.width + chromeW),
+                          height: fit.height + chromeH)
         // Only resize on a real change — applyLayout() runs from the 1s refresh
         // timer, and setting the same size every tick makes the window shimmer.
         if abs(window.contentLayoutRect.height - want.height) > 0.5
@@ -3843,7 +3843,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         g_rawSeen.removeAll()          // fresh census per test run
         testBtn.title = "Stop Test"
         testHint.isHidden = false; barRow.isHidden = false
-        scratch.isHidden = false; scratch.clear()
+        settingsScratch?.clear()
         applyLayout()
         // fast (~60fps), .common-mode timer so the bar tracks the pen instantly and
         // keeps updating even while the window is being interacted with. The bar is
@@ -3874,7 +3874,6 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         if testBtn != nil { testBtn.title = "Test pen" }
         if testHint != nil { testHint.isHidden = true }
         if barRow != nil { barRow.isHidden = true }
-        if scratch != nil { scratch.isHidden = true }
         applyLayout()
     }
 
