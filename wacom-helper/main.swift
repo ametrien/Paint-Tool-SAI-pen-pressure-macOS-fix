@@ -1601,6 +1601,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     var recUsageLabel: NSTextField!
     var recPreview: AVPlayerView!
     var recPreviewLabel: NSTextField!
+    var recHidePreviewBtn: NSButton!
     var devCheck: NSButton!
     var console: NSTextView!
     var consoleScroll: NSScrollView!
@@ -2356,7 +2357,10 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         settingsTab.addArrangedSubview(testBtn)
         settingsTab.addArrangedSubview(barRow)
         settingsTab.addArrangedSubview(testHint)
-        settingsTab.addArrangedSubview(settingsScratch)
+        // TEMPORARILY OUT. The settings above were reported missing while the
+        // pad was the only thing showing, so it is parked until the tab is
+        // confirmed good. Re-add this line to bring it back.
+        // settingsTab.addArrangedSubview(settingsScratch)
         // Re-adding moves it to the end: destructive actions belong at the
         // bottom, not wedged between pen feel and the feel curve.
         settingsTab.addArrangedSubview(scratchRow)
@@ -2501,8 +2505,19 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
 
         // Preview. Watching the result is how you find out the length or speed
         // is wrong, and sending people to Finder to check made that a chore.
+        // The preview is remembered across launches, which is useful right
+        // after making a video and confusing a week later when it shows
+        // something unrelated to what is on screen now. So it can be dismissed.
+        let previewRow = NSStackView(); previewRow.orientation = .horizontal
+        previewRow.alignment = .centerY; previewRow.spacing = 8
         recPreviewLabel = lbl("", 11, color: .secondaryLabelColor)
-        recordingTab.addArrangedSubview(recPreviewLabel)
+        previewRow.addArrangedSubview(recPreviewLabel)
+        recHidePreviewBtn = NSButton(title: "Hide preview", target: self,
+                                     action: #selector(hidePreview))
+        recHidePreviewBtn.bezelStyle = .rounded; recHidePreviewBtn.controlSize = .small
+        recHidePreviewBtn.isHidden = true
+        previewRow.addArrangedSubview(recHidePreviewBtn)
+        recordingTab.addArrangedSubview(previewRow)
         recPreview = AVPlayerView()
         recPreview.translatesAutoresizingMaskIntoConstraints = false
         recPreview.controlsStyle = .inline
@@ -2562,7 +2577,20 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
                         atomically: true, encoding: .utf8)
         recPreview.player = AVPlayer(url: URL(fileURLWithPath: path))
         recPreview.isHidden = false
+        recHidePreviewBtn?.isHidden = false
         recPreviewLabel.stringValue = "Last video: \(prettyPath(path))"
+        applyLayout()
+    }
+
+    /// Dismiss the preview and forget the video, so it does not reappear on the
+    /// next launch. The file itself is untouched.
+    @objc func hidePreview() {
+        recPreview?.player?.pause()
+        recPreview?.player = nil
+        recPreview?.isHidden = true
+        recHidePreviewBtn?.isHidden = true
+        recPreviewLabel?.stringValue = ""
+        try? FileManager.default.removeItem(atPath: appSupport() + "/timelapse-last.txt")
         applyLayout()
     }
 
