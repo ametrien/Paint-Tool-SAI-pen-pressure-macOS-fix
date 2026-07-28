@@ -72,3 +72,53 @@ if [ -f "$D/obsolete.dll" ]; then echo "  FAIL update: a file removed upstream l
 else echo "  ok   update: a file removed upstream is gone"; fi
 [ "$fail" = 0 ] || exit 1
 echo "All SAI update tests passed."
+
+echo ""
+echo "== Live encoding accumulates instead of overwriting =="
+# --watch used to open a fresh AVAssetWriter on every poll, and a new writer
+# truncates its output file — so each pass silently threw away everything
+# encoded before it. Frames are deleted once consumed, so that lost footage for
+# good. This checks the writers stay open across polls.
+LIVE="$WORK/live"; mkdir -p "$LIVE/frames"
+swiftc -O -o "$WORK/enc-live" "$REPO/timelapse-encoder/EncoderCore.swift" \
+    "$REPO/timelapse-encoder/main.swift"
+
+mkframes() {  # start end canvas_id name w h
+  python3 - "$@" <<'PY'
+import struct, sys, pathlib
+HDR = struct.Struct("<8sIIIIQQQ64s")
+a,b,cid,name,w,h = int(sys.argv[1]),int(sys.argv[2]),int(sys.argv[3],16),sys.argv[4],int(sys.argv[5]),int(sys.argv[6])
+for i in range(a,b+1):
+    px = bytes([(i*20)%256,255-(i*20)%256,128,255])*(w*h)
+    pathlib.Path(f"{sys.argv[7]}/{i:08d}.frame").write_bytes(
+        HDR.pack(b"SAITLF2",w,h,w*4,0,i,1000*i,cid,name.encode())+px)
+PY
+}
+mkframes 1 3 AAAA Sketch 64 48 "$LIVE/frames"
+"$WORK/enc-live" --frames "$LIVE/frames" --out "$LIVE/out.mp4" --fps 5 --watch > "$LIVE/log" 2>&1 &
+LIVEPID=$!
+sleep 3
+mkframes 4 9 AAAA Sketch 64 48 "$LIVE/frames"      # more of the same canvas
+mkframes 10 12 BBBB Second 32 32 "$LIVE/frames"    # a second canvas, different size
+sleep 4
+kill -INT $LIVEPID 2>/dev/null; wait $LIVEPID 2>/dev/null || true
+sleep 1
+
+live_fail=0
+# The totals line is the assertion that matters: 12 frames means none of the
+# first three were lost when the later ones arrived.
+if grep -q "finished 2 canvas(es), 12 frame(s)" "$LIVE/log"; then
+  echo "  ok   live: every frame reaches a video, across two canvases"
+else
+  echo "  FAIL live: expected 2 canvases / 12 frames, log says:"; cat "$LIVE/log"; live_fail=1
+fi
+[ -s "$LIVE/out.Sketch.000.mp4" ] && echo "  ok   live: first canvas has its own video" \
+  || { echo "  FAIL live: no video for the first canvas"; live_fail=1; }
+[ -s "$LIVE/out.Second.000.mp4" ] && echo "  ok   live: a canvas of another size gets its own video" \
+  || { echo "  FAIL live: no video for the second canvas"; live_fail=1; }
+# Disk staying flat is the entire point of encoding live.
+left=$(ls "$LIVE/frames" 2>/dev/null | wc -l | tr -d ' ')
+[ "$left" = "0" ] && echo "  ok   live: frames are deleted as they are encoded" \
+  || { echo "  FAIL live: $left frame(s) left on disk"; live_fail=1; }
+[ "$live_fail" = 0 ] || exit 1
+echo "All live encoding tests passed."
