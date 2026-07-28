@@ -5,6 +5,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-07-28
+
+### Changed
+- **The timelapse is encoded while you draw**, instead of raw frames piling up until you ask for a
+  video. Frames are turned into video within about a second of being captured and then deleted, so
+  disk use stays flat rather than growing with the session. Measured on a 1000×700 canvas: 51 frames
+  is 143 MB raw and 0.10 MB encoded — around 1400× on sparse line art, less on a dense painting, but
+  the difference between megabytes and gigabytes either way. The 2 GB frame budget is now a fallback
+  for an encoder that has fallen behind rather than the main defence.
+- **Make video is near-instant.** Most of the work has already happened, so it stitches the encoded
+  segments together instead of encoding everything from scratch. A requested length is applied by
+  re-timing rather than dropping frames, which is the right tool once the frames are already video.
+
+### Fixed
+- **`--watch` destroyed everything it had already encoded.** It opened a fresh writer on every poll,
+  and a new `AVAssetWriter` truncates its output file, so each pass replaced the video with only the
+  newest frames — and since frames are deleted once consumed, the earlier footage was gone. Measured
+  before the fix: 3 frames encoded, 6 more arrive, final video contains 6 rather than 9. Nothing in
+  the app called it in 0.2.0, but it was a documented flag.
+
 ## [0.2.0] — 2026-07-28
 
 ### Added
