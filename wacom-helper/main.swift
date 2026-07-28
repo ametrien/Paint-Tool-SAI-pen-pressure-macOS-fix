@@ -2246,6 +2246,15 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         settingsTab.orientation = .vertical; settingsTab.alignment = .leading; settingsTab.spacing = 10
         settingsTab.edgeInsets = NSEdgeInsets(top: 18, left: 24, bottom: 18, right: 24)
         settingsTab.addArrangedSubview(lbl("Pen settings", 18, bold: true))
+        // Defended explicitly: a stack short of room compresses by this
+        // priority, and the default let real controls collapse silently.
+        defer {
+            settingsTab.arrangedSubviews.forEach {
+                if !($0 is PenScratchView) {
+                    $0.setContentCompressionResistancePriority(.required, for: .vertical)
+                }
+            }
+        }
 
         pressurePopup.controlSize = .small
         pressurePopup.target = self
@@ -2363,8 +2372,18 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         // immediate, which is the only way to judge "does this feel right".
         settingsScratch = PenScratchView()
         settingsScratch.translatesAutoresizingMaskIntoConstraints = false
-        settingsScratch.heightAnchor.constraint(equalToConstant: 110).isActive = true
-        settingsScratch.widthAnchor.constraint(equalToConstant: CGFloat(rowWidth)).isActive = true
+        // The height is a PREFERENCE, not a requirement. As a required
+        // constraint the pad could not give way when the stack was short of
+        // room, so the whole deficit was absorbed by the rows above it — which
+        // NSStackView does by compressing them, to zero if need be. That is
+        // what made every pen setting disappear the moment the pad was added.
+        // Now the pad shrinks first and the settings keep their height.
+        let padHeight = settingsScratch.heightAnchor.constraint(equalToConstant: 110)
+        padHeight.priority = .defaultLow
+        padHeight.isActive = true
+        settingsScratch.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+        settingsScratch.widthAnchor.constraint(lessThanOrEqualToConstant: CGFloat(rowWidth)).isActive = true
+        settingsScratch.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         testBtn = NSButton(title: "Test pen", target: self, action: #selector(testTapped))
         testBtn.bezelStyle = .rounded; testBtn.controlSize = .small
         settingsTab.addArrangedSubview(testBtn)
@@ -2703,8 +2722,11 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
             chromeW = max(0, tv.frame.width - tv.contentRect.width)
             chromeH = max(0, tv.frame.height - tv.contentRect.height)
         }
+        // A couple of points of slack. Measuring chrome from the current frame
+        // is inherently one layout behind, and being even slightly short is not
+        // a cosmetic problem — the stack compresses its contents to fit.
         let want = NSSize(width: max(rowWidth + 48, fit.width + chromeW),
-                          height: fit.height + chromeH)
+                          height: fit.height + chromeH + 4)
         // Only resize on a real change — applyLayout() runs from the 1s refresh
         // timer, and setting the same size every tick makes the window shimmer.
         if abs(window.contentLayoutRect.height - want.height) > 0.5
