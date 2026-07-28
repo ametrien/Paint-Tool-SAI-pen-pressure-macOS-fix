@@ -321,6 +321,84 @@ int main(void) {
                "stitch: tile scratch too small is refused");
     }
 
+    /* --- thinning the frame folder ---------------------------------------
+     * The ONLY code in this feature that deletes a user's data, so the rules
+     * are pinned rather than eyeballed. */
+    {
+        int i, deleted, total;
+
+        /* Below four frames, halving destroys the recording to reclaim almost
+         * nothing, so nothing is touched. */
+        for (total = 0; total < 4; total++) {
+            int any = 0;
+            for (i = 0; i < total; i++) if (tlc_should_thin(i, total)) any = 1;
+            EXPECT(!any, "thin: fewer than four frames are left alone");
+        }
+
+        /* Every second frame, counting from the second. */
+        EXPECT(!tlc_should_thin(0, 10) && tlc_should_thin(1, 10) &&
+               !tlc_should_thin(2, 10) && tlc_should_thin(3, 10) &&
+               tlc_should_thin(5, 10) && tlc_should_thin(7, 10),
+               "thin: drops every second frame");
+
+        /* THE TRAP: the newest frame is the current state of the canvas. Drop it
+         * and the timelapse ends before the drawing does — it looks broken, not
+         * merely coarse. Remove the `index >= total - 1` guard and this fails
+         * for every odd total. */
+        for (total = 4; total <= 21; total++)
+            if (tlc_should_thin(total - 1, total)) {
+                EXPECT(0, "thin: the newest frame is never deleted");
+                break;
+            }
+        if (total > 21) EXPECT(1, "thin: the newest frame is never deleted");
+
+        /* Roughly halves, and never empties the folder however often it runs —
+         * the budget can be exceeded repeatedly in one long session. */
+        total = 64;
+        for (i = 0; i < 12 && total >= 4; i++) {
+            int kept = 0, j;
+            for (j = 0; j < total; j++) if (!tlc_should_thin(j, total)) kept++;
+            EXPECT(kept < total && kept > 0, "thin: a pass removes some but not all");
+            total = kept;
+        }
+        EXPECT(total >= 2, "thin: repeated passes never empty the folder");
+
+        deleted = 0;
+        for (i = 0; i < 100; i++) if (tlc_should_thin(i, 100)) deleted++;
+        EXPECT(deleted == 49, "thin: 100 frames lose 49 (half, minus the newest)");
+    }
+
+    /* --- per-canvas dedup slots ------------------------------------------- */
+    {
+        TLC_SLOT slots[4];
+        uint64_t *a, *b, *c;
+        memset(slots, 0, sizeof slots);
+
+        a = tlc_hash_slot(slots, 4, 0x1000);
+        *a = 111;
+        EXPECT(tlc_hash_slot(slots, 4, 0x1000) == a, "slots: same canvas returns the same slot");
+        EXPECT(*tlc_hash_slot(slots, 4, 0x1000) == 111, "slots: the hash survives the lookup");
+
+        b = tlc_hash_slot(slots, 4, 0x2000);
+        /* THE TRAP: sharing one hash between canvases made every switch between
+         * two documents look like a change, and could drop a real frame right
+         * after a switch. Different canvases must never share a slot. */
+        EXPECT(b != a, "slots: a different canvas gets a different slot");
+        *b = 222;
+        EXPECT(*a == 111 && *b == 222, "slots: canvases do not disturb each other");
+
+        (void)tlc_hash_slot(slots, 4, 0x3000);
+        (void)tlc_hash_slot(slots, 4, 0x4000);
+        EXPECT(*tlc_hash_slot(slots, 4, 0x1000) == 111, "slots: a full table still finds an existing canvas");
+
+        /* Beyond capacity the first slot is evicted. Its hash MUST reset: a
+         * stale hash belonging to another canvas would silently skip a real
+         * frame, which is worse than writing one redundant frame. */
+        c = tlc_hash_slot(slots, 4, 0x9999);
+        EXPECT(*c == 0, "slots: an evicted slot starts with no remembered hash");
+        EXPECT(tlc_hash_slot(slots, 4, 0x9999) == c, "slots: the evicting canvas keeps its slot");
+    }
+
     free(f.buf);
     if (failures) { printf("FAILED: %d test(s)\n", failures); return 1; }
     printf("All timelapse_core tests passed.\n");
