@@ -2295,8 +2295,6 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         scratchRow.addArrangedSubview(scratchHint)
         // NOT appended to rowViews — that array is index-locked to `reqs` and an
         // extra entry would desync applyLayout()'s loop. It's Settings-only.
-        settingsTab.addArrangedSubview(scratchRow)
-
         // --- footers: explanation, only in Settings ---------------------------
         // Kept to ONE line each — these wrapped to two and made the window tall.
         for s in ["Wake: menu-bar pen icon, Dock right-click, or ⌃⌥⌘Space.",
@@ -2381,9 +2379,6 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         // PenScratchView class is kept because it works and may find a better
         // home (its own tab, or a sheet), but nothing on this tab uses it.
 
-        // Re-adding moves it to the end: destructive actions belong at the
-        // bottom, not wedged between pen feel and the feel curve.
-        settingsTab.addArrangedSubview(scratchRow)
         // No Clear button: strokes fade on their own, so the pad is always ready.
         // Live console: the tail of the wake log, so you can watch auto-wake and
         // setup decisions without leaving the window.
@@ -2417,6 +2412,16 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         verRow.addArrangedSubview(updateLabel)
         verRow.addArrangedSubview(updateBtn)
         content.addArrangedSubview(verRow)
+
+        // Reset and Uninstall are installation actions, so they live on Setup
+        // with Launch and Wake — not on Pen, which is about how the pen behaves.
+        // Inserted after the secondary action row rather than appended, which
+        // would strand them below the footers and the version line.
+        if let after = content.arrangedSubviews.firstIndex(of: secondaryRow) {
+            content.insertArrangedSubview(scratchRow, at: after + 1)
+        } else {
+            content.addArrangedSubview(scratchRow)
+        }
 
         buildRecordingTab()
 
