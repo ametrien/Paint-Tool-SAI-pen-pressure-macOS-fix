@@ -173,7 +173,7 @@ func encodeAll(_ files: [URL]) -> Int {
     var groups: [UInt64: [URL]] = [:]
     var labels: [UInt64: String] = [:]
     for f in files {
-        guard let fh = try? FileHandle(forReadingAtPath: f.path),
+        guard let fh = FileHandle(forReadingAtPath: f.path),
               let head = try? fh.read(upToCount: FrameHeader.byteCount),
               let hdr = FrameHeader.parse(head) else { continue }
         try? fh.close()
@@ -362,6 +362,13 @@ func finishLive() {
 // --- finalising live segments ----------------------------------------------
 
 /// Stitch the segments produced by --watch into one video per canvas.
+///
+/// NOTE ON THE DEPRECATION WARNINGS this function produces. `asset.duration`,
+/// `tracks(withMediaType:)`, `exportAsynchronously` and `status` are all
+/// deprecated in favour of async replacements — which require macOS 13 or 15.
+/// This app deploys to macOS 12, so the replacements are not available to it.
+/// The warnings are the price of that, and "fixing" them would quietly drop
+/// support for older Macs, which is the opposite of what this project is for.
 ///
 /// Live encoding leaves a numbered segment file every 500 frames, because an
 /// AVAssetWriter that never gets finishWriting() is unplayable and rolling

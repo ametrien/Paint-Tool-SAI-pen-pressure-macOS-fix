@@ -17,34 +17,6 @@ macOS + Wine already run SAI and move the cursor fine, but Wine's Mac driver thr
 
 The result: pressure-sensitive strokes that taper with how hard you press.
 
-## What you get
-
-**Drawing**
-
-- **Real pen pressure** in SAI, with adjustable levels (up to 8192) and pen feel
-- **Mouse and trackpad still paint normally** — no need to unplug anything
-- Works across **multiple monitors**
-
-**It behaves like a Mac app, not Windows in a box**
-
-- **⌘Z / ⌘Y / ⌘S** and the rest, rather than Ctrl — remapped inside Wine, so SAI simply sees the right keys
-- **Pinch to zoom** and **two-finger scroll to pan** on the trackpad
-- **⌃⌥⌘Space** brings back a SAI window that has gone missing, and it can do that automatically when you switch back to SAI
-
-**Canvas timelapse** *(v0.2.0+)*
-
-- **One frame per brush stroke** — hours of drawing become a couple of minutes
-- Records the **canvas, not the screen**: no panels, no cursor, and no camera lurching when you zoom or pan
-- Layer opacity and blend modes come through; **several open canvases become one video each**
-- Pick a target length; it encodes as you draw, so it costs megabytes rather than gigabytes
-
-**Setup and upkeep**
-
-- **One app, no terminal.** Wine is installed for you, with progress
-- Licence handling, including the two-folders trap that silently stops SAI saving
-- **Update SAI in place** when a new build lands, keeping your licence, brushes and preferences
-- Reset, reinstall or uninstall from the same window; logs and a health check when something is odd
-
 ## What it looks like
 
 Four tabs, one window.
@@ -83,6 +55,34 @@ useful because Ver.2 is a rolling preview.
 📺 **Video walkthrough:** [watch the setup tutorial](https://youtu.be/62mJwWQsEYI)
 
 ---
+
+## What you get
+
+**Drawing**
+
+- **Real pen pressure** in SAI, with adjustable levels (up to 8192) and pen feel
+- **Mouse and trackpad still paint normally** — no need to unplug anything
+- Works across **multiple monitors**
+
+**It behaves like a Mac app, not Windows in a box**
+
+- **⌘Z / ⌘Y / ⌘S** and the rest, rather than Ctrl — remapped inside Wine, so SAI simply sees the right keys
+- **Pinch to zoom** and **two-finger scroll to pan** on the trackpad
+- **⌃⌥⌘Space** brings back a SAI window that has gone missing, and it can do that automatically when you switch back to SAI
+
+**Canvas timelapse** *(v0.2.0+)*
+
+- **One frame per brush stroke** — hours of drawing become a couple of minutes
+- Records the **canvas, not the screen**: no panels, no cursor, and no camera lurching when you zoom or pan
+- Layer opacity and blend modes come through; **several open canvases become one video each**
+- Pick a target length; it encodes as you draw, so it costs megabytes rather than gigabytes
+
+**Setup and upkeep**
+
+- **One app, no terminal.** Wine is installed for you, with progress
+- Licence handling, including the two-folders trap that silently stops SAI saving
+- **Update SAI in place** when a new build lands, keeping your licence, brushes and preferences
+- Reset, reinstall or uninstall from the same window; logs and a health check when something is odd
 
 ## Get started
 
