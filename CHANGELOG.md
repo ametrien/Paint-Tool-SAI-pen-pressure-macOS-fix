@@ -5,6 +5,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
 
 ## [Unreleased]
 
+### Fixed
+- **The license in your SAI folder is adopted on every setup**, not only the first time you pick the
+  folder. v0.1.12 added the adoption but hooked it to choosing a folder — something nobody does
+  twice — so every existing install kept an empty backup copy and a rebuild would still have lost
+  the certificate. The feature shipped without reaching the people it was written for.
+- **Rebuilding the Wine prefix rescues a certificate that lives only in the prefix.** The rebuild
+  deletes the prefix one level above where the existing "keep any certificate" step looks, so that
+  step could never protect it.
+
 ## [0.1.12] — 2026-07-27
 
 ### Added
