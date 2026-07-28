@@ -75,6 +75,9 @@ static HANDLE         g_tl_thread = NULL;
 static TLC_STROKE     g_tl_stroke;
 static uint64_t       g_tl_image_base = 0;
 static uint64_t       g_tl_last_hash = 0;
+/* What caused the pending capture: 0 = pen pressure, 1 = mouse button. Only
+ * used for the log, so a racy write between the two trigger paths is fine. */
+static volatile LONG  g_tl_trigger = 0;
 static uint64_t       g_tl_seq = 0;
 static uint8_t       *g_tl_frame = NULL;
 static size_t         g_tl_frame_cap = 0;
@@ -265,11 +268,18 @@ static void tl_capture_once(void) {
     /* Undo, pan, zoom and toolbar clicks all end a "stroke" without changing a
      * pixel. Dropping them here keeps them out of the video AND off the disk. */
     hash = tlc_hash(g_tl_frame, (size_t)w * h * 4u);
-    if (hash == g_tl_last_hash) return;
+    if (hash == g_tl_last_hash) {
+        /* Logged, not silent: "why did I get fewer frames than strokes?" is
+         * otherwise unanswerable, and the answer is usually that the trigger
+         * was a toolbar click rather than a lost stroke. */
+        log_line("tl: no pixel change (%s) — skipped", g_tl_trigger ? "mouse" : "pen");
+        return;
+    }
     g_tl_last_hash = hash;
 
     if (tl_write_frame(g_tl_frame, w, h))
-        log_line("tl: frame %llu  %ux%u  level=%d", (unsigned long long)g_tl_seq, w, h, level);
+        log_line("tl: frame %llu  %ux%u  level=%d  (%s)", (unsigned long long)g_tl_seq,
+                 w, h, level, g_tl_trigger ? "mouse" : "pen");
 }
 
 /* WT_TIMELAPSE_INTERVAL=<ms>: capture on a timer instead of waiting for a
@@ -337,8 +347,10 @@ static DWORD WINAPI tl_probe_thread(LPVOID arg) {
  * tl_thread so a slow read can never stall pressure delivery. */
 static void tl_on_pressure(int press) {
     if (!g_tl_on || g_tl_probe || g_tl_disabled) return;
-    if (tlc_stroke_update(&g_tl_stroke, press, (uint32_t)GetTickCount64()))
+    if (tlc_stroke_update(&g_tl_stroke, press, (uint32_t)GetTickCount64())) {
+        g_tl_trigger = 0;
         SetEvent(g_tl_evt);
+    }
 }
 
 /* Mouse button released over SAI. The SECOND stroke trigger, and not optional:
@@ -357,6 +369,7 @@ static void tl_on_pressure(int press) {
  * paths. The dedup hash collapses that to one frame. */
 static void tl_on_mouse_up(void) {
     if (!g_tl_on || g_tl_probe || g_tl_disabled) return;
+    g_tl_trigger = 1;
     SetEvent(g_tl_evt);
 }
 
