@@ -90,19 +90,8 @@ static uint64_t       g_tl_image_base = 0;
  * like a change and produced a frame, while a genuine no-op stroke right after
  * a switch could be missed. */
 #define TL_MAX_TRACKED 8
-static struct { uint64_t canvas, hash; } g_tl_seen[TL_MAX_TRACKED];
+static TLC_SLOT g_tl_seen[TL_MAX_TRACKED];
 
-static uint64_t *tl_hash_slot(uint64_t canvas) {
-    int i, oldest = 0;
-    for (i = 0; i < TL_MAX_TRACKED; i++)
-        if (g_tl_seen[i].canvas == canvas) return &g_tl_seen[i].hash;
-    for (i = 0; i < TL_MAX_TRACKED; i++)
-        if (!g_tl_seen[i].canvas) { g_tl_seen[i].canvas = canvas; return &g_tl_seen[i].hash; }
-    /* More than TL_MAX_TRACKED canvases: evict slot 0. Worst case is one
-     * redundant frame, which the encoder happily accepts. */
-    g_tl_seen[oldest].canvas = canvas; g_tl_seen[oldest].hash = 0;
-    return &g_tl_seen[oldest].hash;
-}
 /* What caused the pending capture: 0 = pen pressure, 1 = mouse button. Only
  * used for the log, so a racy write between the two trigger paths is fine. */
 static volatile LONG  g_tl_trigger = 0;
@@ -303,8 +292,6 @@ static void tl_enforce_budget(void) {
     if (h == INVALID_HANDLE_VALUE) return;
     do { total++; } while (FindNextFileA(h, &fd));
     FindClose(h);
-    if (total < 4) return;                 /* nothing useful to thin */
-
     h = FindFirstFileA(pat, &fd);
     if (h == INVALID_HANDLE_VALUE) return;
     i = 0;
@@ -312,7 +299,7 @@ static void tl_enforce_budget(void) {
         uint64_t sz = ((uint64_t)fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
         /* Never the last frame: it is the current state of the drawing, and a
          * timelapse missing its final image looks broken. */
-        if ((i & 1) && i < total - 1) {
+        if (tlc_should_thin(i, total)) {
             snprintf(full, sizeof full, "%s\\%s", TL_FRAMEDIR, fd.cFileName);
             if (DeleteFileA(full)) deleted++;
             else kept += sz;
@@ -376,7 +363,7 @@ static void tl_capture_once(void) {
     /* Undo, pan, zoom and toolbar clicks all end a "stroke" without changing a
      * pixel. Dropping them here keeps them out of the video AND off the disk. */
     {
-    uint64_t *slot = tl_hash_slot(canvas);
+    uint64_t *slot = tlc_hash_slot(g_tl_seen, TL_MAX_TRACKED, canvas);
     char cname[64];
     if (!tlc_canvas_name(tl_read, NULL, g_tl_layout, canvas, cname, sizeof cname))
         cname[0] = 0;

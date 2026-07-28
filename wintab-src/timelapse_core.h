@@ -339,6 +339,59 @@ static uint64_t tlc_hash(const uint8_t *p, size_t n) {
     return h;
 }
 
+/* --- keeping the frame folder bounded ------------------------------------ */
+
+/* Should the frame at `index` (chronological, 0-based) be deleted when the
+ * folder is over budget, given `total` frames present?
+ *
+ * Frames are raw BGRA at roughly 3 MB each, so a long session would otherwise
+ * fill a disk. The obvious response — delete the oldest — is the wrong one: it
+ * eats the START of the drawing, which is the part worth watching. Deleting
+ * every SECOND frame halves the size while still spanning the whole session at
+ * coarser granularity, and can repeat, each pass halving again.
+ *
+ * Two rules that are easy to get wrong and impossible to notice by eye:
+ *
+ *   - the LAST frame is never deleted. It is the current state of the canvas,
+ *     and a timelapse missing its final image looks broken rather than coarse.
+ *   - below four frames nothing is deleted, because halving a handful of frames
+ *     destroys the recording to reclaim almost nothing.
+ *
+ * This is the only part of the feature that deletes a user's data, which is why
+ * it lives here and not inline in the directory walk. See
+ * tests/test_timelapse_core.c. */
+static int tlc_should_thin(int index, int total) {
+    if (total < 4) return 0;
+    if (index >= total - 1) return 0;          /* never the newest */
+    return (index & 1) != 0;
+}
+
+/* --- per-canvas dedup state ---------------------------------------------- */
+
+typedef struct { uint64_t canvas, hash; } TLC_SLOT;
+
+/* Find (or claim) the slot holding the last frame hash for `canvas`.
+ *
+ * Dedup state MUST be per canvas. A single global last-hash compared each open
+ * document against the other, so every switch between two canvases looked like
+ * a change and produced a frame, while a genuine no-op stroke straight after a
+ * switch could be dropped.
+ *
+ * When every slot is taken the first is evicted and its hash reset, so the next
+ * frame for that canvas is always written rather than compared against another
+ * canvas's hash. Worst case is one redundant frame; the alternative — reusing a
+ * stale hash — would silently skip a real one. */
+static uint64_t *tlc_hash_slot(TLC_SLOT *slots, int count, uint64_t canvas) {
+    int i;
+    for (i = 0; i < count; i++)
+        if (slots[i].canvas == canvas) return &slots[i].hash;
+    for (i = 0; i < count; i++)
+        if (!slots[i].canvas) { slots[i].canvas = canvas; slots[i].hash = 0; return &slots[i].hash; }
+    slots[0].canvas = canvas;
+    slots[0].hash = 0;
+    return &slots[0].hash;
+}
+
 /* --- stroke detection ---------------------------------------------------- */
 
 /* When does a stroke END? We are the tablet driver, so unlike a screen-capture
