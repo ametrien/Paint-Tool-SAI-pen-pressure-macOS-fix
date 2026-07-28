@@ -44,14 +44,37 @@ refuses to save.
 Use **Install…** on the *SAI license* row and it copies to **both**, so whichever build you run
 finds it. The row then reports which locations are covered.
 
-Note that dropping the `.slc` into **your own** SAI folder does nothing — that folder is only a
-source, copied at install time. See [How it works](how-it-works.md).
+Since **v0.1.12**, a `.slc` already sitting in your own SAI folder is picked up automatically —
+noticed when you choose the folder, and again on every install or reinstall, then copied to both
+locations and kept so a rebuild can restore it. Before that it was only copied verbatim, so it
+landed wherever it happened to sit in your folder, which may not be where your build reads from.
 
-## The pen won't draw at all (v0.1.5 only)
+## The pen won't draw at all
 
-**Upgrade.** v0.1.5 shipped a bug that swallowed the click that starts every stroke. Pressure
-arrived perfectly, so every diagnostic looked healthy while nothing painted — and no amount of
-reinstalling helped, because the bug was inside the bundled DLL. Fixed in v0.1.6.
+**Upgrade — and check your version.** This exact symptom has shipped twice, from two unrelated
+causes:
+
+- **v0.1.5** — fixed in v0.1.6
+- **v0.1.10** — fixed in v0.1.11
+
+Both swallowed the click that starts every stroke. Pressure arrived perfectly the whole time, so
+every diagnostic looked healthy while nothing painted, and no amount of reinstalling helped —
+the bug was inside the bundled DLL, not your setup.
+
+Two things make this hard to recognise, both worth knowing:
+
+- **A stroke that never starts also has no pressure**, so it presents as *"pen pressure stopped
+  working"* rather than *"clicks are ignored"*.
+- It can look like a **permissions** problem, especially if it appears after a restart. In the
+  v0.1.10 case the timing was pure coincidence — the bug had shipped days earlier and simply
+  waited for the next launch.
+
+If you are on v0.1.10, the giveaway in a `WT_DEBUG=1` log is a line reading `CLICK dedup: ate
+msg=0x201` shortly after a pen-down, while the header of the same log says `dedup=off`.
+
+Note that upgrading is enough: since **v0.1.11** the bundled DLL is refreshed on every launch.
+Before that, installing a new version left the old DLL in place, so a DLL-side fix could reach
+you only if you happened to reinstall.
 
 ## SAI stops responding to clicks after switching apps
 

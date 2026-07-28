@@ -46,6 +46,46 @@ Three lessons, all paid for:
    (`WT_CLICK_DEDUP=1`) and the double-click issue is reopened. A nuisance is preferable to a pen
    that cannot draw.
 
+### And then it happened again
+
+**v0.1.10 shipped the same outage from a different cause** — which is the more useful story,
+because the fix above was still present and still correct.
+
+That fix was a guard at the *install site*: when the dedup was not requested, the hook was simply
+never installed. The hook procedure needed no check of its own, because the hook's **existence
+was itself the proof of consent**.
+
+Then two-finger pan needed the same `WH_GETMESSAGE` hook. Pan is on by default, so the install
+condition was widened to "install if *either* feature wants it" — and the hook began installing
+for everyone. The install-site guard silently stopped guarding anything. The commit even stated
+the intended contract in a comment: *"Each still decides for itself inside `click_hook_proc`."*
+That second half was never written. The flag was computed, logged, and discarded.
+
+The log said `dedup=off` while the same log recorded it eating clicks.
+
+Three further lessons:
+
+4. **A guard that lives somewhere other than the thing it guards is a guard with an expiry date.**
+   Nothing was wrong with either change in isolation. The invariant lived in the gap between them,
+   where no reviewer and no test could see it.
+5. **A comment describing intent is not an implementation.** The comment was accurate about what
+   *should* happen and was read, for two releases, as evidence that it did.
+6. **A test that has never failed is not evidence.** During the investigation a "zero clicks eaten"
+   result was briefly taken as proof the fix worked — while the helper was dead and no click
+   *could* have been eaten. The unfixed build would have produced the identical output. The
+   decision now lives in `wintab_core.h` behind `wtc_should_eat_click()`, covered by cases that
+   were **confirmed to fail when the bug is deliberately reintroduced**.
+
+There is a seventh, learned the same evening and arguably the most expensive:
+
+7. **A fix can be correct, committed, released — and still not reach anyone.** The DLL doing the
+   work lives inside the Wine prefix, and it was only ever copied there during first-time setup or
+   an explicit reinstall. An *upgrade* left the old one in place. A release consisting entirely of
+   a DLL fix would have shipped to nobody, and the bug report would have read "the fix doesn't
+   work." Since v0.1.11 the prefix copy is compared against the app's on every launch, and the DLL
+   stamps its build date into the log so "is the fix even loaded?" is answerable rather than
+   assumed.
+
 ## Following the hardware instead of guessing
 
 Pressure was quantised to 1024 levels regardless of hardware — a fixed constant from WinTab
