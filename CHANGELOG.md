@@ -5,6 +5,41 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-07-28
+
+### Added
+- **Canvas timelapse recording.** Records your drawing as a video, one frame per finished brush
+  stroke, so hours collapse into a couple of minutes. It reads SAI's canvas out of memory rather
+  than capturing the screen, so the video shows the flat canvas only — no panels, no cursor, and no
+  camera movement when you zoom, pan or rotate while working. Layer opacity, blend modes and undo
+  all appear, because what is recorded is the composited canvas. On by default; the Recording tab
+  has the switch.
+  - **Several open canvases are recorded separately**, one video each. Tracked by identity rather
+    than by name, so renaming a canvas mid-session relabels its video instead of splitting it in two.
+  - **Video length is a duration, not a frame rate.** Frames are captured per stroke, so asking for
+    "1 minute" drops frames evenly to hit it. "Everything" is the default — silently discarding
+    somebody's first recording is the wrong thing to do by default.
+  - **Frames are bounded.** They are raw and about 3 MB each, so past 2 GB every second frame is
+    dropped: that halves the size while still spanning the whole session, which is better than
+    losing the beginning. Frames are deleted as they are encoded.
+  - Videos are built by a small bundled encoder using AVFoundation — nothing to install.
+- **Update SAI…** on the Setup tab swaps in a newer SAI build without a full reinstall, keeping your
+  licence, brushes, presets and preferences. SAI Ver.2 is a rolling preview, so this is routine
+  rather than a repair; the old path rebooted the Wine prefix and cleared the SAI folder for no
+  reason.
+- **A scratch pad in the pen test** would show taper directly rather than as a number. Written and
+  working, but not shipped on the Pen tab in this release — it kept squeezing the settings out of
+  the layout, and the settings matter more.
+
+### Changed
+- **The setup window is four tabs** — Setup, Pen, Recording, Developer. One column had grown taller
+  than a screen, mixing install steps, pen settings and a log console.
+- **The menu-bar and Dock menus are down to three items:** wake SAI, whether recording is on, and
+  open the window. Everything else duplicated something in a tab.
+- **Pressure levels say when no tablet is connected.** With nothing plugged in the row read "using
+  the safe default 4096", but that number is usually remembered from the last tablet — describing
+  stale data as a default hid both that fact and the more useful one.
+
 ### Fixed
 - **The license in your SAI folder is adopted on every setup**, not only the first time you pick the
   folder. v0.1.12 added the adoption but hooked it to choosing a folder — something nobody does

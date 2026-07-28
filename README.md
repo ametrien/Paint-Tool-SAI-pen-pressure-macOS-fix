@@ -209,6 +209,61 @@ just close SAI / quit the helper.
 
 ---
 
+## The app
+
+<p align="center">
+  <img src="docs/assets/screenshots/setup.png" alt="Setup tab: status of Wine, SAI, licence and Input Monitoring, with a Launch button" width="49%">
+  <img src="docs/assets/screenshots/pen.png" alt="Pen tab: pressure levels, pen feel, and the pen feel curve" width="49%">
+</p>
+<p align="center">
+  <img src="docs/assets/screenshots/recording.png" alt="Recording tab: canvas timelapse settings" width="49%">
+  <img src="docs/assets/screenshots/developer.png" alt="Developer tab: logs, diagnostics and a health check" width="49%">
+</p>
+
+**Setup** gets SAI running and tells you which of the four prerequisites are missing.
+**Update SAI…** swaps in a newer SAI build without touching your licence, brushes or preferences —
+useful because Ver.2 is a rolling preview.
+**Pen** is pressure levels, pen feel and the response curve.
+**Recording** is the canvas timelapse.
+**Developer** holds the logs, a diagnostics dump and a health check.
+
+---
+
+## Canvas timelapse
+
+> **Requires v0.2.0 or later.** Earlier releases have no recording.
+
+Records your drawing as a video — **one frame per finished brush stroke**, so hours of work
+collapse into a couple of minutes.
+
+It reads SAI's canvas out of memory rather than capturing the screen, so the video shows the
+**flat canvas only**: no panels, no cursor, and no camera movement when you zoom, pan or rotate
+while drawing. Undo, layer opacity and blend modes all show up, because what is recorded is the
+composited canvas.
+
+**Using it**
+
+1. Recording is **on by default**. The checkbox is on the Recording tab if you want it off.
+2. Launch SAI and draw. The tab shows the frame count and how much disk the frames are using.
+3. Quit SAI, then **Make video…**. The result plays in the tab and lands in
+   `~/Movies/SAI Timelapses` (choose another folder if you like).
+
+**Worth knowing**
+
+- **Several open canvases are recorded separately** — one video each. They are tracked by identity,
+  not by name, so renaming a canvas mid-session relabels its video instead of splitting it in two.
+- **Video length** is a duration, not a frame rate. Frames are captured per stroke, so asking for
+  "1 minute" drops frames evenly to hit it; "Everything" (the default) keeps them all.
+- **Undo is captured at your next stroke**, not the instant you press it — pressing Cmd+Z fires
+  neither trigger, so the reverted canvas is picked up by whatever you do next.
+- **Frames are large** (raw, ~3 MB each). Past 2 GB every second frame is dropped, which halves the
+  size while still spanning the whole session — better than losing the beginning. Frames are deleted
+  as they are encoded.
+- Toggling recording **takes effect at the next SAI launch**, because the setting is read when SAI
+  starts.
+
+---
+
 ## How it works (short version)
 
 ```
