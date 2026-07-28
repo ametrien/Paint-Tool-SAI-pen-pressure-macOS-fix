@@ -775,8 +775,29 @@ if let src = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_UPDATE"] {
 /// itself becomes the storage.
 var g_liveEncoder: Process?
 
-func timelapseSegmentBase() -> String {
-    "\(timelapseOutputFolder())/SAI Timelapse.mp4"
+/// Base name for THIS recording session, timestamped and remembered.
+///
+/// It has to be stable between the encoder starting and the video being
+/// finalised, which is why it is written down rather than generated twice — and
+/// it has to differ between sessions, because it did not: every session wrote
+/// to "SAI Timelapse.mp4", so making a second video, or simply drawing again
+/// tomorrow, silently overwrote the finished timelapse from before.
+func timelapseSessionBase() -> String {
+    let marker = appSupport() + "/timelapse-session.txt"
+    if let s = try? String(contentsOfFile: marker, encoding: .utf8) {
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !t.isEmpty { return t }
+    }
+    let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HHmm"
+    let base = "\(timelapseOutputFolder())/SAI Timelapse \(f.string(from: Date())).mp4"
+    try? base.write(toFile: marker, atomically: true, encoding: .utf8)
+    return base
+}
+
+/// Forget the session, so the next recording starts a new set of files rather
+/// than appending to one that has already been turned into a video.
+func endTimelapseSession() {
+    try? FileManager.default.removeItem(atPath: appSupport() + "/timelapse-session.txt")
 }
 
 /// Start encoding in the background for this SAI session. Safe to call when
@@ -792,7 +813,7 @@ func startLiveEncoder() {
                                              withIntermediateDirectories: true)
     let p = Process()
     p.executableURL = URL(fileURLWithPath: enc)
-    p.arguments = ["--frames", frames, "--out", timelapseSegmentBase(), "--fps", "12", "--watch"]
+    p.arguments = ["--frames", frames, "--out", timelapseSessionBase(), "--fps", "12", "--watch"]
     p.standardOutput = FileHandle.nullDevice
     p.standardError = FileHandle.nullDevice
     do { try p.run(); g_liveEncoder = p; wlog("timelapse: live encoder started") }
@@ -3743,7 +3764,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
             let p = Process()
             p.executableURL = URL(fileURLWithPath: enc)
             var args = ["--frames", self.timelapseFramesDir,
-                        "--out", timelapseSegmentBase(), "--fps", "12", "--finalize"]
+                        "--out", timelapseSessionBase(), "--fps", "12", "--finalize"]
             if timelapseMaxSeconds() > 0 {
                 args += ["--max-seconds", "\(timelapseMaxSeconds())"]
             }
@@ -3766,6 +3787,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
                 // encoder to finalise is a means, not an intention — leaving it
                 // stopped meant one video per SAI session and no way back
                 // except quitting SAI, which is not what "Make video" implies.
+                if p.terminationStatus == 0 { endTimelapseSession() }
                 if saiWindowIsOpen() { startLiveEncoder() }
 
                 if p.terminationStatus == 0, let first = made.first {
@@ -3787,8 +3809,10 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         let dir = timelapseOutputFolder()
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return 0 }
         // <stem>[.label].NNN.mp4 — a trailing number is what marks a segment.
+        let stem = (timelapseSessionBase() as NSString).lastPathComponent
+            .replacingOccurrences(of: ".mp4", with: "")
         return names.filter { n in
-            guard n.hasPrefix("SAI Timelapse."), n.hasSuffix(".mp4") else { return false }
+            guard n.hasPrefix(stem + "."), n.hasSuffix(".mp4") else { return false }
             let parts = n.dropLast(4).split(separator: ".")
             return parts.count >= 2 && Int(parts[parts.count - 1]) != nil
         }.count
@@ -3820,7 +3844,9 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         }
         let outDir = timelapseOutputFolder()
         for f in (try? FileManager.default.contentsOfDirectory(atPath: outDir)) ?? [] {
-            guard f.hasPrefix("SAI Timelapse."), f.hasSuffix(".mp4") else { continue }
+            let stem = (timelapseSessionBase() as NSString).lastPathComponent
+                .replacingOccurrences(of: ".mp4", with: "")
+            guard f.hasPrefix(stem + "."), f.hasSuffix(".mp4") else { continue }
             let parts = f.dropLast(4).split(separator: ".")
             // Numbered SEGMENTS only. A finished video someone chose to keep is
             // not part of "discard the recording".
@@ -3828,6 +3854,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
                 try? FileManager.default.removeItem(atPath: "\(outDir)/\(f)")
             }
         }
+        endTimelapseSession()
         rebuildMenus()
         if saiWindowIsOpen() { startLiveEncoder() }
         refreshRecordingTab()
