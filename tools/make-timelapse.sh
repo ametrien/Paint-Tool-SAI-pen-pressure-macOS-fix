@@ -23,16 +23,33 @@ echo "found $COUNT frame(s) in $FRAMES"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
+# Frames can differ in size within one session — a canvas resize does it, and so
+# did the scratch pad before that was fixed. ffmpeg takes its output dimensions
+# from the FIRST image and squashes everything after to match, so a single odd
+# frame at the front silently ruins the whole video (a 1000x700 drawing came out
+# as 198x878). Pick the dominant size and use only those frames.
+DIMS=$(for f in $(find "$FRAMES" -name '*.frame' | sort); do
+           python3 "$(dirname "$0")/frame2png.py" --dims "$f"
+       done | sort | uniq -c | sort -rn)
+MAIN=$(echo "$DIMS" | head -1 | awk '{print $2}')
+echo "frame sizes seen:"
+echo "$DIMS" | sed 's/^/  /'
+echo "using $MAIN"
+
 # Renumber while converting: dedup means the recorder's sequence numbers can
 # have gaps, and ffmpeg's %05d input pattern stops dead at the first missing
 # index rather than skipping it.
-i=0
+i=0; skipped=0
 for f in $(find "$FRAMES" -name '*.frame' | sort); do
+    if [ "$(python3 "$(dirname "$0")/frame2png.py" --dims "$f")" != "$MAIN" ]; then
+        skipped=$((skipped + 1)); continue
+    fi
     printf -v name "%05d" "$i"
     python3 "$(dirname "$0")/frame2png.py" "$f" "$WORK/$name.png" >/dev/null
     i=$((i + 1))
 done
-echo "converted $i frame(s)"
+echo "converted $i frame(s)${skipped:+, skipped $skipped of another size}"
+[ "$i" -gt 0 ] || { echo "nothing to encode"; exit 1; }
 
 mkdir -p "$(dirname "$OUT")"
 # yuv420p for players that refuse anything else; the scale filter forces even
