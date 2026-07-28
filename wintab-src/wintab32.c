@@ -697,6 +697,14 @@ static LRESULT CALLBACK click_hook_proc(int code, WPARAM wp, LPARAM lp) {
                      (void *)(g_hwnd ? GetAncestor(g_hwnd, GA_ROOT) : NULL),
                      (unsigned long)dt);
         }
+        /* Timelapse: a mouse-up over SAI ends a stroke just as pen-up does.
+         * Without this the recorder captures NOTHING when drawing with a mouse
+         * or trackpad — the pressure path never fires because there is no
+         * pressure. Runs even for an eaten click: the de-dup suppresses the
+         * message reaching SAI, not the fact that the button was released. */
+        if (m->message == WM_LBUTTONUP &&
+            GetAncestor(m->hwnd, GA_ROOT) == GetAncestor(g_hwnd, GA_ROOT))
+            tl_on_mouse_up();
     }
     return CallNextHookEx(g_click_hook, code, wp, lp);
 }

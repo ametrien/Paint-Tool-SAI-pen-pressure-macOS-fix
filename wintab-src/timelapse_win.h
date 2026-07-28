@@ -341,6 +341,25 @@ static void tl_on_pressure(int press) {
         SetEvent(g_tl_evt);
 }
 
+/* Mouse button released over SAI. The SECOND stroke trigger, and not optional:
+ * tying capture to pen pressure alone silently records nothing at all when the
+ * user draws with a mouse or trackpad — which is a broken feature, not an
+ * unsupported configuration. Found the hard way, by recording a whole session
+ * that produced zero frames.
+ *
+ * Firing on any left-button release over SAI is deliberately crude: it also
+ * fires for toolbar clicks, menu picks and canvas panning. That costs one
+ * canvas read whose hash matches the previous frame, so nothing is written and
+ * nothing reaches the video. Cheaper than trying to identify canvas-only
+ * clicks, and it cannot miss a real stroke.
+ *
+ * Pen taps synthesise mouse clicks too, so a tablet stroke can trigger both
+ * paths. The dedup hash collapses that to one frame. */
+static void tl_on_mouse_up(void) {
+    if (!g_tl_on || g_tl_probe || g_tl_disabled) return;
+    SetEvent(g_tl_evt);
+}
+
 static void tl_startup(void) {
     const char *e;
     if (!getenv("WT_TIMELAPSE") && !getenv("WT_TIMELAPSE_PROBE")) return;
