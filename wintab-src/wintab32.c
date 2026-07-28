@@ -127,6 +127,12 @@ static void log_line(const char *fmt, ...) {
     fputc('\n', g_log); fflush(g_log);
 }
 
+/* Canvas timelapse recorder. Included here (not compiled separately) so the
+ * build command stays a single translation unit — see the note at the top of
+ * timelapse_win.h. Must come after log_line(), which it calls. Entirely inert
+ * unless WT_TIMELAPSE is set. */
+#include "timelapse_win.h"
+
 static void fill_default_context(LOGCONTEXTW *lc) {
     memset(lc, 0, sizeof(*lc));
     static const WCHAR nm[] = L"OurDefault";
@@ -691,6 +697,14 @@ static LRESULT CALLBACK click_hook_proc(int code, WPARAM wp, LPARAM lp) {
                      (void *)(g_hwnd ? GetAncestor(g_hwnd, GA_ROOT) : NULL),
                      (unsigned long)dt);
         }
+        /* Timelapse: a mouse-up over SAI ends a stroke just as pen-up does.
+         * Without this the recorder captures NOTHING when drawing with a mouse
+         * or trackpad — the pressure path never fires because there is no
+         * pressure. Runs even for an eaten click: the de-dup suppresses the
+         * message reaching SAI, not the fact that the button was released. */
+        if (m->message == WM_LBUTTONUP &&
+            GetAncestor(m->hwnd, GA_ROOT) == GetAncestor(g_hwnd, GA_ROOT))
+            tl_on_mouse_up();
     }
     return CallNextHookEx(g_click_hook, code, wp, lp);
 }
@@ -801,6 +815,9 @@ static DWORD WINAPI producer(LPVOID arg) {
                 s.x = x; s.y = y; s.w = w; s.h = h;
                 s.has_pos = (w > 0 && h > 0);
                 emit_sample(&s);        /* post immediately: lowest latency */
+                tl_on_pressure(s.press); /* timelapse: we ARE the pen, so stroke
+                                          * ends are known exactly rather than
+                                          * guessed from mouse events */
                 lastDatagram = GetTickCount();
             }
             flush_pending();            /* deliver freshest if SAI just caught up */
@@ -809,6 +826,12 @@ static DWORD WINAPI producer(LPVOID arg) {
 
         /* recv timed out (idle) or no socket -> housekeeping */
         DWORD now = GetTickCount();
+        /* Timelapse: feed the debounce a zero on the idle path too. The helper
+         * stops sending entirely once the pen leaves range, so a stroke that
+         * ends by lifting away would otherwise never see enough zero samples to
+         * pass the debounce, and the last stroke before a pause would go
+         * unrecorded. The recv timeout makes this a steady ~10 Hz tick. */
+        tl_on_pressure(0);
         ensure_click_dedup();           /* pen-tap double-click fix, once hwnd exists */
         check_win32_wake(now);          /* helper asked us to restore Win32 focus? */
         check_zoom(now);                /* ...or asked us to zoom (pinch gesture) */
@@ -1073,6 +1096,9 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID r) {
                  "; screen %dx%d virtual %dx%d maxPress=%d ====",
              g_screenW, g_screenH, g_virtW, g_virtH, g_max_press);
         CreateThread(NULL, 0, producer, NULL, 0, NULL);
+        /* Off unless WT_TIMELAPSE / WT_TIMELAPSE_PROBE is set. Started after
+         * the producer so nothing here can delay pressure coming up. */
+        tl_startup();
     }
     return TRUE;
 }
