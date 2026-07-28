@@ -102,14 +102,18 @@ func timelapseOutputFolder() -> String {
        FileManager.default.fileExists(atPath: t) {
         return t
     }
-    return NSString(string: "~/Movies").expandingTildeInPath
+    // Our own folder rather than dumping into ~/Movies alongside everything
+    // else. Created on demand so the Choose panel has somewhere to open.
+    let d = NSString(string: "~/Movies/SAI Timelapses").expandingTildeInPath
+    try? FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true)
+    return d
 }
 
 /// Index into the Recording tab's length popup: 30s, 1m, 2m, everything.
 func storedTimelapseLengthIndex() -> Int {
     guard let s = try? String(contentsOfFile: appSupport() + "/timelapse-length.txt", encoding: .utf8),
           let i = Int(s.trimmingCharacters(in: .whitespacesAndNewlines)), (0...3).contains(i)
-    else { return 1 }
+    else { return 3 }          // "Everything" — never silently drop someone's work
     return i
 }
 
@@ -1304,6 +1308,75 @@ final class PressureBar: NSView {
 /// Live plot of the pen-feel curve: input pressure across, output up. The
 /// diagonal is linear (gamma 1); the dot is where the pen is right now, so you
 /// can press and watch the mapping instead of interpreting a number.
+/// Draw-here area for the pen test. The pressure bar proves a signal arrives;
+/// this proves it FEELS right — taper at the ends of a stroke is the thing
+/// people actually care about, and a number cannot show it.
+///
+/// Pressure comes from the event when macOS provides it, falling back to the
+/// value our own tablet tap last saw, so it still works for input paths that
+/// report no NSEvent pressure.
+final class PenScratchView: NSView {
+    private var strokes: [[(p: CGPoint, w: CGFloat)]] = []
+    private var current: [(p: CGPoint, w: CGFloat)] = []
+    override var isFlipped: Bool { true }
+    override var acceptsFirstResponder: Bool { true }
+
+    func clear() { strokes.removeAll(); current.removeAll(); needsDisplay = true }
+
+    private func width(for e: NSEvent) -> CGFloat {
+        var p = CGFloat(e.pressure)
+        if p <= 0 {
+            let raw = max(0, lastKeyP)
+            p = CGFloat(raw) / CGFloat(max(1, PressureCore.maxPressure))
+        }
+        return 1 + p * 22          // visibly tapered without becoming a blob
+    }
+
+    override func mouseDown(with e: NSEvent) {
+        current = [(convert(e.locationInWindow, from: nil), width(for: e))]
+        needsDisplay = true
+    }
+    override func mouseDragged(with e: NSEvent) {
+        current.append((convert(e.locationInWindow, from: nil), width(for: e)))
+        needsDisplay = true
+    }
+    override func mouseUp(with e: NSEvent) {
+        if current.count > 1 { strokes.append(current) }
+        current.removeAll()
+        needsDisplay = true
+    }
+
+    override func draw(_ r: NSRect) {
+        NSColor.textBackgroundColor.setFill(); r.fill()
+        NSColor.separatorColor.setStroke()
+        let border = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 6, yRadius: 6)
+        border.stroke()
+        if strokes.isEmpty && current.isEmpty {
+            let a: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 11),
+                .foregroundColor: NSColor.tertiaryLabelColor]
+            let t = "Draw here with your pen — strokes should taper as you lift"
+            let sz = t.size(withAttributes: a)
+            t.draw(at: NSPoint(x: (bounds.width - sz.width) / 2,
+                               y: (bounds.height - sz.height) / 2), withAttributes: a)
+            return
+        }
+        NSColor.labelColor.setStroke()
+        // One path per SEGMENT, because the width changes along the stroke —
+        // a single path can only carry one line width.
+        for stroke in strokes + (current.count > 1 ? [current] : []) {
+            for i in 1..<stroke.count {
+                let seg = NSBezierPath()
+                seg.move(to: stroke[i - 1].p)
+                seg.line(to: stroke[i].p)
+                seg.lineWidth = (stroke[i - 1].w + stroke[i].w) / 2
+                seg.lineCapStyle = .round
+                seg.stroke()
+            }
+        }
+    }
+}
+
 final class GammaCurveView: NSView {
     var gamma: Double = 1.0 { didSet { if gamma != oldValue { needsDisplay = true } } }
     var live: Double = 0 { didSet { if live != oldValue { needsDisplay = true } } }   // 0...1 input
@@ -1379,6 +1452,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     // "Test Tablet Pressure" widgets — a live 0–100% bar so the user can confirm
     // the pen works BEFORE launching SAI.
     var testBtn: NSButton!
+    var scratch: PenScratchView!
     var testHint: NSTextField!
     var barRow: NSStackView!
     var pressureBar: PressureBar!
@@ -2042,6 +2116,12 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         testHint.preferredMaxLayoutWidth = rowWidth
         testHint.isHidden = true
         content.addArrangedSubview(testHint)
+        scratch = PenScratchView()
+        scratch.translatesAutoresizingMaskIntoConstraints = false
+        scratch.heightAnchor.constraint(equalToConstant: 130).isActive = true
+        scratch.widthAnchor.constraint(equalToConstant: CGFloat(rowWidth)).isActive = true
+        scratch.isHidden = true
+        content.addArrangedSubview(scratch)
         barRow = NSStackView(); barRow.orientation = .horizontal; barRow.alignment = .centerY; barRow.spacing = 10
         pressureBar = PressureBar()
         pressureBar.widthAnchor.constraint(equalToConstant: 240).isActive = true
@@ -2343,6 +2423,9 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
 
     func tabView(_ tabView: NSTabView, didSelect item: NSTabViewItem?) {
         refreshRecordingTab()
+        // The console only refreshed while the old "Settings" disclosure was
+        // open, so in the tabbed layout it showed as an empty black box.
+        if item?.identifier as? String == "Developer" { updateConsole() }
         applyLayout()
     }
 
@@ -3567,6 +3650,8 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         g_rawSeen.removeAll()          // fresh census per test run
         testBtn.title = "Stop Test"
         testHint.isHidden = false; barRow.isHidden = false
+        scratch.isHidden = false; scratch.clear()
+        applyLayout()
         // fast (~60fps), .common-mode timer so the bar tracks the pen instantly and
         // keeps updating even while the window is being interacted with. The bar is
         // custom-drawn (no easing), so it jumps to the real value like the % does.
@@ -3596,6 +3681,8 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         if testBtn != nil { testBtn.title = "Test pen" }
         if testHint != nil { testHint.isHidden = true }
         if barRow != nil { barRow.isHidden = true }
+        if scratch != nil { scratch.isHidden = true }
+        applyLayout()
     }
 
     @objc func launchTapped() {
