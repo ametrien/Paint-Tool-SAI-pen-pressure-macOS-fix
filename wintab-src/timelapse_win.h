@@ -56,6 +56,7 @@
 #define TL_DEFAULT_TARGET  1024          /* longest side of a recorded frame  */
 #define TL_DEFAULT_DEBOUNCE 150          /* ms of zero pressure = stroke end  */
 #define TL_SETTLE_MS       120           /* let SAI finish compositing        */
+#define TL_DEFAULT_BUDGET_MB 2048        /* frames on disk before thinning    */
 
 /* Frame header, v2. 112 bytes, naturally aligned, little-endian.
  *
@@ -106,6 +107,8 @@ static uint64_t *tl_hash_slot(uint64_t canvas) {
  * used for the log, so a racy write between the two trigger paths is fine. */
 static volatile LONG  g_tl_trigger = 0;
 static uint64_t       g_tl_seq = 0;
+static uint64_t       g_tl_bytes = 0;    /* frame bytes currently on disk     */
+static uint64_t       g_tl_budget = (uint64_t)TL_DEFAULT_BUDGET_MB << 20;
 static uint8_t       *g_tl_frame = NULL;
 static size_t         g_tl_frame_cap = 0;
 static uint8_t       *g_tl_tile  = NULL;
@@ -269,6 +272,78 @@ static int tl_write_frame(const uint8_t *px, uint32_t w, uint32_t h,
     return 1;
 }
 
+/* Frames are raw BGRA — around 3 MB each — so an unbounded recording would eat
+ * gigabytes: 2000 strokes of a 1000x700 canvas is 5.6 GB, and a bigger canvas
+ * is worse. Something has to give.
+ *
+ * Deleting the OLDEST frames is the obvious move and the wrong one: it eats the
+ * start of the drawing, which is the part people most want to watch. Deleting
+ * every SECOND frame instead halves the size while still spanning the whole
+ * session, just at coarser granularity — and it can repeat as often as needed,
+ * each pass halving again. A long session degrades in temporal detail rather
+ * than losing its beginning.
+ *
+ * This is the same idea as the encoder's --max-seconds resample, applied
+ * earlier because disk, not video length, is the binding constraint. */
+static void tl_enforce_budget(void) {
+    WIN32_FIND_DATAA fd;
+    char pat[MAX_PATH], full[MAX_PATH * 2];
+    HANDLE h;
+    int total = 0, i, deleted = 0;
+    uint64_t kept = 0;
+
+    if (g_tl_bytes <= g_tl_budget) return;
+
+    snprintf(pat, sizeof pat, "%s\\*.frame", TL_FRAMEDIR);
+
+    /* Two passes rather than one. Deleting while advancing the same iterator
+     * needs the handle moved in two places at once, which is where the first
+     * attempt at this went wrong; counting first keeps it obviously correct. */
+    h = FindFirstFileA(pat, &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do { total++; } while (FindNextFileA(h, &fd));
+    FindClose(h);
+    if (total < 4) return;                 /* nothing useful to thin */
+
+    h = FindFirstFileA(pat, &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    i = 0;
+    do {
+        uint64_t sz = ((uint64_t)fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
+        /* Never the last frame: it is the current state of the drawing, and a
+         * timelapse missing its final image looks broken. */
+        if ((i & 1) && i < total - 1) {
+            snprintf(full, sizeof full, "%s\\%s", TL_FRAMEDIR, fd.cFileName);
+            if (DeleteFileA(full)) deleted++;
+            else kept += sz;
+        } else {
+            kept += sz;
+        }
+        i++;
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+
+    g_tl_bytes = kept;
+    log_line("tl: over budget — thinned every 2nd frame (%d of %d removed, now %lluMB of %lluMB)",
+             deleted, total, (unsigned long long)(kept >> 20),
+             (unsigned long long)(g_tl_budget >> 20));
+}
+
+/* Count what is already on disk, so a budget set mid-session or frames left by
+ * a previous run are accounted for rather than ignored. */
+static void tl_scan_existing(void) {
+    WIN32_FIND_DATAA fd;
+    char pat[MAX_PATH];
+    HANDLE h;
+    g_tl_bytes = 0;
+    snprintf(pat, sizeof pat, "%s\\*.frame", TL_FRAMEDIR);
+    h = FindFirstFileA(pat, &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do { g_tl_bytes += ((uint64_t)fd.nFileSizeHigh << 32) | fd.nFileSizeLow; }
+    while (FindNextFileA(h, &fd));
+    FindClose(h);
+}
+
 /* --- capture ------------------------------------------------------------- */
 
 static void tl_capture_once(void) {
@@ -315,6 +390,8 @@ static void tl_capture_once(void) {
     }
     *slot = hash;
 
+    g_tl_bytes += (uint64_t)sizeof(TL_FRAME_HDR) + (uint64_t)w * h * 4u;
+    tl_enforce_budget();
     if (tl_write_frame(g_tl_frame, w, h, canvas, cname))
         log_line("tl: frame %llu  %ux%u  level=%d  (%s)  \"%s\"",
                  (unsigned long long)g_tl_seq, w, h, level,
@@ -443,8 +520,13 @@ static void tl_startup(void) {
         if (v >= 0 && v <= 5000) g_tl_stroke.debounce_ms = (uint32_t)v;
     }
 
+    if ((e = getenv("WT_TIMELAPSE_BUDGET_MB")) != NULL) {
+        long v = strtol(e, NULL, 10);
+        if (v >= 64 && v <= 200000) g_tl_budget = (uint64_t)v << 20;
+    }
     CreateDirectoryA(TL_DIR, NULL);
     CreateDirectoryA(TL_FRAMEDIR, NULL);
+    tl_scan_existing();
 
     g_tl_evt = CreateEventA(NULL, FALSE, FALSE, NULL);
     if (!g_tl_evt) { log_line("tl: CreateEvent failed"); return; }
@@ -452,9 +534,12 @@ static void tl_startup(void) {
     if (!g_tl_thread) { log_line("tl: CreateThread failed"); return; }
 
     g_tl_on = 1;
-    log_line("tl: recording enabled  base=%#llx target=%upx debounce=%ums interval=%ums -> %s",
+    log_line("tl: recording enabled  base=%#llx target=%upx debounce=%ums interval=%ums "
+             "budget=%lluMB existing=%lluMB -> %s",
              (unsigned long long)g_tl_image_base, g_tl_target,
-             g_tl_stroke.debounce_ms, g_tl_interval, TL_FRAMEDIR);
+             g_tl_stroke.debounce_ms, g_tl_interval,
+             (unsigned long long)(g_tl_budget >> 20),
+             (unsigned long long)(g_tl_bytes >> 20), TL_FRAMEDIR);
 }
 
 #endif /* TIMELAPSE_WIN_H */
