@@ -766,6 +766,51 @@ if let src = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_UPDATE"] {
     exit(result == nil ? 0 : 1)
 }
 
+/// The encoder running alongside SAI, turning frames into video as they are
+/// captured.
+///
+/// Without it, raw frames pile up at roughly 3 MB each and a long session
+/// reaches gigabytes before anyone presses Make video. With it, frames are
+/// consumed within a second of being written and disk stays flat — the video
+/// itself becomes the storage.
+var g_liveEncoder: Process?
+
+func timelapseSegmentBase() -> String {
+    "\(timelapseOutputFolder())/SAI Timelapse.mp4"
+}
+
+/// Start encoding in the background for this SAI session. Safe to call when
+/// recording is off or the encoder is missing — it simply does nothing.
+func startLiveEncoder() {
+    guard g_liveEncoder == nil, timelapseRecordingEnabled(),
+          let res = Bundle.main.resourcePath else { return }
+    let enc = "\(res)/sai-timelapse-encoder"
+    guard FileManager.default.isExecutableFile(atPath: enc) else { return }
+    let frames = "\(appPrefix)/drive_c/sai-timelapse/frames"
+    try? FileManager.default.createDirectory(atPath: frames, withIntermediateDirectories: true)
+    try? FileManager.default.createDirectory(atPath: timelapseOutputFolder(),
+                                             withIntermediateDirectories: true)
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: enc)
+    p.arguments = ["--frames", frames, "--out", timelapseSegmentBase(), "--fps", "12", "--watch"]
+    p.standardOutput = FileHandle.nullDevice
+    p.standardError = FileHandle.nullDevice
+    do { try p.run(); g_liveEncoder = p; wlog("timelapse: live encoder started") }
+    catch { wlog("timelapse: could not start the live encoder — \(error)") }
+}
+
+/// Stop it politely. SIGTERM rather than SIGKILL matters: the encoder closes
+/// its AVAssetWriters on the way out, and a video that never gets
+/// finishWriting() is one no player will open.
+func stopLiveEncoder() {
+    guard let p = g_liveEncoder, p.isRunning else { g_liveEncoder = nil; return }
+    kill(p.processIdentifier, SIGTERM)
+    // Give it a moment to close cleanly before letting go.
+    for _ in 0..<40 where p.isRunning { usleep(50_000) }
+    g_liveEncoder = nil
+    wlog("timelapse: live encoder stopped")
+}
+
 var g_wine = ""   // resolved during setup; used to launch SAI after the tap is granted
 
 // SETUP ONLY (runs before the pressure tap): resolve Wine, pick the SAI folder,
@@ -899,8 +944,10 @@ func launchSAIApp() {
     // WT_TIMELAPSE in the environment always wins, for testing.
     if e["WT_TIMELAPSE"] == nil, timelapseRecordingEnabled() { e["WT_TIMELAPSE"] = "1" }
     p.environment = e
+    startLiveEncoder()
     p.terminationHandler = { _ in
         try? "0".write(toFile: pf, atomically: true, encoding: .ascii)
+        stopLiveEncoder()
         // The process we spawned exiting does NOT always mean SAI closed — Wine
         // can hand off to another process and let this one exit immediately,
         // which used to make us quit while SAI was still on screen. Only exit
@@ -2665,13 +2712,20 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     func refreshRecordingTab() {
         guard recCheck != nil else { return }
         recCheck.state = timelapseOn ? .on : .off
+        // Frames are encoded away within a second of being captured, so the
+        // raw count is near zero while recording. What has been captured lives
+        // in the segments, and counting only frames made a working recording
+        // look like nothing at all.
         let n = timelapseFrameCount()
-        recFramesLabel.stringValue = n == 0
+        let segs = timelapseSegmentCount()
+        recFramesLabel.stringValue = (n == 0 && segs == 0)
             ? (timelapseOn ? "Nothing recorded yet — launch SAI and draw."
                            : "Recording is off.")
-            : "\(n) frame\(n == 1 ? "" : "s") recorded."
-        recMakeBtn.isEnabled = n > 0
-        recDiscardBtn.isEnabled = n > 0
+            : (segs > 0
+               ? "Recorded and encoded\(n > 0 ? ", \(n) frame\(n == 1 ? "" : "s") still to process" : ".")"
+               : "\(n) frame\(n == 1 ? "" : "s") recorded.")
+        recMakeBtn.isEnabled = n > 0 || segs > 0
+        recDiscardBtn.isEnabled = n > 0 || segs > 0
         let use = timelapseUsage(timelapseFramesDir)
         if use.total == 0 {
             recUsageLabel.stringValue = ""
@@ -3652,10 +3706,18 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     /// Build a video from whatever has been captured. Runs the encoder that
     /// ships in Resources — signed with the app, so no separate Gatekeeper
     /// approval — off the main thread, since a long session takes a moment.
+    /// Build the finished video.
+    ///
+    /// Most of the work has already happened: the encoder has been turning
+    /// frames into segments while you drew. This stops it, stitches the
+    /// segments into one video per canvas, and applies the chosen length.
+    /// Anything captured after the encoder stopped is encoded first, so the
+    /// last few strokes are not lost.
     @objc func makeTimelapseVideo() {
-        let n = timelapseFrameCount()
-        guard n > 0 else {
-            alertUser("No frames recorded yet.\n\nTurn on “Record timelapse”, then launch SAI and draw. "
+        let frames = timelapseFrameCount()
+        let segments = timelapseSegmentCount()
+        guard frames > 0 || segments > 0 else {
+            alertUser("Nothing recorded yet.\n\nTurn on “Record timelapse”, then launch SAI and draw. "
                       + "Each finished stroke captures a frame.")
             return
         }
@@ -3664,34 +3726,55 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
             alertUser("The timelapse encoder is missing from the app bundle.")
             return
         }
-
-        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HHmm"
-        let out = "\(timelapseOutputFolder())/SAI Timelapse \(f.string(from: Date())).mp4"
+        stopLiveEncoder()          // it holds the segments open
 
         DispatchQueue.global(qos: .userInitiated).async {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: enc)
-            // 60s cap: a long session yields thousands of frames, and dropping
-            // evenly spaced ones hits a target length exactly, which raising fps
-            // cannot do. Frames are consumed as they encode, so the next session
-            // starts clean without anyone having to tidy up.
-            p.arguments = ["--frames", self.timelapseFramesDir, "--out", out,
-                           "--fps", "12", "--max-seconds", "\(timelapseMaxSeconds())"]
+            var args = ["--frames", self.timelapseFramesDir,
+                        "--out", timelapseSegmentBase(), "--fps", "12", "--finalize"]
+            if timelapseMaxSeconds() > 0 {
+                args += ["--max-seconds", "\(timelapseMaxSeconds())"]
+            }
+            p.arguments = args
             let pipe = Pipe(); p.standardOutput = pipe; p.standardError = pipe
             try? p.run()
             let log = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
             p.waitUntilExit()
-            wlog("timelapse: encoder exited \(p.terminationStatus)\n\(log)")
+            wlog("timelapse: finalize exited \(p.terminationStatus)\n\(log)")
+
+            // The encoder prints "wrote <path>" per canvas; the newest is the
+            // sensible one to show.
+            let made = log.split(separator: "\n")
+                .filter { $0.hasPrefix("wrote ") }
+                .map { String($0.dropFirst(6)).components(separatedBy: "  ").first ?? "" }
+                .filter { !$0.isEmpty }
 
             DispatchQueue.main.async {
-                if p.terminationStatus == 0, FileManager.default.fileExists(atPath: out) {
-                    self.showPreview(out)
-                    self.refreshRecordingTab()
+                if p.terminationStatus == 0, let first = made.first {
+                    self.showPreview(first)
+                    if made.count > 1 {
+                        alertUser("Made \(made.count) videos — one per canvas.\n\nIn \(prettyPath(timelapseOutputFolder()))")
+                    }
+                    NSWorkspace.shared.activateFileViewerSelecting(made.map { URL(fileURLWithPath: $0) })
                 } else {
-                    alertUser("Could not build the video from \(n) frame(s).\n\n\(log)")
+                    alertUser("Could not build the video.\n\n\(log)")
                 }
+                self.refreshRecordingTab()
             }
         }
+    }
+
+    /// Segments already encoded and waiting to be stitched.
+    func timelapseSegmentCount() -> Int {
+        let dir = timelapseOutputFolder()
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return 0 }
+        // <stem>[.label].NNN.mp4 — a trailing number is what marks a segment.
+        return names.filter { n in
+            guard n.hasPrefix("SAI Timelapse."), n.hasSuffix(".mp4") else { return false }
+            let parts = n.dropLast(4).split(separator: ".")
+            return parts.count >= 2 && Int(parts[parts.count - 1]) != nil
+        }.count
     }
 
     @objc func revealTimelapseFrames() {
@@ -3703,15 +3786,30 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
 
     @objc func discardTimelapseFrames() {
         let n = timelapseFrameCount()
-        guard n > 0 else { alertUser("Nothing recorded to discard."); return }
+        let segs = timelapseSegmentCount()
+        guard n > 0 || segs > 0 else { alertUser("Nothing recorded to discard."); return }
+        // Segments ARE the recording once the live encoder has been through, so
+        // discarding only loose frames would leave the session behind.
+        stopLiveEncoder()
         let a = NSAlert()
-        a.messageText = "Discard \(n) recorded frame(s)?"
+        a.messageText = segs > 0 ? "Discard this recording?"
+                                 : "Discard \(n) recorded frame(s)?"
         a.informativeText = "This only deletes the timelapse recording. Your artwork is untouched."
         a.addButton(withTitle: "Discard"); a.addButton(withTitle: "Cancel")
         guard a.runModal() == .alertFirstButtonReturn else { return }
         for f in (try? FileManager.default.contentsOfDirectory(atPath: timelapseFramesDir)) ?? []
         where f.hasSuffix(".frame") {
             try? FileManager.default.removeItem(atPath: "\(timelapseFramesDir)/\(f)")
+        }
+        let outDir = timelapseOutputFolder()
+        for f in (try? FileManager.default.contentsOfDirectory(atPath: outDir)) ?? [] {
+            guard f.hasPrefix("SAI Timelapse."), f.hasSuffix(".mp4") else { continue }
+            let parts = f.dropLast(4).split(separator: ".")
+            // Numbered SEGMENTS only. A finished video someone chose to keep is
+            // not part of "discard the recording".
+            if parts.count >= 2, Int(parts[parts.count - 1]) != nil {
+                try? FileManager.default.removeItem(atPath: "\(outDir)/\(f)")
+            }
         }
         rebuildMenus()
         refreshRecordingTab()
