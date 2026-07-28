@@ -23,8 +23,15 @@ instead of Wine's stub. SAI then asks it, perfectly ordinarily, for pen packets.
 
 Living inside SAI's process turns out to matter far beyond pressure. It means we can call Win32
 APIs *as SAI* — which is how the "Wake SAI" recovery restores a lost window, and how
-pinch-to-zoom posts a wheel message without needing any macOS permission at all. A translator
-that sits inside the room can do things a translator shouting through the door cannot.
+pinch-to-zoom and two-finger scroll-to-pan post their messages without needing any macOS
+permission at all. A translator that sits inside the room can do things a translator shouting
+through the door cannot.
+
+Because it lives in the Wine prefix rather than in the app, upgrading the app used to leave the
+old DLL in place — so a release whose entire content was a DLL fix could reach nobody. Since
+**v0.1.11** the prefix copy is compared against the app's on every launch and replaced when they
+differ, and the DLL stamps its build date into its debug log, so *"is the fix actually loaded?"*
+is a question with an answer.
 
 ### The macOS helper — outside
 
@@ -45,7 +52,7 @@ mostly there to make the fiddly parts unfiddly.
 This is the single most common misunderstanding, and it has cost people whole evenings.
 
 **SAI is copied into a Wine prefix and runs from there.** The folder you choose during setup is a
-*source*, read once at install time.
+*source*, read at install time — not the copy that runs.
 
 | | |
 |---|---|
@@ -53,18 +60,28 @@ This is the single most common misunderstanding, and it has cost people whole ev
 | `~/SAI2-pressure/drive_c/SAI2` | what actually **runs**, licence included |
 | `~/Library/Application Support/SAIPenPressure` | settings, and a saved copy of your licence |
 
-So editing your own SAI folder changes nothing until you reinstall. The commonest version of
-this: dropping the `.slc` licence into your SAI folder, restarting, and finding SAI still refuses
-to save. The file is real, it is valid, and SAI never looks there.
+So editing your own SAI folder changes nothing until you reinstall. Update SAI itself, and the
+copy inside Wine keeps running the old build until you reinstall it — which is why the setup
+window shows *source* and *installed in Wine* as separate rows, so they can visibly disagree
+instead of quietly disagreeing.
 
-The setup window shows both locations as separate rows for exactly this reason — *source* and
-*installed in Wine* — so they can visibly disagree instead of quietly disagreeing.
+**The licence is the exception.** It used to be the commonest version of this trap: dropping the
+`.slc` into your SAI folder, restarting, and finding SAI still refused to save — the file real,
+valid, and in a folder SAI never reads. Since **v0.1.12** a certificate found in your SAI folder
+is adopted rather than ignored: noticed when you choose the folder, and again on every install or
+reinstall, then written to every location SAI might read and kept so a rebuild can restore it.
 
 ## Pressure resolution
 
 The app reads your tablet's HID tip-pressure element and uses its logical range as the level
 count. A Wacom Intuos BT S reports 4096. No lookup table of model names — the hardware is asked
 directly, so it works for tablets nobody has tested.
+
+Asking the hardware has one catch, found the hard way: a **Bluetooth** tablet that has gone idle
+isn't visible to answer, and the question is only asked once, at startup. A 4096-level pen could
+therefore run at 1024 with nothing said anywhere — both halves of the bridge agreed on the wrong
+number, so everything worked, just coarser. Since **v0.1.11** the last answer your hardware gave
+is remembered between launches, and the tablet is asked once more just before SAI starts.
 
 You can override this in **Settings → Pressure levels**, and it will warn you if you ask for more
 levels than your tablet has. That warning is earned: asking a 4096-level tablet for 8192 doesn't
