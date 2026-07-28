@@ -2949,6 +2949,14 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         if (tabView?.selectedTabViewItem?.identifier as? String) == "Recording" {
             refreshRecordingTab()
         }
+        // Keep the live encoder alive for as long as SAI is. It used to start
+        // only from launchSAIApp(), so restarting the app while SAI was already
+        // open meant nothing was recorded for the rest of that session — and
+        // nothing said so. This also brings it back if it died on its own.
+        if let p = g_liveEncoder, !p.isRunning { g_liveEncoder = nil }
+        if g_liveEncoder == nil, timelapseRecordingEnabled(), saiWindowIsOpen() {
+            startLiveEncoder()
+        }
         // The STATUS ROWS always update, even while SAI is running (issue #12).
         // They used to be skipped entirely once `running` was set, so changing
         // the SAI folder or installing a licence mid-session showed no change at
@@ -3809,10 +3817,12 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         let dir = timelapseOutputFolder()
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return 0 }
         // <stem>[.label].NNN.mp4 — a trailing number is what marks a segment.
-        let stem = (timelapseSessionBase() as NSString).lastPathComponent
-            .replacingOccurrences(of: ".mp4", with: "")
+        // Anything ending .NNN.mp4 is an unfinished segment, whichever session
+        // wrote it. Keying this to the current session name meant a recording
+        // from before an app update became invisible — still on disk, but with
+        // no way to turn it into a video.
         return names.filter { n in
-            guard n.hasPrefix(stem + "."), n.hasSuffix(".mp4") else { return false }
+            guard n.hasSuffix(".mp4") else { return false }
             let parts = n.dropLast(4).split(separator: ".")
             return parts.count >= 2 && Int(parts[parts.count - 1]) != nil
         }.count
@@ -3844,9 +3854,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         }
         let outDir = timelapseOutputFolder()
         for f in (try? FileManager.default.contentsOfDirectory(atPath: outDir)) ?? [] {
-            let stem = (timelapseSessionBase() as NSString).lastPathComponent
-                .replacingOccurrences(of: ".mp4", with: "")
-            guard f.hasPrefix(stem + "."), f.hasSuffix(".mp4") else { continue }
+            guard f.hasSuffix(".mp4") else { continue }
             let parts = f.dropLast(4).split(separator: ".")
             // Numbered SEGMENTS only. A finished video someone chose to keep is
             // not part of "discard the recording".

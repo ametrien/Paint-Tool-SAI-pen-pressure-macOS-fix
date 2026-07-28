@@ -386,13 +386,17 @@ func finalizeSegments() -> Int {
     let stem = base.deletingPathExtension().lastPathComponent
     guard let names = try? fm.contentsOfDirectory(atPath: dir.path) else { return 0 }
 
-    // <stem>[.label].NNN.mp4  — the trailing number is what marks a segment.
+    // Anything ending .NNN.mp4 is an unfinished segment. Group by everything
+    // before the number, so segments left by an EARLIER session are finished
+    // too rather than stranded — restricting this to the current base name
+    // meant an app update in the middle of a recording lost it.
+    _ = stem
     var groups: [String: [(Int, URL)]] = [:]
-    for n in names where n.hasPrefix(stem + ".") && n.hasSuffix(".mp4") {
+    for n in names where n.hasSuffix(".mp4") {
         let parts = n.dropLast(4).split(separator: ".")
         guard parts.count >= 2, let idx = Int(parts[parts.count - 1]) else { continue }
-        let label = parts.count >= 3 ? parts[1...(parts.count - 2)].joined(separator: ".") : ""
-        groups[label, default: []].append((idx, dir.appendingPathComponent(n)))
+        let prefix = parts[0...(parts.count - 2)].joined(separator: ".")
+        groups[prefix, default: []].append((idx, dir.appendingPathComponent(n)))
     }
     guard !groups.isEmpty else { return 0 }
 
@@ -422,8 +426,7 @@ func finalizeSegments() -> Int {
                                  toDuration: CMTime(seconds: maxSeconds, preferredTimescale: 600))
         }
 
-        let outURL = label.isEmpty ? base
-            : dir.appendingPathComponent("\(stem).\(label).mp4")
+        let outURL = dir.appendingPathComponent("\(label).mp4")
         try? fm.removeItem(at: outURL)
         guard let ex = AVAssetExportSession(asset: comp, presetName: AVAssetExportPresetHighestQuality)
         else { continue }
