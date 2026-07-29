@@ -89,7 +89,7 @@ echo "== Live encoding accumulates instead of overwriting =="
 # good. This checks the writers stay open across polls.
 LIVE="$WORK/live"; mkdir -p "$LIVE/frames"
 swiftc -O -o "$WORK/enc-live" "$REPO/timelapse-encoder/EncoderCore.swift" \
-    "$REPO/timelapse-encoder/main.swift"
+    "$REPO/timelapse-encoder/LibraryCore.swift" "$REPO/timelapse-encoder/main.swift"
 
 mkframes() {  # start end canvas_id name w h
   python3 - "$@" <<'PY'
@@ -130,3 +130,117 @@ left=$(ls "$LIVE/frames" 2>/dev/null | wc -l | tr -d ' ')
   || { echo "  FAIL live: $left frame(s) left on disk"; live_fail=1; }
 [ "$live_fail" = 0 ] || exit 1
 echo "All live encoding tests passed."
+
+echo ""
+echo "== A session leaves a fingerprint, and pieces rebuild into one video =="
+# The two halves of drawing across several evenings: a session has to record
+# what the canvas looked like (so a later session can recognise it), and the
+# per-session pieces have to become the single video somebody watches.
+REB="$WORK/reb"; mkdir -p "$REB/frames" "$REB/out"
+reb_fail=0
+
+# --- a live session, then a separate --finalize run, as the app does it -------
+mkframes 1 6 CAFE Sketch 64 48 "$REB/frames"
+"$WORK/enc-live" --frames "$REB/frames" --out "$REB/out/session.mp4" --fps 5 --watch \
+    > "$REB/log" 2>&1 &
+RPID=$!
+sleep 3
+kill -INT $RPID 2>/dev/null; wait $RPID 2>/dev/null || true
+# Frames captured after the watcher stopped: --finalize must fold these in
+# WITHOUT losing the session's original opening fingerprint.
+mkframes 7 9 CAFE Sketch 64 48 "$REB/frames"
+"$WORK/enc-live" --frames "$REB/frames" --out "$REB/out/session.mp4" --fps 5 --finalize \
+    >> "$REB/log" 2>&1 || { echo "  FAIL rebuild: --finalize failed"; cat "$REB/log"; exit 1; }
+
+SIDE="$REB/out/session.Sketch.json"
+if [ -s "$SIDE" ]; then echo "  ok   session: a fingerprint sidecar is written"
+else echo "  FAIL session: no sidecar at $SIDE"; ls "$REB/out"; reb_fail=1; fi
+
+# THE TRAP: --finalize runs in a DIFFERENT process from --watch and re-opens the
+# session. Drop the sidecar-adoption in LiveWriter.init and the opening
+# fingerprint gets overwritten by one taken from the last few strokes — the
+# drawing then stops matching itself next session, silently.
+#
+# mkframes paints frame i a flat colour B=(i*20), G=255-(i*20), R=128, and the
+# fingerprint stores luma (B + 2G + R)/4, so every cell of frame i reads
+# (i*20 + 2*(255 - i*20) + 128)/4:
+#     frame 1 -> 154   the session's opening, written by --watch
+#     frame 7 -> 124   the first frame --finalize sees; what a broken adoption
+#                      would report as the opening
+#     frame 9 -> 114   the closing, after --finalize folded in the leftovers
+python3 - "$SIDE" <<'PY' || reb_fail=1
+import json, sys
+d = json.load(open(sys.argv[1]))
+ok = True
+def check(cond, msg):
+    global ok
+    print(("  ok   " if cond else "  FAIL ") + msg); ok = ok and cond
+check(d["frames"] == 9, f"session: all 9 frames counted across both runs (got {d['frames']})")
+check(d["title"] == "Sketch", "session: the canvas name is recorded")
+check(len(d["opening"]["cells"]) == 256 and len(d["closing"]["cells"]) == 256,
+      "session: both fingerprints are 16x16")
+check(d["opening"]["cells"][0] == 154,
+      f"session: the opening fingerprint survives --finalize (got {d['opening']['cells'][0]}, want 154 = frame 1)")
+check(d["closing"]["cells"][0] == 114,
+      f"session: the closing fingerprint is the LAST frame (got {d['closing']['cells'][0]}, want 114 = frame 9)")
+check(d["opening"]["cells"] != d["closing"]["cells"],
+      "session: opening and closing are actually different")
+sys.exit(0 if ok else 1)
+PY
+
+# --- rebuilding a drawing from its pieces ------------------------------------
+mkpiece() {  # dir name w h count
+  local d="$1" n="$2" w="$3" h="$4" c="$5"
+  rm -rf "$WORK/pf"; mkdir -p "$WORK/pf"
+  mkframes 1 "$c" DEAD Piece "$w" "$h" "$WORK/pf"
+  "$WORK/enc-live" --frames "$WORK/pf" --out "$d/$n" --fps 5 > /dev/null 2>&1
+}
+PIECES="$REB/draw/pieces"; mkdir -p "$PIECES"
+mkpiece "$PIECES" "2026-07-27 2015.mp4" 64 48 5
+mkpiece "$PIECES" "2026-07-28 1903.mp4" 64 48 7
+"$WORK/enc-live" --rebuild "$PIECES" --out "$REB/draw/Sketch.mp4" > "$REB/rlog" 2>&1 \
+  || { echo "  FAIL rebuild: uniform rebuild failed"; cat "$REB/rlog"; exit 1; }
+probe=$("$WORK/enc-live" --probe "$REB/draw/Sketch.mp4")
+[ "$probe" = "64x48 2.40s" ] && echo "  ok   rebuild: two sessions become one video of both ($probe)" \
+  || { echo "  FAIL rebuild: expected 64x48 2.40s, got $probe"; reb_fail=1; }
+grep -q "2 piece(s)" "$REB/rlog" && echo "  ok   rebuild: both pieces were used" \
+  || { echo "  FAIL rebuild: log says $(cat "$REB/rlog")"; reb_fail=1; }
+
+# Pieces are the archive: a rebuild must never consume them.
+[ -f "$PIECES/2026-07-27 2015.mp4" ] && [ -f "$PIECES/2026-07-28 1903.mp4" ] \
+  && echo "  ok   rebuild: the session pieces survive the rebuild" \
+  || { echo "  FAIL rebuild: a piece was consumed"; reb_fail=1; }
+
+# Derived, therefore repeatable. Running it again must give the same video, not
+# a video of the video.
+"$WORK/enc-live" --rebuild "$PIECES" --out "$REB/draw/Sketch.mp4" > /dev/null 2>&1
+probe2=$("$WORK/enc-live" --probe "$REB/draw/Sketch.mp4")
+[ "$probe2" = "$probe" ] && echo "  ok   rebuild: rebuilding again is idempotent" \
+  || { echo "  FAIL rebuild: second rebuild gave $probe2, first gave $probe"; reb_fail=1; }
+
+# THE TRAP: a canvas resized between sessions. Passthrough cannot mix
+# dimensions, so this takes the composition path — and getting it wrong is how a
+# 1000x700 drawing once came out as 198x878. The output must be big enough for
+# BOTH pieces, with neither stretched.
+MIX="$REB/mixed/pieces"; mkdir -p "$MIX"
+mkpiece "$MIX" "2026-07-27 2015.mp4" 64 48 5
+mkpiece "$MIX" "2026-07-28 1903.mp4" 96 32 5
+"$WORK/enc-live" --rebuild "$MIX" --out "$REB/mixed/Big.mp4" > "$REB/mlog" 2>&1 \
+  || { echo "  FAIL rebuild: mixed-size rebuild failed"; cat "$REB/mlog"; exit 1; }
+mprobe=$("$WORK/enc-live" --probe "$REB/mixed/Big.mp4")
+[ "${mprobe%% *}" = "96x48" ] && echo "  ok   rebuild: a resized canvas gets a frame that fits both ($mprobe)" \
+  || { echo "  FAIL rebuild: expected 96x48, got $mprobe"; reb_fail=1; }
+grep -q "mixed sizes" "$REB/mlog" && echo "  ok   rebuild: the mixed-size path is the one that ran" \
+  || { echo "  FAIL rebuild: took the passthrough path with mixed sizes"; reb_fail=1; }
+
+# A length cap is a rendition, applied on request — never baked into the archive.
+"$WORK/enc-live" --rebuild "$PIECES" --out "$REB/draw/Short.mp4" --max-seconds 1 >/dev/null 2>&1
+sprobe=$("$WORK/enc-live" --probe "$REB/draw/Short.mp4")
+case "$sprobe" in
+  "64x48 1.0"*|"64x48 0.9"*) echo "  ok   rebuild: --max-seconds re-times without touching the pieces ($sprobe)" ;;
+  *) echo "  FAIL rebuild: expected about 1s, got $sprobe"; reb_fail=1 ;;
+esac
+[ -f "$PIECES/2026-07-27 2015.mp4" ] || { echo "  FAIL rebuild: the export ate a piece"; reb_fail=1; }
+
+[ "$reb_fail" = 0 ] || exit 1
+echo "All rebuild tests passed."
