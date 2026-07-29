@@ -766,6 +766,30 @@ if let src = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_UPDATE"] {
     exit(result == nil ? 0 : 1)
 }
 
+/// Self-test hook for the library: file whatever the encoder left in staging,
+/// print where each session went, and exit. Filing MOVES a session's only copy
+/// into a drawing's folder, so it is tested against a real throwaway folder
+/// rather than reasoned about — the same treatment, for the same reason, as the
+/// SAI-update hook above. Inert without the environment variable.
+if let dir = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_LIBRARY"] {
+    let store = LibraryStore(videosDir: dir, indexPath: dir + "/library.json")
+    for f in store.fileFinishedSessions() {
+        let d = store.lib.drawing(id: f.drawingId)
+        print("filed \(f.pieceFile) -> \(d?.folder ?? "?")"
+              + (f.askAbout.map { " ask:\(store.lib.drawing(id: $0)?.folder ?? "?")" } ?? ""))
+    }
+    // Answering the question is part of the same path and needs the same proof.
+    if ProcessInfo.processInfo.environment["SAIPP_SELFTEST_CONFIRM"] == "same",
+       let p = store.lib.pending.first {
+        store.confirmSame(p)
+        print("confirmed same -> \(store.lib.drawing(id: p.candidateId)?.folder ?? "?")")
+    }
+    for d in store.lib.drawings.sorted(by: { $0.folder < $1.folder }) {
+        print("drawing \(d.folder): \(d.ordered.map(\.file).joined(separator: ", "))")
+    }
+    exit(0)
+}
+
 /// The encoder running alongside SAI, turning frames into video as they are
 /// captured.
 ///
@@ -782,6 +806,16 @@ var g_liveEncoder: Process?
 /// it has to differ between sessions, because it did not: every session wrote
 /// to "SAI Timelapse.mp4", so making a second video, or simply drawing again
 /// tomorrow, silently overwrote the finished timelapse from before.
+/// Recording happens in a STAGING folder, not in the videos folder itself:
+/// segments and sidecars are working files, and a finished session only moves
+/// into a drawing's folder once it has been recognised as belonging there.
+/// Hidden, because nobody browsing their timelapses wants to see the plumbing.
+func timelapseStagingFolder() -> String {
+    let d = timelapseOutputFolder() + "/.recording"
+    try? FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true)
+    return d
+}
+
 func timelapseSessionBase() -> String {
     let marker = appSupport() + "/timelapse-session.txt"
     if let s = try? String(contentsOfFile: marker, encoding: .utf8) {
@@ -789,9 +823,36 @@ func timelapseSessionBase() -> String {
         if !t.isEmpty { return t }
     }
     let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HHmm"
-    let base = "\(timelapseOutputFolder())/SAI Timelapse \(f.string(from: Date())).mp4"
+    let base = "\(timelapseStagingFolder())/session \(f.string(from: Date())).mp4"
     try? base.write(toFile: marker, atomically: true, encoding: .utf8)
     return base
+}
+
+/// The library index. Beside the settings rather than in the videos folder: it
+/// is bookkeeping, and the videos have to stand on their own without it.
+func timelapseLibraryPath() -> String { appSupport() + "/library.json" }
+
+func makeLibraryStore() -> LibraryStore {
+    LibraryStore(videosDir: timelapseOutputFolder(), indexPath: timelapseLibraryPath())
+}
+
+/// File whatever sessions have just finished, then rebuild the drawings they
+/// landed in. Returns a one-line summary for the log.
+///
+/// Rebuilding is per drawing and only for the ones that changed: it copies the
+/// encoded samples rather than re-encoding, so this stays cheap even for a
+/// drawing with thirty evenings in it.
+@discardableResult
+func fileAndRebuildSessions() -> String {
+    guard let res = Bundle.main.resourcePath else { return "" }
+    let enc = "\(res)/sai-timelapse-encoder"
+    let store = makeLibraryStore()
+    let filed = store.fileFinishedSessions()
+    guard !filed.isEmpty else { return "" }
+    for id in Set(filed.map(\.drawingId)) { store.rebuild(id, encoder: enc) }
+    let asks = filed.filter { $0.askAbout != nil }.count
+    return "timelapse: filed \(filed.count) session(s)"
+        + (asks > 0 ? ", \(asks) to confirm" : "")
 }
 
 /// Turn whatever has been recorded into finished videos, now, and wait for it.
@@ -813,7 +874,7 @@ func finalizeTimelapseNow() -> Bool {
     // leave behind.
     let hasFrames = ((try? FileManager.default.contentsOfDirectory(atPath: frames)) ?? [])
         .contains { $0.hasSuffix(".frame") }
-    let outDir = timelapseOutputFolder()
+    let outDir = timelapseStagingFolder()
     let hasSegments = ((try? FileManager.default.contentsOfDirectory(atPath: outDir)) ?? [])
         .contains { n in
             guard n.hasSuffix(".mp4") else { return false }
@@ -824,15 +885,20 @@ func finalizeTimelapseNow() -> Bool {
 
     let p = Process()
     p.executableURL = URL(fileURLWithPath: enc)
-    var args = ["--frames", frames, "--out", timelapseSessionBase(), "--fps", "12", "--finalize"]
-    if timelapseMaxSeconds() > 0 { args += ["--max-seconds", "\(timelapseMaxSeconds())"] }
-    p.arguments = args
+    // No --max-seconds here any more. A session is archived at FULL length and
+    // capped only when somebody exports one, because capping the archive would
+    // re-time already re-timed material every time a drawing gained an evening.
+    p.arguments = ["--frames", frames, "--out", timelapseSessionBase(), "--fps", "12", "--finalize"]
     p.standardOutput = FileHandle.nullDevice
     p.standardError = FileHandle.nullDevice
     do { try p.run() } catch { wlog("timelapse: auto-finalise could not start — \(error)"); return false }
     p.waitUntilExit()
     wlog("timelapse: auto-finalised on close (exit \(p.terminationStatus))")
-    if p.terminationStatus == 0 { endTimelapseSession() }
+    if p.terminationStatus == 0 {
+        let summary = fileAndRebuildSessions()
+        if !summary.isEmpty { wlog(summary) }
+        endTimelapseSession()
+    }
     return p.terminationStatus == 0
 }
 
@@ -1799,6 +1865,13 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     var recDiscardBtn: NSButton!
     var recLengthPopup: NSPopUpButton!
     var recFolderLabel: NSTextField!
+    // The Timelapses tab (LibraryUI.swift). libStore is a cache of the index for
+    // the buttons to act on; refreshLibraryTab() reloads it from disk, so the
+    // file stays the source of truth and this never drifts.
+    var libraryTab: NSStackView!
+    var libStack: NSStackView!
+    var libFooter: NSTextField!
+    var libStore: LibraryStore?
     var settingsTab: NSStackView!
     var settingsScratch: PenScratchView!
     var scratchRow: NSStackView!
@@ -2636,9 +2709,14 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         // all of them to reach any one.
         tabView = NSTabView()
         tabView.translatesAutoresizingMaskIntoConstraints = false
+        // Recording is about what is happening now; Timelapses is what has
+        // accumulated. Keeping them apart matters because the recording status
+        // line is the most important text in the window and should not have to
+        // compete with a scrolling list.
         for (label, view) in [("Setup", content!),
                               ("Pen", settingsTab!),
                               ("Recording", recordingTab!),
+                              ("Timelapses", buildLibraryTab()),
                               ("Developer", devSection!)] {
             // NSTabViewItem positions its view with the autoresizing mask, not
             // constraints. Leaving translatesAutoresizingMaskIntoConstraints
@@ -2908,6 +2986,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
 
     func tabView(_ tabView: NSTabView, didSelect item: NSTabViewItem?) {
         refreshRecordingTab()
+        if item?.identifier as? String == "Timelapses" { refreshLibraryTab() }
         // The console only refreshed while the old "Settings" disclosure was
         // open, so in the tabbed layout it showed as an empty black box.
         if item?.identifier as? String == "Developer" { updateConsole() }
@@ -3829,24 +3908,23 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         DispatchQueue.global(qos: .userInitiated).async {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: enc)
-            var args = ["--frames", self.timelapseFramesDir,
-                        "--out", timelapseSessionBase(), "--fps", "12", "--finalize"]
-            if timelapseMaxSeconds() > 0 {
-                args += ["--max-seconds", "\(timelapseMaxSeconds())"]
-            }
-            p.arguments = args
+            // Full length: the cap belongs to an export, not to the archive.
+            p.arguments = ["--frames", self.timelapseFramesDir,
+                           "--out", timelapseSessionBase(), "--fps", "12", "--finalize"]
             let pipe = Pipe(); p.standardOutput = pipe; p.standardError = pipe
             try? p.run()
             let log = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
             p.waitUntilExit()
             wlog("timelapse: finalize exited \(p.terminationStatus)\n\(log)")
 
-            // The encoder prints "wrote <path>" per canvas; the newest is the
-            // sensible one to show.
-            let made = log.split(separator: "\n")
-                .filter { $0.hasPrefix("wrote ") }
-                .map { String($0.dropFirst(6)).components(separatedBy: "  ").first ?? "" }
-                .filter { !$0.isEmpty }
+            // File the finished session into its drawing and rebuild that
+            // drawing's video. What somebody wants to see afterwards is the
+            // whole drawing so far, not tonight's fragment of it.
+            let store = makeLibraryStore()
+            let filed = store.fileFinishedSessions()
+            for id in Set(filed.map(\.drawingId)) { store.rebuild(id, encoder: enc) }
+            let made = filed.compactMap { store.lib.drawing(id: $0.drawingId) }
+                .map { store.videoURL($0).path }
 
             DispatchQueue.main.async {
                 // Recording continues if SAI is still open. Stopping the
@@ -3862,6 +3940,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
                         alertUser("Made \(made.count) videos — one per canvas.\n\nIn \(prettyPath(timelapseOutputFolder()))")
                     }
                     NSWorkspace.shared.activateFileViewerSelecting(made.map { URL(fileURLWithPath: $0) })
+                    self.askAboutPendingSessions()
                 } else {
                     alertUser("Could not build the video.\n\n\(log)")
                 }
@@ -3870,9 +3949,11 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         }
     }
 
-    /// Segments already encoded and waiting to be stitched.
+    /// Segments already encoded and waiting to be stitched. In the staging
+    /// folder, never among the finished videos — a drawing's folder holds only
+    /// things worth watching.
     func timelapseSegmentCount() -> Int {
-        let dir = timelapseOutputFolder()
+        let dir = timelapseStagingFolder()
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return 0 }
         // <stem>[.label].NNN.mp4 — a trailing number is what marks a segment.
         // Anything ending .NNN.mp4 is an unfinished segment, whichever session
@@ -3918,15 +3999,13 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         where f.hasSuffix(".frame") {
             try? FileManager.default.removeItem(atPath: "\(timelapseFramesDir)/\(f)")
         }
-        let outDir = timelapseOutputFolder()
+        // Everything in staging: segments, and the fingerprint sidecars beside
+        // them. Finished drawings live elsewhere and are not part of
+        // "discard the recording" — this button throws away tonight, never the
+        // work of previous evenings.
+        let outDir = timelapseStagingFolder()
         for f in (try? FileManager.default.contentsOfDirectory(atPath: outDir)) ?? [] {
-            guard f.hasSuffix(".mp4") else { continue }
-            let parts = f.dropLast(4).split(separator: ".")
-            // Numbered SEGMENTS only. A finished video someone chose to keep is
-            // not part of "discard the recording".
-            if parts.count >= 2, Int(parts[parts.count - 1]) != nil {
-                try? FileManager.default.removeItem(atPath: "\(outDir)/\(f)")
-            }
+            try? FileManager.default.removeItem(atPath: "\(outDir)/\(f)")
         }
         endTimelapseSession()
         rebuildMenus()
