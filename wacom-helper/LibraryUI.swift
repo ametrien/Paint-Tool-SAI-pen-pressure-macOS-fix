@@ -39,15 +39,30 @@ final class HoverVideoView: NSView {
     private let url: URL
     private let poster = NSImageView()
     private var player: AVPlayer?
+    private var playerLayer: AVPlayerLayer?
     private var layerView: NSView?
     private var endObserver: Any?
-    /// Exposed so the wiring can be tested without synthesising mouse events —
-    /// tracking areas are AppKit's job, but "hovering starts the video" is ours.
     private(set) var isPreviewing = false
+
+    /// The player layer's frame, for tests. Walking the layer tree from outside
+    /// does not work headlessly — a subview's backing layer is not instantiated
+    /// until it is displayed — so the view reports its own geometry.
+    var previewFrame: CGRect { playerLayer?.frame ?? .zero }
+
+    /// The one row currently playing. A pointer crossing three rows in a second
+    /// otherwise leaves three videos running behind the one being looked at —
+    /// invisible, since only the last is under the cursor, but audible in the
+    /// fans and visible in the flicker as they all decode at once.
+    private static weak var playing: HoverVideoView?
 
     init(url: URL, image: NSImage?) {
         self.url = url
         super.init(frame: .zero)
+        // Nothing may escape the thumbnail's box. Layers are not clipped by
+        // their superlayer unless told to be, and an unclipped AVPlayerLayer
+        // draws the video at its own size straight over the rows below.
+        wantsLayer = true
+        layer?.masksToBounds = true
         poster.imageScaling = .scaleProportionallyUpOrDown
         poster.image = image
         poster.translatesAutoresizingMaskIntoConstraints = false
@@ -61,6 +76,18 @@ final class HoverVideoView: NSView {
     }
 
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+
+    /// Keep the player layer the size of the view.
+    ///
+    /// Belt and braces: the frame is also set when the preview starts, and with
+    /// the thumbnail pinned to a fixed 96x72 that assignment is enough today —
+    /// no test can tell this override from its absence. It earns its place the
+    /// moment the still becomes resizable, which is exactly when a layer sized
+    /// once from a stale bounds would start drawing over the rows below.
+    override func layout() {
+        super.layout()
+        playerLayer?.frame = bounds
+    }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -77,15 +104,18 @@ final class HoverVideoView: NSView {
 
     func beginPreview() {
         guard !isPreviewing, FileManager.default.fileExists(atPath: url.path) else { return }
+        // One at a time, always.
+        HoverVideoView.playing?.endPreview()
+
         let p = AVPlayer(url: url)
         p.isMuted = true                       // there is no audio, and never will be
         let host = NSView()
         host.wantsLayer = true
+        host.layer?.masksToBounds = true
         host.translatesAutoresizingMaskIntoConstraints = false
         let pl = AVPlayerLayer(player: p)
-        pl.videoGravity = .resizeAspect
+        pl.videoGravity = .resizeAspect        // never stretch a drawing to fill
         pl.frame = bounds
-        pl.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
         host.layer?.addSublayer(pl)
         addSubview(host)
         NSLayoutConstraint.activate([
@@ -101,8 +131,12 @@ final class HoverVideoView: NSView {
                 p?.seek(to: .zero); p?.play()
             }
         player = p
+        playerLayer = pl
         layerView = host
         isPreviewing = true
+        HoverVideoView.playing = self
+        needsLayout = true
+        layoutSubtreeIfNeeded()
         p.play()
     }
 
@@ -111,10 +145,13 @@ final class HoverVideoView: NSView {
         player?.pause()
         if let o = endObserver { NotificationCenter.default.removeObserver(o) }
         endObserver = nil
+        playerLayer?.removeFromSuperlayer()
+        playerLayer = nil
         layerView?.removeFromSuperview()
         layerView = nil
         player = nil
         isPreviewing = false
+        if HoverVideoView.playing === self { HoverVideoView.playing = nil }
     }
 
     deinit {

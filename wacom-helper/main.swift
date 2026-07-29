@@ -19,6 +19,7 @@
 import AppKit
 import CoreGraphics
 import Foundation
+import AVFoundation
 import AVKit
 import IOKit.hid       // IOHIDCheckAccess/RequestAccess — live Input-Monitoring status
 
@@ -829,19 +830,37 @@ if let dir = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_TABLAYOUT"] {
     // Hovering plays the video. The tracking area is AppKit's business; that a
     // row is wired to a player, and lets go of it again, is ours.
     if ProcessInfo.processInfo.environment["SAIPP_SELFTEST_HOVER"] != nil {
-        var found = 0
-        func hover(_ v: NSView) {
-            if let hv = v as? HoverVideoView {
-                found += 1
-                hv.beginPreview()
-                print("hover begin previewing=\(hv.isPreviewing)")
-                hv.endPreview()
-                print("hover end previewing=\(hv.isPreviewing)")
-            }
-            for sub in v.subviews { hover(sub) }
+        var rows: [HoverVideoView] = []
+        func collect(_ v: NSView) {
+            if let hv = v as? HoverVideoView { rows.append(hv) }
+            for sub in v.subviews { collect(sub) }
         }
-        hover(tab)
-        print("hoverable \(found)")
+        collect(tab)
+        print("hoverable \(rows.count)")
+        if let first = rows.first {
+            first.beginPreview()
+            w.layoutIfNeeded()
+            print("hover begin previewing=\(first.isPreviewing)")
+            // The preview must stay inside the thumbnail. An unclipped player
+            // layer draws the video at its own size over the rows below — it
+            // covered half the tab before this was checked.
+            let inside = first.subviews.allSatisfy {
+                $0.frame.width <= first.bounds.width + 0.5
+                    && $0.frame.height <= first.bounds.height + 0.5
+            }
+            let pf = first.previewFrame
+            let layerFits = pf.width > 0 && pf.width <= first.bounds.width + 0.5
+                && pf.height <= first.bounds.height + 0.5
+            print("hover box \(Int(first.bounds.width))x\(Int(first.bounds.height))"
+                  + " video \(Int(pf.width))x\(Int(pf.height))"
+                  + " inside=\(inside) layerFits=\(layerFits) clips=\(first.layer?.masksToBounds ?? false)")
+            first.endPreview()
+            print("hover end previewing=\(first.isPreviewing)")
+        }
+        // Moving across rows must leave ONE playing, not one per row crossed.
+        for r in rows { r.beginPreview() }
+        print("hover concurrent \(rows.filter(\.isPreviewing).count) of \(rows.count)")
+        for r in rows { r.endPreview() }
     }
     _ = dir
     exit(0)

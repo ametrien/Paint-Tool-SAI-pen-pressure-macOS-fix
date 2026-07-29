@@ -566,10 +566,11 @@ HOV="$WORK/hover"; mkdir -p "$HOV/cfg" "$HOV/videos"
 hov_fail=0
 printf '%s' "$HOV/videos" > "$HOV/cfg/timelapse-folder.txt"
 cp "$E2E/videos"/*/*.mp4 "$HOV/videos/Something.mp4" 2>/dev/null
+cp "$E2E/videos"/*/*.mp4 "$HOV/videos/Another one.mp4" 2>/dev/null
 out=$(SAIPP_CONFIG_DIR="$HOV/cfg" SAIPP_SELFTEST_TABLAYOUT=1 SAIPP_SELFTEST_HOVER=1 \
       "$WORK/helper-lib" 2>/dev/null)
-echo "$out" | grep -q "hoverable 1" \
-  && echo "  ok   hover: the video's still is hoverable" \
+echo "$out" | grep -q "hoverable 2" \
+  && echo "  ok   hover: each video's still is hoverable" \
   || { echo "  FAIL hover: $(echo "$out" | grep hover)"; hov_fail=1; }
 echo "$out" | grep -q "hover begin previewing=true" \
   && echo "  ok   hover: pointing at it starts playback" \
@@ -577,6 +578,25 @@ echo "$out" | grep -q "hover begin previewing=true" \
 echo "$out" | grep -q "hover end previewing=false" \
   && echo "  ok   hover: moving away tears the player down again" \
   || { echo "  FAIL hover: the player was left running"; hov_fail=1; }
+
+# THE TRAP: a CALayer is not clipped by its superlayer unless told to be, so an
+# AVPlayerLayer draws the video at its own size straight over the rows below —
+# it covered half the tab. The still must simply become a video, in place.
+echo "$out" | grep -q "inside=true" \
+  && echo "  ok   hover: the video stays inside the still's box" \
+  || { echo "  FAIL hover: $(echo "$out" | grep 'hover box')"; hov_fail=1; }
+echo "$out" | grep -q "layerFits=true" \
+  && echo "  ok   hover: and is sized to it, not to the video" \
+  || { echo "  FAIL hover: $(echo "$out" | grep 'hover box')"; hov_fail=1; }
+echo "$out" | grep -q "clips=true" \
+  && echo "  ok   hover: with clipping on, so nothing can escape it" \
+  || { echo "  FAIL hover: the box does not clip"; hov_fail=1; }
+
+# THE OTHER TRAP: a pointer crossing three rows in a second leaves three videos
+# decoding behind the one being looked at — invisible, but audible in the fans.
+echo "$out" | grep -q "hover concurrent 1 of 2" \
+  && echo "  ok   hover: starting one preview stops the last" \
+  || { echo "  FAIL hover: $(echo "$out" | grep concurrent)"; hov_fail=1; }
 
 [ "$hov_fail" = 0 ] || exit 1
 echo "All hover tests passed."
