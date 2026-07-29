@@ -1,0 +1,7 @@
+# Every source file the timelapse encoder is built from — see
+# wacom-helper/sources.txt for why this is a file rather than three copies of a
+# command line. LibraryCore.swift is shared with the helper on purpose: the
+# fingerprint and the identity ladder must be one definition, not two.
+timelapse-encoder/EncoderCore.swift
+timelapse-encoder/LibraryCore.swift
+timelapse-encoder/main.swift
