@@ -29,7 +29,8 @@ jobs:
       - name: Build the native helper
         run: |
           cd wacom-helper
-          swiftc -O -o wacom-pressure-helper main.swift PressureCore.swift
+          swiftc -O -o wacom-pressure-helper main.swift PressureCore.swift \
+            LibraryStore.swift LibraryUI.swift ../timelapse-encoder/LibraryCore.swift
           test -x wacom-pressure-helper
           # --version must print and EXIT (a hang here means the flag regressed)
           ./wacom-pressure-helper --version

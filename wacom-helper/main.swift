@@ -884,6 +884,14 @@ if let dir = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_TABLAYOUT"] {
     dump(tab, 0)
     print("rows \(c.libStack.arrangedSubviews.count) "
           + "stack \(Int(c.libStack.frame.width))x\(Int(c.libStack.frame.height))")
+    // Counted from the model, never by grepping the dump above: an NSButton has
+    // an inner view carrying the same title on some macOS versions, so counting
+    // rows by their button text read 2 locally and 4 on CI.
+    func hoverRows(_ v: NSView) -> Int {
+        (v is HoverVideoView ? 1 : 0) + v.subviews.reduce(0) { $0 + hoverRows($1) }
+    }
+    let drawn = c.libStore?.lib.drawings.count ?? 0
+    print("rows drawings=\(drawn) loose=\(hoverRows(tab) - drawn)")
 
     // Changing the videos folder must reload the list in place — the whole point
     // being that you do not have to quit the app to see the other folder.

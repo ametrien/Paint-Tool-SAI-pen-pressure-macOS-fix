@@ -489,9 +489,12 @@ printf '%s' "$LOOSE/videos" > "$LOOSE/cfg/timelapse-folder.txt"
 : > "$LOOSE/videos/SAI Timelapse 2026-07-29 1522.NewCanvas1.json"
 layout=$(SAIPP_CONFIG_DIR="$LOOSE/cfg" SAIPP_SELFTEST_TABLAYOUT=1 "$WORK/helper-lib" 2>/dev/null)
 
-rows=$(echo "$layout" | grep -c "^ *Play ")
-[ "$rows" = "2" ] && echo "  ok   loose: both older videos are listed as rows ($rows)" \
-  || { echo "  FAIL loose: expected 2 playable rows, got $rows"; echo "$layout"; loose_fail=1; }
+# Counted by the app, not by grepping its view dump: an NSButton has an inner
+# view carrying the same title on some macOS versions, so counting rows by their
+# button text read 2 locally and 4 on CI.
+echo "$layout" | grep -q "rows drawings=0 loose=2" \
+  && echo "  ok   loose: both older videos are listed as rows" \
+  || { echo "  FAIL loose: $(echo "$layout" | grep '^rows ')"; echo "$layout"; loose_fail=1; }
 echo "$layout" | grep -q "000" \
   && { echo "  FAIL loose: an unfinished segment was offered as a video"; loose_fail=1; } \
   || echo "  ok   loose: unfinished segments are not offered"
