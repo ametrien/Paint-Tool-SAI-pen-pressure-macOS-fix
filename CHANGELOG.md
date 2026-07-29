@@ -5,6 +5,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-07-29
+
 ### Added
 - **A drawing made over several evenings becomes one video.** Reopen a picture tomorrow and tonight's
   recording is added to it, instead of leaving you with a folder of disconnected clips named after
