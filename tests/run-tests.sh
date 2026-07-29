@@ -33,6 +33,14 @@ swiftc -o "$WORK/encoder-tests" "$REPO/timelapse-encoder/EncoderCore.swift" "$RE
 "$WORK/encoder-tests"
 
 echo ""
+echo "== Swift core (LibraryCore.swift) =="
+# Deciding that tonight's session continues a drawing from three weeks ago. A
+# wrong "yes" welds two unrelated drawings into one video, so the thresholds
+# here are measured against synthesised canvases rather than guessed at.
+swiftc -o "$WORK/library-tests" "$REPO/timelapse-encoder/LibraryCore.swift" "$REPO/tests/LibraryTests.swift"
+"$WORK/library-tests"
+
+echo ""
 echo "All test suites passed."
 
 echo ""
