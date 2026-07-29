@@ -44,6 +44,36 @@ echo ""
 echo "All test suites passed."
 
 echo ""
+echo "== Every source file is in a build manifest =="
+# The list of what each binary is made of used to be written out in three places
+# — make-app.sh, this file, and the CI workflow. A release went red when two of
+# them still said the helper was main.swift plus PressureCore.swift, which it had
+# stopped being when the library tab arrived. There is one list now, and this
+# checks it against what is actually on disk: adding a source file without
+# listing it is the exact mistake that broke the build, and it fails here rather
+# than in CI ten minutes later.
+man_fail=0
+for f in "$REPO"/wacom-helper/*.swift; do
+  grep -q "wacom-helper/$(basename "$f")" "$REPO/wacom-helper/sources.txt" \
+    || { echo "  FAIL manifest: $(basename "$f") is not in wacom-helper/sources.txt"; man_fail=1; }
+done
+for f in "$REPO"/timelapse-encoder/*.swift; do
+  b=$(basename "$f")
+  # LibraryCore is shared: the helper lists it too, which is the point of it
+  # being one file rather than two copies.
+  grep -q "timelapse-encoder/$b" "$REPO/timelapse-encoder/sources.txt" \
+    || { echo "  FAIL manifest: $b is not in timelapse-encoder/sources.txt"; man_fail=1; }
+done
+# And every listed file must exist, or the build breaks with a worse message.
+for f in $(bash "$REPO/tools/sources.sh" helper) $(bash "$REPO/tools/sources.sh" encoder); do
+  [ -f "$f" ] || { echo "  FAIL manifest: $f is listed but missing"; man_fail=1; }
+done
+[ "$man_fail" = 0 ] || exit 1
+echo "  ok   manifest: every helper and encoder source is listed"
+echo "  ok   manifest: every listed source exists"
+echo "All manifest tests passed."
+
+echo ""
 echo "== SAI update keeps the user's files (real filesystem) =="
 # updateSAIFromFolder() deletes the SAI folder in the prefix and restores the
 # user's files afterwards. That is the only place this app destroys data, so it
@@ -60,11 +90,9 @@ printf 'NEW-EXE'      > "$UPD/newsrc/sai2.exe"
 printf 'FACTORY'      > "$UPD/newsrc/sai2.ini"
 printf 'SHIPPED'      > "$UPD/newsrc/init/brushform.conf"
 
-# The helper is one binary: main.swift now refers to the library tab, so every
-# source it needs has to be here too.
-HELPER_SRC=("$REPO/wacom-helper/main.swift" "$REPO/wacom-helper/PressureCore.swift"
-            "$REPO/wacom-helper/LibraryStore.swift" "$REPO/wacom-helper/LibraryUI.swift"
-            "$REPO/timelapse-encoder/LibraryCore.swift")
+# What the helper is built from lives in wacom-helper/sources.txt, read here
+# exactly as make-app.sh and CI read it.
+IFS=$'\n' read -r -d '' -a HELPER_SRC < <(bash "$REPO/tools/sources.sh" helper && printf '\0')
 swiftc -o "$WORK/helper-upd" "${HELPER_SRC[@]}"
 SAI_PREFIX="$UPD/prefix" SAIPP_CONFIG_DIR="$UPD/cfg" \
   SAIPP_SELFTEST_UPDATE="$UPD/newsrc" "$WORK/helper-upd" > "$UPD/out" 2>&1 || {
@@ -93,8 +121,8 @@ echo "== Live encoding accumulates instead of overwriting =="
 # encoded before it. Frames are deleted once consumed, so that lost footage for
 # good. This checks the writers stay open across polls.
 LIVE="$WORK/live"; mkdir -p "$LIVE/frames"
-swiftc -O -o "$WORK/enc-live" "$REPO/timelapse-encoder/EncoderCore.swift" \
-    "$REPO/timelapse-encoder/LibraryCore.swift" "$REPO/timelapse-encoder/main.swift"
+IFS=$'\n' read -r -d '' -a ENCODER_SRC < <(bash "$REPO/tools/sources.sh" encoder && printf '\0')
+swiftc -O -o "$WORK/enc-live" "${ENCODER_SRC[@]}"
 
 mkframes() {  # start end canvas_id name w h
   python3 - "$@" <<'PY'
