@@ -161,6 +161,26 @@ struct CanvasSignature: Equatable, Codable {
     }
 }
 
+// MARK: - the session sidecar
+
+/// What one recording session was, written beside its video by the encoder and
+/// read by the app when it files that session into a drawing.
+///
+/// A WIRE FORMAT BETWEEN TWO PROCESSES, and therefore defined exactly once. It
+/// was briefly declared in both the encoder and the app — the same hazard
+/// FrameHeader carries a warning about, except that one is unavoidable (C on one
+/// side, Swift on the other) and this one was not. LibraryCore is compiled into
+/// both binaries, so here it is only true in one place.
+struct SessionSidecar: Codable {
+    var title: String
+    var startedAt: Date
+    var frames: Int
+    var width: Int
+    var height: Int
+    var opening: CanvasSignature
+    var closing: CanvasSignature
+}
+
 // MARK: - the model
 
 /// One recording session, already encoded into its own playable video.
