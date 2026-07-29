@@ -795,6 +795,27 @@ if let src = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_UPDATE"] {
 /// view's documentView is laid out by constraints and it had been left on
 /// autoresizing translation. Nothing about the code reads as wrong; only the
 /// measured frames say so, which is exactly what this prints.
+/// Self-test hook for the uninstall: the most destructive path in the app.
+///
+/// removeWine is ALWAYS false here. The real thing can move Wine Staging to the
+/// Trash, and a test that did that would reach outside its throwaway directories
+/// and take a real application off the machine running it.
+if let mode = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_UNINSTALL"] {
+    let c = SetupController()
+    c.performUninstall(keepLicense: mode == "keep", removeWine: false)
+    let fm = FileManager.default
+    print("prefix exists=\(fm.fileExists(atPath: appPrefix))")
+    for f in ["config.txt", "devmode.txt", "installed-src.txt"] {
+        print("\(f) exists=\(fm.fileExists(atPath: appSupport() + "/" + f))")
+    }
+    print("stash \(slcFiles(in: licenseStashDir()).joined(separator: ",")) ")
+    let videos = timelapseOutputFolder()
+    let names = ((try? fm.contentsOfDirectory(atPath: videos)) ?? []).sorted()
+    print("videos \(names.joined(separator: ","))")
+    print("index exists=\(fm.fileExists(atPath: timelapseLibraryPath()))")
+    exit(0)
+}
+
 /// Self-test hook for the licence: the one file in this app nobody can recreate.
 ///
 /// It drives the exact sequence performSetup(.rebuild) performs around the point
@@ -3918,6 +3939,36 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     // Remove everything this project created, and NOTHING the user brought.
     // Their SAI source folder and their original .slc are never touched — those
     // are inputs we copied FROM, not things we own.
+    /// Everything the uninstall actually DELETES, with the questions already
+    /// answered. Separate from the dialogs so it can be tested against a
+    /// throwaway prefix — this is the most destructive path in the app, and the
+    /// dialog above it makes promises ("KEPT (yours, never touched)") that only
+    /// this code can keep.
+    func performUninstall(keepLicense: Bool, removeWine: Bool) {
+        let fm = FileManager.default
+        // Stop Wine before the prefix disappears underneath it (#28), otherwise
+        // the daemon lives on against deleted files and can be inherited by the
+        // next launch.
+        if let w = wineBin() { stopWineForPrefix(w) }
+        try? fm.removeItem(atPath: appPrefix)
+        for f in ["config.txt", "installed-src.txt", "devmode.txt", "wine-ours.txt",
+                  "timelapse-session.txt"] {
+            try? fm.removeItem(atPath: appSupport() + "/" + f)
+        }
+        try? fm.removeItem(atPath: appSupport() + "/recordings")
+        try? fm.removeItem(atPath: appSupport() + "/bin")
+        if !keepLicense { try? fm.removeItem(atPath: licenseStashDir()) }
+        // NOTHING here touches the videos folder. Timelapses are the user's
+        // work, they live outside our folders (~/Movies by default), and the
+        // index that says which sessions belong together lives in there with
+        // them — deleting either would throw away finished videos to remove an
+        // installation.
+        if removeWine {
+            try? fm.trashItem(at: URL(fileURLWithPath: "/Applications/Wine Staging.app"),
+                              resultingItemURL: nil)
+        }
+    }
+
     @objc func uninstallEverything() {
         let fm = FileManager.default
         let src = savedSAIPath()
@@ -3945,20 +3996,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
             removeWine = (osa("button returned of (display dialog \(q.debugDescription) buttons {\"Keep Wine\", \"Move Wine to Trash\"} default button \(def.debugDescription) with icon caution)") == "Move Wine to Trash")
         }
 
-        // Stop Wine before the prefix disappears underneath it (#28), otherwise
-        // the daemon lives on against deleted files and can be inherited by the
-        // next launch.
-        if let w = wineBin() { stopWineForPrefix(w) }
-        try? fm.removeItem(atPath: appPrefix)
-        for f in ["config.txt", "installed-src.txt", "devmode.txt", "wine-ours.txt"] {
-            try? fm.removeItem(atPath: appSupport() + "/" + f)
-        }
-        try? fm.removeItem(atPath: appSupport() + "/recordings")
-        try? fm.removeItem(atPath: appSupport() + "/bin")
-        if !keepLicense { try? fm.removeItem(atPath: licenseStashDir()) }
-        if removeWine {
-            try? fm.trashItem(at: URL(fileURLWithPath: "/Applications/Wine Staging.app"), resultingItemURL: nil)
-        }
+        performUninstall(keepLicense: keepLicense, removeWine: removeWine)
         devMode = false
         refresh()
         let licNote = keepLicense && !slcFiles(in: licenseStashDir()).isEmpty

@@ -755,3 +755,72 @@ echo "$out" | grep -q "installed=false" \
 
 [ "$lic_fail" = 0 ] || exit 1
 echo "All licence tests passed."
+
+echo ""
+echo "== Uninstall removes the installation and nothing else =="
+# The most destructive path in the app, and its dialog makes promises only this
+# code can keep: "KEPT (yours, never touched)". Wine removal is never exercised
+# — the real thing moves Wine Staging to the Trash, and a test that did that
+# would reach outside its throwaway folders.
+UNI="$WORK/uninstall"
+uni_fail=0
+setup_uninstall() {  # dir
+  rm -rf "$1"; mkdir -p "$1/prefix/drive_c/SAI2" "$1/cfg/license" "$1/cfg/bin" \
+                        "$1/mySAI" "$1/videos/Sketch/pieces"
+  printf 'WINE-STUFF'  > "$1/prefix/drive_c/SAI2/sai2.exe"
+  printf 'MY-LICENCE'  > "$1/cfg/license/sai-123456.slc"
+  printf 'path'        > "$1/cfg/config.txt"
+  printf '1'           > "$1/cfg/devmode.txt"
+  printf 'MY-OWN-SAI'  > "$1/mySAI/sai2.exe"
+  printf 'MY-ART'      > "$1/videos/Sketch/pieces/2026-07-27 2015.mp4"
+  printf 'FINISHED'    > "$1/videos/Sketch/Sketch.mp4"
+  printf '{"drawings":[]}' > "$1/videos/.library.json"
+  printf '%s' "$1/videos" > "$1/cfg/timelapse-folder.txt"
+}
+uni_run() {  # dir mode
+  SAI_PREFIX="$1/prefix" SAIPP_CONFIG_DIR="$1/cfg" SAIPP_SELFTEST_UNINSTALL="$2" "$WORK/helper-lib"
+}
+
+# --- keeping the licence ----------------------------------------------------
+setup_uninstall "$UNI"
+out=$(uni_run "$UNI" keep)
+echo "$out" | grep -q "prefix exists=false" \
+  && echo "  ok   uninstall: the Wine prefix is removed" \
+  || { echo "  FAIL uninstall: prefix survived"; uni_fail=1; }
+echo "$out" | grep -q "config.txt exists=false" \
+  && echo "  ok   uninstall: the saved settings are removed" \
+  || { echo "  FAIL uninstall: settings survived"; uni_fail=1; }
+echo "$out" | grep -q "stash sai-123456.slc" \
+  && echo "  ok   uninstall: 'Keep license' keeps the licence" \
+  || { echo "  FAIL uninstall: the licence was deleted despite Keep: $out"; uni_fail=1; }
+
+# THE PROMISE IN THE DIALOG: the user's own SAI folder is never touched.
+[ "$(cat "$UNI/mySAI/sai2.exe")" = "MY-OWN-SAI" ] \
+  && echo "  ok   uninstall: the user's own SAI folder is untouched" \
+  || { echo "  FAIL uninstall: the user's SAI folder was damaged"; uni_fail=1; }
+
+# THE TRAP: videos are the user's work, they live outside our folders, and the
+# index saying which sessions belong together lives in there with them. Add the
+# videos folder to the removal list and all three of these go red.
+[ "$(cat "$UNI/videos/Sketch/pieces/2026-07-27 2015.mp4")" = "MY-ART" ] \
+  && echo "  ok   uninstall: recorded sessions are untouched" \
+  || { echo "  FAIL uninstall: a recorded session was deleted"; uni_fail=1; }
+[ "$(cat "$UNI/videos/Sketch/Sketch.mp4")" = "FINISHED" ] \
+  && echo "  ok   uninstall: finished videos are untouched" \
+  || { echo "  FAIL uninstall: a finished video was deleted"; uni_fail=1; }
+echo "$out" | grep -q "index exists=true" \
+  && echo "  ok   uninstall: and the library index with them" \
+  || { echo "  FAIL uninstall: the library index was deleted"; uni_fail=1; }
+
+# --- dropping the licence ---------------------------------------------------
+setup_uninstall "$UNI"
+out=$(uni_run "$UNI" drop)
+echo "$out" | grep -qE "^stash +$" \
+  && echo "  ok   uninstall: 'Delete it too' does delete the licence" \
+  || { echo "  FAIL uninstall: the licence survived a deliberate delete: $out"; uni_fail=1; }
+[ "$(cat "$UNI/mySAI/sai2.exe")" = "MY-OWN-SAI" ] \
+  && echo "  ok   uninstall: and still nothing of the user's is touched" \
+  || { echo "  FAIL uninstall: the user's SAI folder was damaged"; uni_fail=1; }
+
+[ "$uni_fail" = 0 ] || exit 1
+echo "All uninstall tests passed."
