@@ -9,6 +9,7 @@
 # file cannot be forgotten here.
 wacom-helper/main.swift
 wacom-helper/PressureCore.swift
+wacom-helper/Settings.swift
 wacom-helper/Licence.swift
 wacom-helper/LibraryStore.swift
 wacom-helper/LibraryUI.swift
