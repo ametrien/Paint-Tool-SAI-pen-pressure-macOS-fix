@@ -669,3 +669,89 @@ echo "$out3" | grep -q "filed 2026-07-30 2100.mp4 -> Whatever" \
 
 [ "$brk_fail" = 0 ] || exit 1
 echo "All damaged index tests passed."
+
+echo ""
+echo "== The licence survives everything (real filesystem) =="
+# The certificate is the only file this app touches that nobody can recreate,
+# and every call on its path is a silent `try?`. performSetup(.rebuild) deletes
+# the entire prefix and trusts that the stash was filled first, so these drive
+# that exact sequence — adopt, delete the prefix, restore — without Wine.
+LIC="$WORK/lic"
+lic_fail=0
+lic_run() {  # prefix cfg step [arg]
+  SAI_PREFIX="$1" SAIPP_CONFIG_DIR="$2" SAIPP_SELFTEST_LICENSE="$3" "$WORK/helper-lib" ${4:+"$4"}
+}
+
+# 1. A certificate that exists ONLY inside the prefix, never adopted. The prefix
+#    is about to be deleted; if it is not rescued first it is gone for good.
+R1="$LIC/r1"; mkdir -p "$R1/prefix/drive_c/SAI2/settings" "$R1/cfg"
+printf 'MY-LICENCE' > "$R1/prefix/drive_c/SAI2/sai-123456.slc"
+out=$(lic_run "$R1/prefix" "$R1/cfg" rebuild)
+echo "$out" | grep -q "prefix SAI2/sai-123456.slc" \
+  && echo "  ok   licence: survives a rebuild that deletes the whole prefix" \
+  || { echo "  FAIL licence: lost in a rebuild: $out"; lic_fail=1; }
+# SAI reads it from two places depending on the build; one is not enough.
+echo "$out" | grep -q "prefix settings/sai-123456.slc" \
+  && echo "  ok   licence: restored to both places SAI reads from" \
+  || { echo "  FAIL licence: only one location: $out"; lic_fail=1; }
+[ "$(cat "$R1/prefix/drive_c/SAI2/sai-123456.slc")" = "MY-LICENCE" ] \
+  && echo "  ok   licence: and it is the same file, not an empty one" \
+  || { echo "  FAIL licence: contents changed"; lic_fail=1; }
+
+# 2. THE TRAP: restoring from the stash used to EMPTY the stash. installLicenseFile
+#    ends by refreshing the stash copy — remove, then copy src over it — and when
+#    restoring, src IS that copy, so the remove deleted the source and the copy
+#    silently failed. The licence survived that rebuild, having just been written
+#    into the prefix, but the copy the uninstall dialog promises to be holding
+#    was gone; the NEXT rebuild had nothing to fall back on.
+R2="$LIC/r2"; mkdir -p "$R2/prefix/drive_c/SAI2" "$R2/cfg/license"
+printf 'MY-LICENCE' > "$R2/cfg/license/sai-123456.slc"
+out=$(lic_run "$R2/prefix" "$R2/cfg" restore)
+echo "$out" | grep -q "stash sai-123456.slc" \
+  && echo "  ok   licence: a restore leaves the stash intact for the next one" \
+  || { echo "  FAIL licence: the restore emptied the stash: $out"; lic_fail=1; }
+# Twice, because the point is that it can be done again.
+out=$(lic_run "$R2/prefix" "$R2/cfg" restore)
+echo "$out" | grep -q "stash sai-123456.slc" \
+  && echo "  ok   licence: and still after a second restore" \
+  || { echo "  FAIL licence: the stash did not survive twice"; lic_fail=1; }
+
+# 3. Two rebuilds in a row. The second has no prefix copy to adopt, so it is the
+#    stash or nothing.
+R3="$LIC/r3"; mkdir -p "$R3/prefix/drive_c/SAI2" "$R3/cfg"
+printf 'MY-LICENCE' > "$R3/prefix/drive_c/SAI2/sai-123456.slc"
+lic_run "$R3/prefix" "$R3/cfg" rebuild > /dev/null
+out=$(lic_run "$R3/prefix" "$R3/cfg" rebuild)
+echo "$out" | grep -q "prefix SAI2/sai-123456.slc" \
+  && echo "  ok   licence: survives a second rebuild, from the stash alone" \
+  || { echo "  FAIL licence: lost on the second rebuild: $out"; lic_fail=1; }
+
+# 4. Adopting one that is simply sitting in the SAI folder somebody picked.
+R4="$LIC/r4"; mkdir -p "$R4/prefix/drive_c/SAI2" "$R4/cfg" "$R4/source/settings"
+printf 'MY-LICENCE' > "$R4/source/settings/sai-999.slc"
+out=$(lic_run "$R4/prefix" "$R4/cfg" adopt-source "$R4/source")
+echo "$out" | grep -q "adopted sai-999.slc" \
+  && echo "  ok   licence: one already in the chosen SAI folder is adopted" \
+  || { echo "  FAIL licence: not adopted: $out"; lic_fail=1; }
+echo "$out" | grep -q "stash sai-999.slc" \
+  && echo "  ok   licence: and reaches the stash, so a rebuild keeps it" \
+  || { echo "  FAIL licence: never stashed: $out"; lic_fail=1; }
+[ -f "$R4/source/settings/sai-999.slc" ] \
+  && echo "  ok   licence: the user's own copy is left where it was" \
+  || { echo "  FAIL licence: adopting MOVED the user's file"; lic_fail=1; }
+
+# 5. An unwritable destination must be reported, not claimed as success — the
+#    difference between "your licence is installed" and losing it quietly.
+R5="$LIC/r5"; mkdir -p "$R5/prefix/drive_c" "$R5/cfg" "$R5/src"
+printf 'MY-LICENCE' > "$R5/src/sai-1.slc"
+# The SAI folder ITSELF must be unwritable — making its parent read-only proves
+# nothing when the folder already exists and is writable.
+mkdir -p "$R5/prefix/drive_c/SAI2"; chmod 500 "$R5/prefix/drive_c/SAI2"
+out=$(lic_run "$R5/prefix" "$R5/cfg" install "$R5/src/sai-1.slc")
+chmod 700 "$R5/prefix/drive_c/SAI2"
+echo "$out" | grep -q "installed=false" \
+  && echo "  ok   licence: an unwritable prefix is reported as a failure" \
+  || { echo "  FAIL licence: claimed success on a read-only prefix: $out"; lic_fail=1; }
+
+[ "$lic_fail" = 0 ] || exit 1
+echo "All licence tests passed."

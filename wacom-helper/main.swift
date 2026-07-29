@@ -448,9 +448,20 @@ func installLicenseFile(_ src: String) -> Bool {
         if (try? FileManager.default.copyItem(atPath: src, toPath: dst)) != nil { wroteAny = true }
     }
     guard wroteAny else { return false }
-    let stash = "\(licenseStashDir())/\(name)"                  // survive a rebuild
-    try? FileManager.default.removeItem(atPath: stash)
-    try? FileManager.default.copyItem(atPath: src, toPath: stash)
+    // Keep a copy so a rebuild can put it back — unless we are restoring FROM
+    // the stash, in which case src IS that copy. Removing it first then deleted
+    // the source of the copy that follows, and every restore silently emptied
+    // the stash: the licence survived that rebuild because it had just been
+    // written into the prefix, but the copy the uninstall dialog promises to be
+    // holding ("so a future reinstall can restore it") was gone. Both calls are
+    // `try?`, so nothing said so.
+    let stash = "\(licenseStashDir())/\(name)"
+    let same = URL(fileURLWithPath: src).standardizedFileURL
+        == URL(fileURLWithPath: stash).standardizedFileURL
+    if !same {
+        try? FileManager.default.removeItem(atPath: stash)
+        try? FileManager.default.copyItem(atPath: src, toPath: stash)
+    }
     return true
 }
 /// Put every stashed certificate back after a rebuild. Best-effort and silent:
@@ -784,6 +795,43 @@ if let src = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_UPDATE"] {
 /// view's documentView is laid out by constraints and it had been left on
 /// autoresizing translation. Nothing about the code reads as wrong; only the
 /// measured frames say so, which is exactly what this prints.
+/// Self-test hook for the licence: the one file in this app nobody can recreate.
+///
+/// It drives the exact sequence performSetup(.rebuild) performs around the point
+/// where it deletes the whole prefix — adopt whatever is in the prefix, delete
+/// the prefix, put it back — because that deletion is where a certificate would
+/// be lost, and every call on the path is a silent `try?`.
+///
+/// Wine is not involved and cannot be: the wineboot in performSetup takes a
+/// minute and needs a real Wine. What is being tested is the rescue, not the
+/// prefix build.
+if let step = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_LICENSE"] {
+    switch step {
+    case "rebuild":
+        // Exactly performSetup's order, and nothing else.
+        adoptLicenseFromSourceFolder(prefixSAIDir)
+        try? FileManager.default.removeItem(atPath: appPrefix)
+        restoreStashedLicenses()
+    case "adopt-source":
+        // Picking a SAI folder that already holds a certificate.
+        if let n = adoptLicenseFromSourceFolder(CommandLine.arguments.dropFirst().first ?? "") {
+            print("adopted \(n)")
+        }
+    case "install":
+        let src = CommandLine.arguments.dropFirst().first ?? ""
+        print("installed=\(installLicenseFile(src))")
+    case "restore":
+        restoreStashedLicenses()
+    default:
+        break
+    }
+    for d in licenseDirs {
+        for f in slcFiles(in: d) { print("prefix \((d as NSString).lastPathComponent)/\(f)") }
+    }
+    for f in slcFiles(in: licenseStashDir()) { print("stash \(f)") }
+    exit(0)
+}
+
 /// Self-test hook: where would this session record to? Guards the upgrade path,
 /// where a marker left by an older version pointed outside staging.
 if ProcessInfo.processInfo.environment["SAIPP_SELFTEST_SESSIONBASE"] != nil {
