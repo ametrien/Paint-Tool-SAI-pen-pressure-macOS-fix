@@ -5,6 +5,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-07-29
+
+### Fixed
+- **Your licence copy is no longer thrown away when it is used.** The app keeps a copy of your `.slc`
+  so that rebuilding the Wine prefix can put it back — and restoring from that copy deleted it. The
+  licence survived the rebuild that used it, having just been written back into the prefix, but the
+  copy the uninstall dialog promises to be holding was gone, so a later rebuild had nothing to fall
+  back on. Two rebuilds in a row is now a test.
+- **A damaged library index no longer takes your drawings with it.** The file recording which
+  sessions belong to which drawing was read and, if unreadable, silently ignored — and the next save
+  wrote that emptiness over it. One truncated write (a full disk, a power cut mid-save) and every
+  grouping was gone while the videos sat there unlinked. The unreadable file is now kept and the
+  index is rebuilt from the folders themselves.
+- CI is green again: a test counted list rows by reading button labels out of a view dump, which
+  double-counts on the macOS version the runner uses, and the helper build step had not been told
+  about the new source files.
+
+
 ## [0.3.0] — 2026-07-29
 
 ### Added
