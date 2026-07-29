@@ -39,6 +39,8 @@ var segmentFrames = 0
 var keepFrames = false
 var watch = false
 var finalizeOnly = false
+var rebuildDir = ""
+var probePath = ""
 
 var args = Array(CommandLine.arguments.dropFirst())
 while let a = args.first {
@@ -55,6 +57,8 @@ while let a = args.first {
     case "--keep": keepFrames = true
     case "--watch": watch = true
     case "--finalize", "--finalise": finalizeOnly = true
+    case "--rebuild": rebuildDir = home(next())
+    case "--probe": probePath = home(next())
     case "-h", "--help":
         print("""
         sai-timelapse-encoder — build a video from captured SAI frames
@@ -68,6 +72,9 @@ while let a = args.first {
           --keep               keep frames after encoding
           --watch              encode continuously as frames appear
           --finalize           stitch --watch segments into one video per canvas
+          --rebuild <dir>      concatenate a drawing's session pieces in <dir>
+                               into --out, without re-encoding them
+          --probe <file>       print a video's dimensions and length
         """)
         exit(0)
     default:
@@ -283,9 +290,42 @@ final class LiveWriter {
     private var index = 0
     private(set) var total = 0
 
+    /// What the canvas looked like when this session started and how it looks
+    /// now. Together they are how a LATER session recognises this drawing —
+    /// see LibraryCore. Captured here because this is the only place the raw
+    /// pixels pass through: once a frame is inside an H.264 segment, getting it
+    /// back means decoding video.
+    private(set) var opening: CanvasSignature?
+    private(set) var closing: CanvasSignature?
+    private(set) var startedAt = Date()
+    /// The canvas name as SAI reported it, kept verbatim for the library. The
+    /// `label` is the filename-safe version and is not interchangeable with it.
+    var title = ""
+
+    /// Frames already inside earlier segments of this same session, from a
+    /// previous run of the encoder over the same output base.
+    private var priorFrames = 0
+
     init(base: URL, label: String, fps: Int, maxFramesPerSegment: Int) {
         self.base = base; self.label = label; self.fps = fps
         self.maxFramesPerSegment = maxFramesPerSegment
+
+        // Adopt a sidecar this session already left behind. --finalize runs as a
+        // separate process and encodes whatever frames arrived after --watch
+        // stopped; without this it would overwrite the session's real opening
+        // fingerprint with one taken from its last few strokes, and the drawing
+        // would stop being recognisable as a continuation of itself.
+        let stem = base.deletingPathExtension().lastPathComponent
+        let name = label.isEmpty ? stem : "\(stem).\(label)"
+        let side = base.deletingLastPathComponent().appendingPathComponent("\(name).json")
+        if let data = try? Data(contentsOf: side),
+           let prev = try? sidecarDecoder.decode(SessionSidecar.self, from: data) {
+            opening = prev.opening
+            closing = prev.closing
+            startedAt = prev.startedAt
+            title = prev.title
+            priorFrames = prev.frames
+        }
     }
 
     /// Segments are separate FILES, not one growing file, because an
@@ -312,11 +352,58 @@ final class LiveWriter {
         }
         guard segment?.append(bgra: px, stride: stride, fps: fps) == true else { return false }
         total += 1
+        if let fp = CanvasSignature.fingerprint(bgra: px, width: width, height: height,
+                                                stride: stride) {
+            if opening == nil { opening = fp }
+            closing = fp
+            // Written as we go, not only at the end: --watch is killed by
+            // SIGTERM in normal use and outright crashes in abnormal use, and a
+            // piece whose fingerprints never reached disk can never be
+            // recognised as part of a drawing again.
+            writeSidecar()
+        }
         return true
     }
 
-    func finish() { segment?.finish(); segment = nil }
+    /// The session's metadata, beside its segments, for whoever finalises them —
+    /// usually a DIFFERENT process, since --watch and --finalize are separate
+    /// runs. Named after the same prefix as the segments so the two are found
+    /// together.
+    func writeSidecar() {
+        guard let opening, let closing else { return }
+        let stem = base.deletingPathExtension().lastPathComponent
+        let name = label.isEmpty ? stem : "\(stem).\(label)"
+        let url = base.deletingLastPathComponent().appendingPathComponent("\(name).json")
+        let side = SessionSidecar(title: title, startedAt: startedAt, frames: priorFrames + total,
+                                  width: closing.width, height: closing.height,
+                                  opening: opening, closing: closing)
+        guard let data = try? sidecarEncoder.encode(side) else { return }
+        try? data.write(to: url, options: .atomic)
+    }
+
+    func finish() {
+        segment?.finish(); segment = nil
+        writeSidecar()
+    }
 }
+
+/// What one recording session was, beside the video of it.
+struct SessionSidecar: Codable {
+    var title: String
+    var startedAt: Date
+    var frames: Int
+    var width: Int
+    var height: Int
+    var opening: CanvasSignature
+    var closing: CanvasSignature
+}
+
+let sidecarEncoder: JSONEncoder = {
+    let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; return e
+}()
+let sidecarDecoder: JSONDecoder = {
+    let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d
+}()
 
 var liveWriters: [UInt64: LiveWriter] = [:]
 var signalSources: [DispatchSourceSignal] = []
@@ -342,9 +429,13 @@ func liveConsume(_ files: [URL]) {
             let label = clean.isEmpty ? String(format: "canvas-%llx", hdr.canvasId) : clean
             let nw = LiveWriter(base: URL(fileURLWithPath: outPath), label: label,
                                 fps: fps, maxFramesPerSegment: segmentFrames > 0 ? segmentFrames : 500)
+            nw.title = hdr.name
             liveWriters[hdr.canvasId] = nw
             return nw
         }()
+        // Last seen wins, exactly as the batch path does: renaming a canvas
+        // mid-session relabels the finished piece rather than splitting it.
+        if !hdr.name.isEmpty { w.title = hdr.name }
 
         if w.append(px, stride: hdr.stride, width: ew, height: eh), !keepFrames {
             try? FileManager.default.removeItem(at: f)
@@ -450,10 +541,144 @@ func finalizeSegments() -> Int {
     return made
 }
 
+// --- rebuilding a drawing from its pieces ----------------------------------
+
+/// Concatenate a drawing's session pieces into the one video somebody actually
+/// wants to watch.
+///
+/// THE ARCHITECTURE THIS SERVES: pieces are the append-only archive — one file
+/// per session, never rewritten — and this output is DERIVED. Delete it and it
+/// comes back; a failed rebuild costs nothing, because nothing that holds work
+/// was touched. The alternative, extending one growing video each session,
+/// rewrites the file holding every previous evening every time somebody draws.
+///
+/// Passthrough matters as much as safety: it copies the H.264 samples instead of
+/// decoding and re-encoding them, so a drawing rebuilt for the tenth time is
+/// bit-for-bit as good as the first, and the rebuild runs at disk speed. Only a
+/// canvas RESIZED between sessions forces the slow path, because passthrough
+/// cannot mix dimensions.
+func rebuildDrawing(from piecesDir: String, to outURL: URL, maxSeconds: Double) -> Bool {
+    let fm = FileManager.default
+    let names = ((try? fm.contentsOfDirectory(atPath: piecesDir)) ?? [])
+        .filter { $0.hasSuffix(".mp4") && !$0.hasPrefix(".") }
+        .sorted()          // piece names are dates, so this is capture order
+    guard !names.isEmpty else { return false }
+
+    let comp = AVMutableComposition()
+    guard let track = comp.addMutableTrack(withMediaType: .video,
+                                           preferredTrackID: kCMPersistentTrackID_Invalid)
+    else { return false }
+
+    var at = CMTime.zero
+    var sizes: [(CMTime, CGSize, CGAffineTransform)] = []
+    for n in names {
+        let asset = AVURLAsset(url: URL(fileURLWithPath: piecesDir).appendingPathComponent(n))
+        guard let src = asset.tracks(withMediaType: .video).first else { continue }
+        let dur = asset.duration
+        guard dur.seconds > 0 else { continue }
+        try? track.insertTimeRange(CMTimeRange(start: .zero, duration: dur), of: src, at: at)
+        sizes.append((at, src.naturalSize, src.preferredTransform))
+        at = CMTimeAdd(at, dur)
+    }
+    guard at.seconds > 0, let first = sizes.first else { return false }
+
+    let uniform = sizes.allSatisfy { $0.1 == first.1 }
+    var videoComposition: AVMutableVideoComposition?
+
+    if !uniform {
+        // A canvas resized between sessions. Every piece is rendered into one
+        // frame big enough for all of them and scaled to fit inside it —
+        // deliberately NOT stretched to fill. Squashing a 1000x700 drawing into
+        // another aspect ratio is the exact defect this project already fixed
+        // once, when ffmpeg was doing this job.
+        let renderW = ceil(sizes.map { $0.1.width }.max()! / 2) * 2
+        let renderH = ceil(sizes.map { $0.1.height }.max()! / 2) * 2
+        let vc = AVMutableVideoComposition()
+        vc.renderSize = CGSize(width: renderW, height: renderH)
+        vc.frameDuration = CMTime(value: 1, timescale: CMTimeScale(max(1, fps)))
+        var instructions: [AVMutableVideoCompositionInstruction] = []
+        for (i, (start, size, _)) in sizes.enumerated() {
+            let end = i + 1 < sizes.count ? sizes[i + 1].0 : at
+            let inst = AVMutableVideoCompositionInstruction()
+            inst.timeRange = CMTimeRange(start: start, end: end)
+            let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
+            let scale = min(renderW / size.width, renderH / size.height)
+            let tx = (renderW - size.width * scale) / 2
+            let ty = (renderH - size.height * scale) / 2
+            layer.setTransform(CGAffineTransform(scaleX: scale, y: scale)
+                                .concatenating(CGAffineTransform(translationX: tx, y: ty)),
+                               at: start)
+            inst.layerInstructions = [layer]
+            instructions.append(inst)
+        }
+        vc.instructions = instructions
+        videoComposition = vc
+    }
+
+    // Length is a RENDITION, not a state: the rebuilt video keeps every frame at
+    // full length, and a cap is only applied when somebody asks for one. Baking
+    // it in here would re-time already re-timed material every session.
+    if maxSeconds > 0, at.seconds > maxSeconds {
+        track.scaleTimeRange(CMTimeRange(start: .zero, duration: at),
+                             toDuration: CMTime(seconds: maxSeconds, preferredTimescale: 600))
+    }
+
+    let preset = (uniform && maxSeconds <= 0)
+        ? AVAssetExportPresetPassthrough : AVAssetExportPresetHighestQuality
+    guard let ex = AVAssetExportSession(asset: comp, presetName: preset) else { return false }
+    let tmp = outURL.deletingLastPathComponent()
+        .appendingPathComponent(".\(outURL.lastPathComponent).building.mp4")
+    try? fm.removeItem(at: tmp)
+    ex.outputURL = tmp
+    ex.outputFileType = .mp4
+    ex.videoComposition = videoComposition
+    let sem = DispatchSemaphore(value: 0)
+    ex.exportAsynchronously { sem.signal() }
+    sem.wait()
+
+    guard ex.status == .completed else {
+        try? fm.removeItem(at: tmp)
+        FileHandle.standardError.write(
+            "rebuild failed: \(ex.error?.localizedDescription ?? "unknown")\n".data(using: .utf8)!)
+        return false
+    }
+    // Swap in only once the new file is complete. A rebuild interrupted halfway
+    // must leave the previous video playable rather than truncated.
+    _ = try? fm.replaceItemAt(outURL, withItemAt: tmp)
+    if fm.fileExists(atPath: tmp.path) {          // replaceItemAt declined
+        try? fm.removeItem(at: outURL)
+        try? fm.moveItem(at: tmp, to: outURL)
+    }
+    print(String(format: "rebuilt %@  (%d piece(s), %.1fs%@)", outURL.path, names.count,
+                 maxSeconds > 0 ? min(maxSeconds, at.seconds) : at.seconds,
+                 uniform ? "" : ", mixed sizes"))
+    return true
+}
+
 // --- run -------------------------------------------------------------------
 
 try? FileManager.default.createDirectory(atPath: (outPath as NSString).deletingLastPathComponent,
                                          withIntermediateDirectories: true)
+
+if !probePath.isEmpty {
+    // Diagnostics, and what the tests assert dimensions with — "it produced a
+    // file" is not the same claim as "it produced a video of the right shape",
+    // and the difference is where the old squashing bug lived.
+    let asset = AVURLAsset(url: URL(fileURLWithPath: probePath))
+    guard let t = asset.tracks(withMediaType: .video).first else {
+        FileHandle.standardError.write("no video track in \(probePath)\n".data(using: .utf8)!)
+        exit(1)
+    }
+    let s = t.naturalSize.applying(t.preferredTransform)
+    print(String(format: "%dx%d %.2fs", Int(abs(s.width)), Int(abs(s.height)),
+                 asset.duration.seconds))
+    exit(0)
+}
+
+if !rebuildDir.isEmpty {
+    exit(rebuildDrawing(from: rebuildDir, to: URL(fileURLWithPath: outPath),
+                        maxSeconds: maxSeconds) ? 0 : 1)
+}
 
 if finalizeOnly {
     // Anything captured after the watcher stopped is still raw on disk, so
