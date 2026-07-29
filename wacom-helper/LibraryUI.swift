@@ -44,13 +44,28 @@ extension SetupController {
         libStack.orientation = .vertical
         libStack.alignment = .leading
         libStack.spacing = 12
+        // A stack view used as a documentView must be laid out by constraints.
+        // Left on autoresizing translation it keeps its zero frame, and every
+        // row inside it is present, unhidden, and drawn at (0,0,0,0) — the tab
+        // renders as a blank rectangle. This is the same trap the tab bar in
+        // main.swift documents, in the opposite direction.
+        libStack.translatesAutoresizingMaskIntoConstraints = false
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
         scroll.documentView = libStack
         scroll.translatesAutoresizingMaskIntoConstraints = false
-        scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 260).isActive = true
-        scroll.widthAnchor.constraint(greaterThanOrEqualToConstant: 460).isActive = true
+        NSLayoutConstraint.activate([
+            libStack.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            libStack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            // Width pinned, bottom deliberately NOT: that is what makes the
+            // content scroll vertically instead of squashing to fit.
+            libStack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+        ])
+        // A fixed height, not a minimum: with a minimum the list grew to fill
+        // the tab and pushed the controls below it off the bottom.
+        scroll.heightAnchor.constraint(equalToConstant: 300).isActive = true
+        scroll.widthAnchor.constraint(equalToConstant: 500).isActive = true
         tab.addArrangedSubview(scroll)
 
         // The export default lives here rather than with the recording
@@ -71,6 +86,7 @@ extension SetupController {
         libFooter = lbl("", 11, color: .secondaryLabelColor)
         tab.addArrangedSubview(libFooter)
         libraryTab = tab
+        refreshLibraryTab()
         return tab
     }
 
@@ -90,6 +106,21 @@ extension SetupController {
             libStack.addArrangedSubview(
                 lbl("Nothing recorded yet. Draw in SAI with recording on, and your "
                     + "drawings will appear here.", 12, color: .secondaryLabelColor))
+            // Anyone upgrading has videos from before drawings existed as a
+            // concept. They are still perfectly good videos, and telling
+            // somebody with a folder full of them "nothing recorded yet" reads
+            // as though the update threw their work away.
+            let old = legacyVideos(in: store.videosDir)
+            if !old.isEmpty {
+                libStack.addArrangedSubview(
+                    lbl("\(old.count) video(s) made before this update are still in "
+                        + "\(prettyPath(store.videosDir)). They are not grouped into drawings — "
+                        + "recordings from now on will be.", 11, color: .secondaryLabelColor))
+                let b = NSButton(title: "Show them", target: self,
+                                 action: #selector(revealTimelapseVideos))
+                b.controlSize = .small
+                libStack.addArrangedSubview(b)
+            }
             libFooter.stringValue = ""
             return
         }
@@ -177,6 +208,13 @@ extension SetupController {
         guard let cg = try? gen.copyCGImage(at: end.seconds > 0 ? end : .zero,
                                             actualTime: nil) else { return nil }
         return NSImage(cgImage: cg, size: .zero)
+    }
+
+    /// Videos sitting loose in the folder, from before this update: one file per
+    /// session, named for the day it was made.
+    private func legacyVideos(in dir: String) -> [String] {
+        ((try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? [])
+            .filter { $0.hasSuffix(".mp4") && !$0.hasPrefix(".") }
     }
 
     private func folderSize(_ path: String) -> Int64 {

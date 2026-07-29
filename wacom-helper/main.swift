@@ -776,6 +776,41 @@ if let src = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_UPDATE"] {
 /// into a drawing's folder, so it is tested against a real throwaway folder
 /// rather than reasoned about — the same treatment, for the same reason, as the
 /// SAI-update hook above. Inert without the environment variable.
+/// Self-test hook: build the Timelapses tab and print what it actually laid out.
+///
+/// This exists because the tab shipped BLANK. Every row was built, added and
+/// unhidden — and drawn at zero size, because a stack view used as a scroll
+/// view's documentView is laid out by constraints and it had been left on
+/// autoresizing translation. Nothing about the code reads as wrong; only the
+/// measured frames say so, which is exactly what this prints.
+if let dir = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_TABLAYOUT"] {
+    _ = NSApplication.shared
+    let c = SetupController()
+    let tab = c.buildLibraryTab()
+    // A window, because view layout outside one is undefined — and the bug
+    // being guarded against is precisely a view that never gets a size.
+    let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 520),
+                     styleMask: [.titled], backing: .buffered, defer: false)
+    tab.translatesAutoresizingMaskIntoConstraints = true
+    tab.autoresizingMask = [.width, .height]
+    tab.frame = w.contentView!.bounds
+    w.contentView?.addSubview(tab)
+    w.layoutIfNeeded()
+    func dump(_ v: NSView, _ depth: Int) {
+        let name = (v as? NSTextField)?.stringValue
+            ?? (v as? NSButton)?.title
+            ?? String(describing: type(of: v))
+        print(String(format: "%@%@ %.0fx%.0f", String(repeating: "  ", count: depth),
+                     name, v.frame.width, v.frame.height))
+        for s in v.subviews { dump(s, depth + 1) }
+    }
+    dump(tab, 0)
+    print("rows \(c.libStack.arrangedSubviews.count) "
+          + "stack \(Int(c.libStack.frame.width))x\(Int(c.libStack.frame.height))")
+    _ = dir
+    exit(0)
+}
+
 if let dir = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_LIBRARY"] {
     let store = LibraryStore(videosDir: dir, indexPath: dir + "/library.json")
     for f in store.fileFinishedSessions() {
