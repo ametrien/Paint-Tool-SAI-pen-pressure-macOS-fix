@@ -45,10 +45,71 @@ final class LibraryStore {
         let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d
     }()
 
+    /// True when the index on disk could not be read and this one was rebuilt
+    /// from the folders instead.
+    private(set) var recoveredFromBrokenIndex = false
+
     func load() {
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: indexPath)),
-              let l = try? LibraryStore.decoder.decode(Library.self, from: data) else { return }
-        lib = l
+        let url = URL(fileURLWithPath: indexPath)
+        guard let data = try? Data(contentsOf: url) else { return }   // no index yet
+        if let l = try? LibraryStore.decoder.decode(Library.self, from: data) {
+            lib = l
+            return
+        }
+        // THE INDEX IS THERE AND UNREADABLE. Doing nothing here was a quiet
+        // disaster: `lib` stayed empty, and the next save() wrote that emptiness
+        // over the only record of which sessions belong to which drawing. One
+        // truncated write — a full disk, a power cut mid-save — and every
+        // grouping was gone for good while the videos sat there unlinked.
+        //
+        // So: keep the unreadable file, and rebuild what the folders themselves
+        // can tell us. A drawing's folder holds its pieces; that recovers the
+        // grouping and the videos. What it cannot recover is the fingerprints,
+        // and that is the right thing to lose — a recovered drawing simply stops
+        // matching new sessions automatically until it is drawn on again.
+        let aside = indexPath + ".broken"
+        try? FileManager.default.removeItem(atPath: aside)
+        try? FileManager.default.moveItem(atPath: indexPath, toPath: aside)
+        lib = LibraryStore.recover(from: videosDir)
+        recoveredFromBrokenIndex = true
+        if !lib.drawings.isEmpty { save() }
+    }
+
+    /// Rebuild an index from what is on disk: every folder holding a `pieces`
+    /// directory with videos in it is a drawing.
+    static func recover(from videosDir: String) -> Library {
+        let fm = FileManager.default
+        var out = Library()
+        let names = ((try? fm.contentsOfDirectory(atPath: videosDir)) ?? [])
+            .filter { !$0.hasPrefix(".") }
+            .sorted()
+        for name in names {
+            let folder = URL(fileURLWithPath: videosDir).appendingPathComponent(name)
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: folder.path, isDirectory: &isDir), isDir.boolValue else { continue }
+            let piecesDir = folder.appendingPathComponent("pieces")
+            let files = ((try? fm.contentsOfDirectory(atPath: piecesDir.path)) ?? [])
+                .filter { $0.hasSuffix(".mp4") && !$0.hasPrefix(".") }
+                .sorted()
+            guard !files.isEmpty else { continue }
+            // An all-zero fingerprint is deliberately INVALID, so the identity
+            // ladder skips a recovered drawing rather than matching everything
+            // against a canvas of nothing.
+            let blank = CanvasSignature(cells: [], width: 0, height: 0)
+            let pieces = files.map { f -> Piece in
+                let url = piecesDir.appendingPathComponent(f)
+                let when = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+                    .contentModificationDate ?? Date(timeIntervalSince1970: 0)
+                return Piece(file: f, startedAt: when, frames: 0, width: 0, height: 0,
+                             opening: blank, closing: blank)
+            }
+            var d = Drawing(id: Library.newId(startedAt: pieces[0].startedAt,
+                                              salt: out.drawings.count),
+                            title: name, folder: name, path: nil, pieces: pieces)
+            d.pieces = pieces
+            out.drawings.append(d)
+        }
+        return out
     }
 
     /// Written atomically: the index is the only record of which sessions belong

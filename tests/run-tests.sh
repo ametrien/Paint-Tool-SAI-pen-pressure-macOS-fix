@@ -266,7 +266,7 @@ swiftc -o "$WORK/helper-lib" "${HELPER_SRC[@]}"
 # closing count models reopening a saved file — which looks, as it must, almost
 # identical to how it was left.
 mksession() {  # name title started pattern open_progress close_progress
-  python3 - "$LIB/.recording" "$@" <<'PYSESSION'
+  python3 - "${SESSION_DIR:-$LIB/.recording}" "$@" <<'PYSESSION'
 import json, sys, pathlib
 out, name, title, started, pattern, popen, pclose = sys.argv[1:8]
 side = 16
@@ -617,3 +617,55 @@ echo "$out" | grep -q "hover concurrent 1 of 2" \
 
 [ "$hov_fail" = 0 ] || exit 1
 echo "All hover tests passed."
+
+echo ""
+echo "== A damaged library index does not take the drawings with it =="
+# The index is the only record of which sessions belong to which drawing. It
+# used to be read with `try?` and ignored on failure — so one truncated write
+# (a full disk, a power cut mid-save) left an empty library in memory, and the
+# next save wrote that emptiness over the file. The videos survived; knowing
+# what they were did not.
+BRK="$WORK/broken"; mkdir -p "$BRK/Sketch/pieces" "$BRK/Portrait/pieces"
+brk_fail=0
+: > "$BRK/Sketch/pieces/2026-07-27 2015.mp4"
+: > "$BRK/Sketch/pieces/2026-07-28 1903.mp4"
+: > "$BRK/Portrait/pieces/2026-07-29 1000.mp4"
+printf '{"drawings":[{"id":"d1","title":"Sk' > "$BRK/.library.json"     # cut off mid-write
+out=$(SAIPP_SELFTEST_LIBRARY="$BRK" "$WORK/helper-lib" 2>&1)
+
+echo "$out" | grep -q "recovered from a broken index" \
+  && echo "  ok   broken: the damage is noticed rather than ignored" \
+  || { echo "  FAIL broken: $out"; brk_fail=1; }
+# THE TRAP: delete the recovery and both of these go red — the drawings vanish
+# while their videos sit there ungrouped.
+echo "$out" | grep -q "drawing Sketch: 2026-07-27 2015.mp4, 2026-07-28 1903.mp4" \
+  && echo "  ok   broken: a drawing's sessions are recovered from its folder" \
+  || { echo "  FAIL broken: Sketch not recovered: $out"; brk_fail=1; }
+echo "$out" | grep -q "drawing Portrait: 2026-07-29 1000.mp4" \
+  && echo "  ok   broken: and so is every other drawing" \
+  || { echo "  FAIL broken: Portrait not recovered"; brk_fail=1; }
+# The unreadable file is evidence: never quietly replaced.
+[ -f "$BRK/.library.json.broken" ] \
+  && echo "  ok   broken: the unreadable index is kept, not overwritten" \
+  || { echo "  FAIL broken: the damaged index was destroyed"; brk_fail=1; }
+grep -q "Sk" "$BRK/.library.json.broken" 2>/dev/null \
+  && echo "  ok   broken: kept intact, exactly as it was found" \
+  || { echo "  FAIL broken: the kept copy is not the original"; brk_fail=1; }
+# And the rewritten index is usable: reading it again must be quiet.
+out2=$(SAIPP_SELFTEST_LIBRARY="$BRK" "$WORK/helper-lib" 2>&1)
+echo "$out2" | grep -q "recovered from a broken index" \
+  && { echo "  FAIL broken: the recovered index is unreadable too"; brk_fail=1; } \
+  || echo "  ok   broken: the rebuilt index reads back cleanly"
+
+# A recovered drawing has no fingerprints, and must NOT therefore match
+# everything: a canvas of nothing is not a canvas. It stops matching until it is
+# drawn on again, which is the right thing to lose.
+mkdir -p "$BRK/.recording"
+SESSION_DIR="$BRK/.recording" mksession "session 2026-07-30 2100" "Whatever" "2026-07-30T21:00:00Z" 55 5 40
+out3=$(TZ=UTC SAIPP_SELFTEST_LIBRARY="$BRK" "$WORK/helper-lib" 2>&1)
+echo "$out3" | grep -q "filed 2026-07-30 2100.mp4 -> Whatever" \
+  && echo "  ok   broken: a new session is not swept into a recovered drawing" \
+  || { echo "  FAIL broken: $out3"; brk_fail=1; }
+
+[ "$brk_fail" = 0 ] || exit 1
+echo "All damaged index tests passed."

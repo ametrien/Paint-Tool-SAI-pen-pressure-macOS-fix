@@ -867,7 +867,8 @@ if let dir = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_TABLAYOUT"] {
 }
 
 if let dir = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_LIBRARY"] {
-    let store = LibraryStore(videosDir: dir, indexPath: dir + "/library.json")
+    let store = LibraryStore(videosDir: dir, indexPath: dir + "/.library.json")
+    if store.recoveredFromBrokenIndex { print("recovered from a broken index") }
     for f in store.fileFinishedSessions() {
         let d = store.lib.drawing(id: f.drawingId)
         print("filed \(f.pieceFile) -> \(d?.folder ?? "?")"
