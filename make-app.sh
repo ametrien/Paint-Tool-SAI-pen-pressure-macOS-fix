@@ -11,6 +11,10 @@ BUNDLE_ID="com.runasharp.saipenpressure"
 # Override with SAIPP_VERSION; falls back to 0.0.0-dev outside a tagged repo.
 VERSION="${SAIPP_VERSION:-$(git -C "$REPO" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')}"
 VERSION="${VERSION:-0.0.0-dev}"
+
+# What each binary is built from lives in one place — see wacom-helper/sources.txt.
+IFS=$'\n' read -r -d '' -a HELPER_SRC  < <(bash "$REPO/tools/sources.sh" helper && printf '\0')
+IFS=$'\n' read -r -d '' -a ENCODER_SRC < <(bash "$REPO/tools/sources.sh" encoder && printf '\0')
 echo "Version: $VERSION"
 
 # Universal (arm64 + x86_64) so the release runs natively on Apple Silicon AND
@@ -21,13 +25,13 @@ echo "Version: $VERSION"
 echo "Building helper (with --app support)..."
 if [ "${UNIVERSAL:-1}" = "1" ]; then
   ( cd "$REPO/wacom-helper" \
-    && swiftc -O -target x86_64-apple-macos12.0 -o .helper-x86 main.swift PressureCore.swift LibraryStore.swift LibraryUI.swift ../timelapse-encoder/LibraryCore.swift \
-    && swiftc -O -target arm64-apple-macos12.0  -o .helper-arm main.swift PressureCore.swift LibraryStore.swift LibraryUI.swift ../timelapse-encoder/LibraryCore.swift \
+    && swiftc -O -target x86_64-apple-macos12.0 -o .helper-x86 "${HELPER_SRC[@]}" \
+    && swiftc -O -target arm64-apple-macos12.0  -o .helper-arm "${HELPER_SRC[@]}" \
     && lipo -create -output wacom-pressure-helper .helper-x86 .helper-arm \
     && rm -f .helper-x86 .helper-arm )
   echo "  architectures: $(lipo -archs "$REPO/wacom-helper/wacom-pressure-helper")"
 else
-  ( cd "$REPO/wacom-helper" && swiftc -O -o wacom-pressure-helper main.swift PressureCore.swift LibraryStore.swift LibraryUI.swift ../timelapse-encoder/LibraryCore.swift )
+  ( cd "$REPO/wacom-helper" && swiftc -O -o wacom-pressure-helper "${HELPER_SRC[@]}" )
   echo "  host architecture only (UNIVERSAL=0)"
 fi
 
@@ -38,13 +42,13 @@ fi
 echo "Building timelapse encoder..."
 if [ "${UNIVERSAL:-1}" = "1" ]; then
   ( cd "$REPO/timelapse-encoder" \
-    && swiftc -O -target x86_64-apple-macos12.0 -o .enc-x86 EncoderCore.swift LibraryCore.swift main.swift \
-    && swiftc -O -target arm64-apple-macos12.0  -o .enc-arm EncoderCore.swift LibraryCore.swift main.swift \
+    && swiftc -O -target x86_64-apple-macos12.0 -o .enc-x86 "${ENCODER_SRC[@]}" \
+    && swiftc -O -target arm64-apple-macos12.0  -o .enc-arm "${ENCODER_SRC[@]}" \
     && lipo -create -output sai-timelapse-encoder .enc-x86 .enc-arm \
     && rm -f .enc-x86 .enc-arm )
 else
   ( cd "$REPO/timelapse-encoder" \
-    && swiftc -O -o sai-timelapse-encoder EncoderCore.swift LibraryCore.swift main.swift )
+    && swiftc -O -o sai-timelapse-encoder "${ENCODER_SRC[@]}" )
 fi
 
 echo "Assembling bundle..."

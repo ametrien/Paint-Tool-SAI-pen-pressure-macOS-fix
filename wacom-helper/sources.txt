@@ -1,0 +1,14 @@
+# Every source file the helper binary is built from, one per line, relative to
+# the repo root. THE one list: make-app.sh, tests/run-tests.sh and the CI
+# workflow all read it through tools/sources.sh.
+#
+# It exists because the same list used to be written out in three places, and a
+# release went red when two of them still said the helper was main.swift plus
+# PressureCore.swift — which it had stopped being when the library tab arrived.
+# tests/run-tests.sh checks this list against what is actually on disk, so a new
+# file cannot be forgotten here.
+wacom-helper/main.swift
+wacom-helper/PressureCore.swift
+wacom-helper/LibraryStore.swift
+wacom-helper/LibraryUI.swift
+timelapse-encoder/LibraryCore.swift

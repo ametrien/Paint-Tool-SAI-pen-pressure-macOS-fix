@@ -29,8 +29,8 @@ jobs:
       - name: Build the native helper
         run: |
           cd wacom-helper
-          swiftc -O -o wacom-pressure-helper main.swift PressureCore.swift \
-            LibraryStore.swift LibraryUI.swift ../timelapse-encoder/LibraryCore.swift
+          # shellcheck disable=SC2046  # the manifest holds no paths with spaces
+          swiftc -O -o wacom-pressure-helper $(bash ../tools/sources.sh helper)
           test -x wacom-pressure-helper
           # --version must print and EXIT (a hang here means the flag regressed)
           ./wacom-pressure-helper --version
