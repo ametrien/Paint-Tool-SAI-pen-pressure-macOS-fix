@@ -458,6 +458,17 @@ echo "$layout" | grep -q "session(s)" \
 echo "$layout" | grep -q "Rebuild" \
   && echo "  ok   tab: its actions are there too" \
   || { echo "  FAIL tab: no action buttons"; tab_fail=1; }
+# How long is it? That is the first thing anyone wants to know about a video,
+# and frames alone do not answer it.
+echo "$layout" | grep -qE "session\(s\).*[0-9]+ frames.*[0-9]+s" \
+  && echo "  ok   tab: a drawing says how many frames and how long it runs" \
+  || { echo "  FAIL tab: no length on the drawing row:"; echo "$layout" | grep "session(s)"; tab_fail=1; }
+# THE TRAP: prettyBytes reports whole megabytes, which is right for a folder of
+# raw frames and wrong for one video — line art encodes so small that every row
+# read "0 MB" next to a real file.
+echo "$layout" | grep -q "0 MB" \
+  && { echo "  FAIL tab: a real video is reported as 0 MB"; tab_fail=1; } \
+  || echo "  ok   tab: small videos are sized in KB, not rounded to 0 MB"
 
 [ "$tab_fail" = 0 ] || exit 1
 echo "All tab layout tests passed."
@@ -490,6 +501,12 @@ echo "$layout" | grep -q "Nothing recorded yet" \
 echo "$layout" | grep -q "older video(s)" \
   && echo "  ok   loose: the footer counts them" \
   || { echo "  FAIL loose: footer says: $(echo "$layout" | tail -2)"; loose_fail=1; }
+# Loose videos get the same facts as drawings do: a real file, not a mystery.
+cp "$E2E/videos"/*/*.mp4 "$LOOSE/videos/A real one.mp4" 2>/dev/null
+layout2=$(SAIPP_CONFIG_DIR="$LOOSE/cfg" SAIPP_SELFTEST_TABLAYOUT=1 "$WORK/helper-lib" 2>/dev/null)
+echo "$layout2" | grep -qE "^ +[0-9]+s · [0-9]+ (KB|MB)" \
+  && echo "  ok   loose: each older video says how long it runs and how big it is" \
+  || { echo "  FAIL loose: $(echo "$layout2" | grep -E '·' | head -2)"; loose_fail=1; }
 
 # A genuinely empty folder should still say so.
 EMPTY="$WORK/emptylib"; mkdir -p "$EMPTY/cfg" "$EMPTY/videos"

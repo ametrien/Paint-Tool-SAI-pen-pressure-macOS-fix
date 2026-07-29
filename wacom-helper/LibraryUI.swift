@@ -269,7 +269,7 @@ extension SetupController {
         if !loose.isEmpty {
             footer += (footer.isEmpty ? "" : ", ") + "\(loose.count) older video(s)"
         }
-        footer += " — " + prettyBytes(folderSize(store.videosDir))
+        footer += " — " + prettyFileSize(folderSize(store.videosDir))
         if !store.lib.pending.isEmpty {
             footer += "  ·  \(store.lib.pending.count) session(s) to confirm"
         }
@@ -298,9 +298,13 @@ extension SetupController {
         col.addArrangedSubview(title)
 
         let f = DateFormatter(); f.dateStyle = .medium; f.timeStyle = .none
-        var facts = "\(d.pieces.count) session(s), \(d.totalFrames) frames"
-        if let last = d.lastDrawn { facts += " · last drawn \(f.string(from: last))" }
-        col.addArrangedSubview(lbl(facts, 11, color: .secondaryLabelColor))
+        var parts = ["\(d.pieces.count) session(s)", "\(d.totalFrames) frames"]
+        let length = prettyDuration(videoSeconds(store.videoURL(d)))
+        if !length.isEmpty { parts.append(length) }
+        let size = prettyFileSize(fileSize(store.videoURL(d)))
+        if !size.isEmpty { parts.append(size) }
+        if let last = d.lastDrawn { parts.append("last drawn \(f.string(from: last))") }
+        col.addArrangedSubview(lbl(parts.joined(separator: " · "), 11, color: .secondaryLabelColor))
 
         // A session waiting on an answer is shown on the drawing itself, not
         // only in a prompt that may have been dismissed.
@@ -331,6 +335,36 @@ extension SetupController {
 
         box.addArrangedSubview(col)
         return box
+    }
+
+    /// How long a video runs. Read from the file rather than worked out from
+    /// frames and fps, because a rebuilt drawing may have been re-timed and only
+    /// the file knows.
+    func videoSeconds(_ url: URL) -> Double {
+        guard FileManager.default.fileExists(atPath: url.path) else { return 0 }
+        let d = AVURLAsset(url: url).duration.seconds
+        return d.isFinite && d > 0 ? d : 0
+    }
+
+    /// "8s", "1m 14s". Timelapses are short, so seconds matter and hours do not.
+    func prettyDuration(_ s: Double) -> String {
+        guard s > 0 else { return "" }
+        let total = Int(s.rounded())
+        if total < 60 { return "\(max(1, total))s" }
+        return "\(total / 60)m \(total % 60)s"
+    }
+
+    /// prettyBytes() reports whole megabytes, which is right for a folder of raw
+    /// frames and wrong for one video: line art encodes so small that every row
+    /// read "0 MB".
+    func prettyFileSize(_ b: Int64) -> String {
+        if b <= 0 { return "" }
+        if b < 1_000_000 { return String(format: "%.0f KB", Double(b) / 1000) }
+        return prettyBytes(b)
+    }
+
+    private func fileSize(_ url: URL) -> Int64 {
+        Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
     }
 
     /// The last frame of the video: the most recognisable single image of a
@@ -396,10 +430,13 @@ extension SetupController {
         let f = DateFormatter(); f.dateStyle = .medium; f.timeStyle = .short
         let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
             .contentModificationDate
-        let size = Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
-        var facts = prettyBytes(size)
-        if let date { facts += " · \(f.string(from: date))" }
-        col.addArrangedSubview(lbl(facts, 11, color: .secondaryLabelColor))
+        var parts: [String] = []
+        let length = prettyDuration(videoSeconds(url))
+        if !length.isEmpty { parts.append(length) }
+        let size = prettyFileSize(fileSize(url))
+        if !size.isEmpty { parts.append(size) }
+        if let date { parts.append(f.string(from: date)) }
+        col.addArrangedSubview(lbl(parts.joined(separator: " · "), 11, color: .secondaryLabelColor))
 
         let buttons = NSStackView()
         buttons.orientation = .horizontal
