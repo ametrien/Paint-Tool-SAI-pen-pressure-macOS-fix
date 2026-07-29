@@ -18,7 +18,19 @@ double-click bug, and the Cmd→Ctrl remap decisions — lives in pure functions
 bash tests/run-tests.sh    # builds + runs the C and Swift test suites
 ```
 
-If you change behaviour in either core file, add or adjust a test case.
+The same applies to the timelapse: the tile walk (`wintab-src/timelapse_core.h`), the
+encoder's sizing and segmenting decisions (`timelapse-encoder/EncoderCore.swift`), and
+deciding that tonight's session continues a drawing from three weeks ago
+(`timelapse-encoder/LibraryCore.swift`). `run-tests.sh` also drives the real encoder and the
+real filing code against throwaway folders, because both of those move files.
+
+If you change behaviour in any core file, add or adjust a test case.
+
+**A test that has never failed is not evidence.** Every trap in these suites was proved by
+reintroducing the bug and watching it go red — the identity thresholds in `LibraryCore` were
+calibrated against measured numbers (they are in the comments), and each of the thirteen ways
+to break the ladder was mutated in turn. Do the same for anything you add: comment the trap
+in the test so the next person knows what it is holding.
 
 ### CI
 
@@ -77,6 +89,17 @@ connection (USB/BT), SAI version.** Tick each item ✅/❌ and note anything odd
       built-in Cmd→Ctrl; no Accessibility permission needed).
 - [ ] **Cmd+Tab still switches apps** (not remapped).
 - [ ] With a license in the prefix's `SAI2` folder: **saving works**.
+
+### Timelapse across sessions
+- [ ] Draw, quit SAI, reopen the **same file** and draw again → one drawing in the Timelapses
+      tab with two sessions, and one video containing both.
+- [ ] **Rename the canvas** between two sessions → still one drawing.
+- [ ] Two **new** documents on the same day → two drawings, no question asked.
+- [ ] Reopen a drawing you have worked on elsewhere since → it asks, with two stills side by
+      side; "Separate drawings" must not ask again for that pair.
+- [ ] "Take out of this drawing" moves a session into its own drawing, and both videos rebuild.
+- [ ] Export at 30s → a separate file; the drawing's own video is still full length.
+- [ ] Resize a canvas between sessions → the combined video fits both, with neither squashed.
 
 ### Safety / lifecycle
 - [ ] Kill switch: `echo 0 > <prefix>/drive_c/wt_pressure.txt` stops pressure immediately.
