@@ -352,3 +352,112 @@ echo "$out" | grep -q "confirmed same -> Sketch" \
 
 [ "$lib_fail" = 0 ] || exit 1
 echo "All library filing tests passed."
+
+echo ""
+echo "== The whole path: draw, quit, draw again tomorrow =="
+# Everything above tests one half. This is the seam: the encoder's real output
+# filed by the real filing code and rebuilt into a real video. A mismatch
+# between what the encoder names its sessions and what filing looks for would
+# pass every test above and fail every actual recording.
+E2E="$WORK/e2e"; mkdir -p "$E2E/videos/.recording" "$E2E/frames"
+e2e_fail=0
+
+# Frames that are actually a PICTURE. mkframes paints each frame a flat colour,
+# which has no structure at all — and a canvas with no structure is refused as
+# evidence of identity on purpose (two blank canvases match perfectly and mean
+# nothing). Here frame i holds i accumulating marks in fixed positions, so
+# consecutive frames look nearly identical, which is what reopening a saved
+# drawing looks like.
+mkart() {  # start end canvas_id name w h dir
+  python3 - "$@" <<'PYART'
+import struct, sys, pathlib
+HDR = struct.Struct("<8sIIIIQQQ64s")
+a,b,cid,name,w,h,out = (int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3],16),
+                        sys.argv[4], int(sys.argv[5]), int(sys.argv[6]), sys.argv[7])
+def frame(n):
+    px = bytearray(b"\xff" * (w*h*4))
+    rng = 12345
+    for _ in range(n):
+        rng = (rng * 1103515245 + 12345) % (2**31)
+        x0 = rng % max(1, w - 8); y0 = (rng >> 8) % max(1, h - 6)
+        for y in range(y0, y0 + 6):
+            for x in range(x0, x0 + 8):
+                o = (y*w + x) * 4
+                px[o:o+4] = b"\x28\x28\x28\xff"
+    return bytes(px)
+for i in range(a, b+1):
+    pathlib.Path(f"{out}/{i:08d}.frame").write_bytes(
+        HDR.pack(b"SAITLF2",w,h,w*4,0,i,1000*i,cid,name.encode()) + frame(i))
+PYART
+}
+
+session() {  # first_frame last_frame stamp
+  rm -f "$E2E/videos/.recording"/*
+  mkart "$1" "$2" F00D Sketch 64 48 "$E2E/frames"
+  "$WORK/enc-live" --frames "$E2E/frames" \
+      --out "$E2E/videos/.recording/session $3.mp4" --fps 5 --finalize >/dev/null 2>&1
+  TZ=UTC SAIPP_SELFTEST_LIBRARY="$E2E/videos" "$WORK/helper-lib"
+}
+
+out1=$(session 1 6 "2026-07-27 2015")
+out2=$(session 7 12 "2026-07-28 1903")
+
+echo "$out2" | grep -qE "^drawing [^:]+: .*, .*" \
+  && echo "  ok   end-to-end: the second evening joined the first drawing" \
+  || { echo "  FAIL end-to-end: two separate drawings:"; echo "$out2"; e2e_fail=1; }
+
+folder=$(echo "$out2" | sed -n 's/^drawing \([^:]*\):.*/\1/p' | head -1)
+count=$(ls "$E2E/videos/$folder/pieces"/*.mp4 2>/dev/null | wc -l | tr -d ' ')
+[ "$count" = "2" ] && echo "  ok   end-to-end: both sessions are on disk as pieces" \
+  || { echo "  FAIL end-to-end: $count piece(s) in $folder"; e2e_fail=1; }
+
+# And the pieces rebuild into one playable video of both evenings: 12 frames at
+# 5fps is 2.4 seconds.
+"$WORK/enc-live" --rebuild "$E2E/videos/$folder/pieces" \
+    --out "$E2E/videos/$folder/$folder.mp4" >/dev/null 2>&1
+probe=$("$WORK/enc-live" --probe "$E2E/videos/$folder/$folder.mp4" 2>/dev/null)
+[ "$probe" = "64x48 2.40s" ] \
+  && echo "  ok   end-to-end: one video holding both evenings ($probe)" \
+  || { echo "  FAIL end-to-end: expected 64x48 2.40s, got '$probe'"; e2e_fail=1; }
+
+# Nothing is left in staging, and no raw frames survive: disk stays flat.
+[ -z "$(ls -A "$E2E/videos/.recording" 2>/dev/null)" ] \
+  && echo "  ok   end-to-end: staging is empty afterwards" \
+  || { echo "  FAIL end-to-end: left in staging: $(ls "$E2E/videos/.recording")"; e2e_fail=1; }
+
+[ "$e2e_fail" = 0 ] || exit 1
+echo "All end-to-end tests passed."
+
+echo ""
+echo "== The Timelapses tab actually lays out =="
+# It shipped BLANK: every row built, added and unhidden — and drawn at zero
+# size, because a stack view used as a scroll view's documentView is laid out by
+# constraints and had been left on autoresizing translation. Nothing in the code
+# reads as wrong; only the measured frames say so.
+TAB="$WORK/tab"; mkdir -p "$TAB/cfg"
+tab_fail=0
+echo -n "$E2E/videos" > "$TAB/cfg/timelapse-folder.txt"
+cp "$E2E/videos/library.json" "$TAB/cfg/library.json" 2>/dev/null || true
+layout=$(SAIPP_CONFIG_DIR="$TAB/cfg" SAIPP_SELFTEST_TABLAYOUT=1 "$WORK/helper-lib" 2>/dev/null)
+
+# THE TRAP: drop the documentView constraints and this reads "stack 0x0" while
+# every row is still present and correct.
+stack=$(echo "$layout" | sed -n 's/^rows [0-9]* stack //p')
+case "$stack" in
+  0x0|*x0) echo "  FAIL tab: the drawing list laid out at $stack — the tab is blank"; tab_fail=1 ;;
+  "") echo "  FAIL tab: no layout reported"; echo "$layout"; tab_fail=1 ;;
+  *) echo "  ok   tab: the drawing list has a real size ($stack)" ;;
+esac
+echo "$layout" | grep -q "Export length" \
+  && echo "  ok   tab: the controls below the list are still on screen" \
+  || { echo "  FAIL tab: the export row was pushed off the bottom"; tab_fail=1; }
+# The drawing recorded by the end-to-end test above must appear, with its buttons.
+echo "$layout" | grep -q "session(s)" \
+  && echo "  ok   tab: the drawing from the previous test is listed" \
+  || { echo "  FAIL tab: no drawing row:"; echo "$layout"; tab_fail=1; }
+echo "$layout" | grep -q "Rebuild" \
+  && echo "  ok   tab: its actions are there too" \
+  || { echo "  FAIL tab: no action buttons"; tab_fail=1; }
+
+[ "$tab_fail" = 0 ] || exit 1
+echo "All tab layout tests passed."
