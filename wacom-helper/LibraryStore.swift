@@ -336,15 +336,3 @@ final class LibraryStore {
         return p.terminationStatus == 0
     }
 }
-
-/// Mirrors the sidecar the encoder writes beside each finished session. Kept in
-/// step by tests/run-tests.sh, which decodes a real one.
-struct SessionSidecar: Codable {
-    var title: String
-    var startedAt: Date
-    var frames: Int
-    var width: Int
-    var height: Int
-    var opening: CanvasSignature
-    var closing: CanvasSignature
-}

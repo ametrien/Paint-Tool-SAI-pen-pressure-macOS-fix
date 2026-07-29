@@ -387,17 +387,6 @@ final class LiveWriter {
     }
 }
 
-/// What one recording session was, beside the video of it.
-struct SessionSidecar: Codable {
-    var title: String
-    var startedAt: Date
-    var frames: Int
-    var width: Int
-    var height: Int
-    var opening: CanvasSignature
-    var closing: CanvasSignature
-}
-
 let sidecarEncoder: JSONEncoder = {
     let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; return e
 }()
