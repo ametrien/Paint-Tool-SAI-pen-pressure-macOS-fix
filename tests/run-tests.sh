@@ -461,3 +461,58 @@ echo "$layout" | grep -q "Rebuild" \
 
 [ "$tab_fail" = 0 ] || exit 1
 echo "All tab layout tests passed."
+
+echo ""
+echo "== Videos already in the folder are listed, not just counted =="
+# Upgrading brings a folder full of videos made before drawings existed as a
+# concept. Announcing "nothing recorded yet" beside them reads as though the
+# update threw the lot away.
+LOOSE="$WORK/loose"; mkdir -p "$LOOSE/cfg" "$LOOSE/videos"
+loose_fail=0
+printf '%s' "$LOOSE/videos" > "$LOOSE/cfg/timelapse-folder.txt"
+: > "$LOOSE/videos/SAI Timelapse 2026-07-28 1632.mp4"
+: > "$LOOSE/videos/SAI Timelapse 2026-07-28 1845.mp4"
+# Not videos: an unfinished segment and a fingerprint sidecar. Offering to play
+# a segment offers something no player will open.
+: > "$LOOSE/videos/SAI Timelapse 2026-07-28 2208.NewCanvas1.000.mp4"
+: > "$LOOSE/videos/SAI Timelapse 2026-07-29 1522.NewCanvas1.json"
+layout=$(SAIPP_CONFIG_DIR="$LOOSE/cfg" SAIPP_SELFTEST_TABLAYOUT=1 "$WORK/helper-lib" 2>/dev/null)
+
+rows=$(echo "$layout" | grep -c "^ *Play ")
+[ "$rows" = "2" ] && echo "  ok   loose: both older videos are listed as rows ($rows)" \
+  || { echo "  FAIL loose: expected 2 playable rows, got $rows"; echo "$layout"; loose_fail=1; }
+echo "$layout" | grep -q "000" \
+  && { echo "  FAIL loose: an unfinished segment was offered as a video"; loose_fail=1; } \
+  || echo "  ok   loose: unfinished segments are not offered"
+echo "$layout" | grep -q "Nothing recorded yet" \
+  && { echo "  FAIL loose: claimed nothing was recorded with videos sitting there"; loose_fail=1; } \
+  || echo "  ok   loose: does not claim the folder is empty"
+echo "$layout" | grep -q "older video(s)" \
+  && echo "  ok   loose: the footer counts them" \
+  || { echo "  FAIL loose: footer says: $(echo "$layout" | tail -2)"; loose_fail=1; }
+
+# A genuinely empty folder should still say so.
+EMPTY="$WORK/emptylib"; mkdir -p "$EMPTY/cfg" "$EMPTY/videos"
+printf '%s' "$EMPTY/videos" > "$EMPTY/cfg/timelapse-folder.txt"
+SAIPP_CONFIG_DIR="$EMPTY/cfg" SAIPP_SELFTEST_TABLAYOUT=1 "$WORK/helper-lib" 2>/dev/null \
+  | grep -q "Nothing recorded yet" \
+  && echo "  ok   loose: an empty folder still says so" \
+  || { echo "  FAIL loose: no empty state"; loose_fail=1; }
+
+[ "$loose_fail" = 0 ] || exit 1
+echo "All loose video tests passed."
+
+echo ""
+echo "== An upgrade does not scatter working files among finished videos =="
+# A session marker written by an older version names a path in the VIDEOS
+# folder. Honouring it made the new build write segments and fingerprint
+# sidecars in there, among somebody's finished videos — seen in the wild.
+UPG="$WORK/upgrade"; mkdir -p "$UPG/cfg" "$UPG/videos"
+printf '%s' "$UPG/videos" > "$UPG/cfg/timelapse-folder.txt"
+printf '%s' "$UPG/videos/SAI Timelapse 2026-07-28 1845.mp4" > "$UPG/cfg/timelapse-session.txt"
+base=$(SAIPP_CONFIG_DIR="$UPG/cfg" SAIPP_SELFTEST_SESSIONBASE=1 "$WORK/helper-lib" 2>/dev/null)
+case "$base" in
+  "$UPG/videos/.recording/"*) echo "  ok   upgrade: a stale session marker is ignored" ;;
+  *) echo "  FAIL upgrade: recording would write to '$base'"; exit 1 ;;
+esac
+echo "All upgrade tests passed."

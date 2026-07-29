@@ -783,6 +783,13 @@ if let src = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_UPDATE"] {
 /// view's documentView is laid out by constraints and it had been left on
 /// autoresizing translation. Nothing about the code reads as wrong; only the
 /// measured frames say so, which is exactly what this prints.
+/// Self-test hook: where would this session record to? Guards the upgrade path,
+/// where a marker left by an older version pointed outside staging.
+if ProcessInfo.processInfo.environment["SAIPP_SELFTEST_SESSIONBASE"] != nil {
+    print(timelapseSessionBase())
+    exit(0)
+}
+
 if let dir = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_TABLAYOUT"] {
     _ = NSApplication.shared
     let c = SetupController()
@@ -860,7 +867,11 @@ func timelapseSessionBase() -> String {
     let marker = appSupport() + "/timelapse-session.txt"
     if let s = try? String(contentsOfFile: marker, encoding: .utf8) {
         let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !t.isEmpty { return t }
+        // Only if it points into staging. A marker left by an older version
+        // names a path in the VIDEOS folder, and honouring it made the new build
+        // scatter segments and fingerprint sidecars in among somebody's finished
+        // videos — visible in the wild before this check existed.
+        if !t.isEmpty, t.hasPrefix(timelapseStagingFolder() + "/") { return t }
     }
     let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HHmm"
     let base = "\(timelapseStagingFolder())/session \(f.string(from: Date())).mp4"
@@ -2756,7 +2767,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         for (label, view) in [("Setup", content!),
                               ("Pen", settingsTab!),
                               ("Recording", recordingTab!),
-                              ("Timelapses", buildLibraryTab()),
+                              ("Videos", buildLibraryTab()),
                               ("Developer", devSection!)] {
             // NSTabViewItem positions its view with the autoresizing mask, not
             // constraints. Leaving translatesAutoresizingMaskIntoConstraints
@@ -2801,9 +2812,10 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         recordingTab.spacing = 10
         recordingTab.edgeInsets = NSEdgeInsets(top: 18, left: 24, bottom: 18, right: 24)
 
-        recordingTab.addArrangedSubview(lbl("Canvas timelapse", 18, bold: true))
+        recordingTab.addArrangedSubview(lbl("Recording", 18, bold: true))
         recordingTab.addArrangedSubview(
-            lbl("Captures the canvas itself, not the screen — no panels, no zooming, no cursor.",
+            lbl("What gets captured while you draw. Finished videos are in the Videos tab.\n"
+                + "Captures the canvas itself, not the screen — no panels, no zooming, no cursor.",
                 12, color: .secondaryLabelColor))
 
         recCheck = NSButton(checkboxWithTitle: "Record a timelapse while I draw",
@@ -2880,7 +2892,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
             lbl("You can make a video while SAI is still open — recording carries on afterwards.",
                 11, color: .tertiaryLabelColor))
         recordingTab.addArrangedSubview(
-            lbl("Drawing on this again another day adds to the same video — see the Timelapses tab.",
+            lbl("Drawing on this again another day adds to the same video — see the Videos tab.",
                 11, color: .tertiaryLabelColor))
         recordingTab.addArrangedSubview(
             lbl("Undo is captured at your next stroke rather than the moment you press it.",
@@ -3014,7 +3026,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
 
     func tabView(_ tabView: NSTabView, didSelect item: NSTabViewItem?) {
         refreshRecordingTab()
-        if item?.identifier as? String == "Timelapses" { refreshLibraryTab() }
+        if item?.identifier as? String == "Videos" { refreshLibraryTab() }
         // The console only refreshed while the old "Settings" disclosure was
         // open, so in the tabbed layout it showed as an empty black box.
         if item?.identifier as? String == "Developer" { updateConsole() }

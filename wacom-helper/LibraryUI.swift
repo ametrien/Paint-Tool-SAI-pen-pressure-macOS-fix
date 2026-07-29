@@ -35,10 +35,10 @@ extension SetupController {
         tab.alignment = .leading
         tab.spacing = 10
         tab.edgeInsets = NSEdgeInsets(top: 18, left: 24, bottom: 18, right: 24)
-        tab.addArrangedSubview(lbl("Your drawings", 18, bold: true))
+        tab.addArrangedSubview(lbl("Your videos", 18, bold: true))
         tab.addArrangedSubview(
-            lbl("Every evening you spend on a drawing is added to the same video.",
-                11, color: .secondaryLabelColor))
+            lbl("One video per drawing. Come back to a drawing later and it is added "
+                + "to the same video.", 11, color: .secondaryLabelColor))
 
         libStack = NSStackView()
         libStack.orientation = .vertical
@@ -102,34 +102,39 @@ extension SetupController {
         let drawings = store.lib.drawings.sorted {
             ($0.lastDrawn ?? .distantPast) > ($1.lastDrawn ?? .distantPast)
         }
-        guard !drawings.isEmpty else {
+        for d in drawings { libStack.addArrangedSubview(row(for: d, store: store)) }
+
+        // Videos that are simply IN the folder: everything recorded before
+        // drawings existed as a concept, and anything a rebuild has not claimed.
+        // They are real videos, and a list that ignores them while announcing
+        // "nothing recorded yet" is telling somebody their work is gone.
+        let loose = looseVideos(in: store.videosDir)
+        if !loose.isEmpty {
+            if !drawings.isEmpty {
+                libStack.addArrangedSubview(
+                    lbl("Older recordings", 13, bold: true, color: .secondaryLabelColor))
+            }
+            libStack.addArrangedSubview(
+                lbl("Made before this update, so they are not grouped into drawings. "
+                    + "Recordings from now on are.", 11, color: .secondaryLabelColor))
+            for url in loose { libStack.addArrangedSubview(looseRow(url)) }
+        }
+
+        if drawings.isEmpty && loose.isEmpty {
             libStack.addArrangedSubview(
                 lbl("Nothing recorded yet. Draw in SAI with recording on, and your "
                     + "drawings will appear here.", 12, color: .secondaryLabelColor))
-            // Anyone upgrading has videos from before drawings existed as a
-            // concept. They are still perfectly good videos, and telling
-            // somebody with a folder full of them "nothing recorded yet" reads
-            // as though the update threw their work away.
-            let old = legacyVideos(in: store.videosDir)
-            if !old.isEmpty {
-                libStack.addArrangedSubview(
-                    lbl("\(old.count) video(s) made before this update are still in "
-                        + "\(prettyPath(store.videosDir)). They are not grouped into drawings — "
-                        + "recordings from now on will be.", 11, color: .secondaryLabelColor))
-                let b = NSButton(title: "Show them", target: self,
-                                 action: #selector(revealTimelapseVideos))
-                b.controlSize = .small
-                libStack.addArrangedSubview(b)
-            }
             libFooter.stringValue = ""
             return
         }
 
-        for d in drawings { libStack.addArrangedSubview(row(for: d, store: store)) }
-
         let pieces = drawings.reduce(0) { $0 + $1.pieces.count }
-        var footer = "\(drawings.count) drawing(s), \(pieces) session(s) — "
-            + prettyBytes(folderSize(store.videosDir))
+        var footer = ""
+        if !drawings.isEmpty { footer = "\(drawings.count) drawing(s), \(pieces) session(s)" }
+        if !loose.isEmpty {
+            footer += (footer.isEmpty ? "" : ", ") + "\(loose.count) older video(s)"
+        }
+        footer += " — " + prettyBytes(folderSize(store.videosDir))
         if !store.lib.pending.isEmpty {
             footer += "  ·  \(store.lib.pending.count) session(s) to confirm"
         }
@@ -210,11 +215,104 @@ extension SetupController {
         return NSImage(cgImage: cg, size: .zero)
     }
 
-    /// Videos sitting loose in the folder, from before this update: one file per
-    /// session, named for the day it was made.
-    private func legacyVideos(in dir: String) -> [String] {
-        ((try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? [])
+    /// Videos sitting loose in the folder rather than inside a drawing: one file
+    /// per session, named for the day it was made. Newest first, like the
+    /// drawings above them.
+    ///
+    /// Numbered files are skipped: `.NNN.mp4` is an unfinished segment, not a
+    /// video, and offering to play one would offer something unplayable.
+    private func looseVideos(in dir: String) -> [URL] {
+        let fm = FileManager.default
+        let names = ((try? fm.contentsOfDirectory(atPath: dir)) ?? [])
             .filter { $0.hasSuffix(".mp4") && !$0.hasPrefix(".") }
+            .filter { n in
+                let parts = n.dropLast(4).split(separator: ".")
+                return !(parts.count >= 2 && Int(parts[parts.count - 1]) != nil)
+            }
+        return names.map { URL(fileURLWithPath: dir).appendingPathComponent($0) }
+            .sorted { a, b in
+                let da = (try? a.resourceValues(forKeys: [.contentModificationDateKey]))?
+                    .contentModificationDate ?? .distantPast
+                let db = (try? b.resourceValues(forKeys: [.contentModificationDateKey]))?
+                    .contentModificationDate ?? .distantPast
+                return da > db
+            }
+    }
+
+    /// A loose video, with the actions that actually apply to it. No Rebuild and
+    /// no Sessions: it has no pieces behind it, and offering buttons that cannot
+    /// work is worse than offering fewer.
+    private func looseRow(_ url: URL) -> NSView {
+        let box = NSStackView()
+        box.orientation = .horizontal
+        box.alignment = .top
+        box.spacing = 12
+
+        let thumb = NSImageView()
+        thumb.imageScaling = .scaleProportionallyUpOrDown
+        thumb.translatesAutoresizingMaskIntoConstraints = false
+        thumb.widthAnchor.constraint(equalToConstant: 96).isActive = true
+        thumb.heightAnchor.constraint(equalToConstant: 72).isActive = true
+        thumb.image = poster(for: url)
+        box.addArrangedSubview(thumb)
+
+        let col = NSStackView()
+        col.orientation = .vertical
+        col.alignment = .leading
+        col.spacing = 3
+        col.addArrangedSubview(lbl(url.deletingPathExtension().lastPathComponent, 13, bold: true))
+
+        let f = DateFormatter(); f.dateStyle = .medium; f.timeStyle = .short
+        let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+            .contentModificationDate
+        let size = Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+        var facts = prettyBytes(size)
+        if let date { facts += " · \(f.string(from: date))" }
+        col.addArrangedSubview(lbl(facts, 11, color: .secondaryLabelColor))
+
+        let buttons = NSStackView()
+        buttons.orientation = .horizontal
+        buttons.spacing = 6
+        func button(_ t: String, _ sel: Selector) -> NSButton {
+            let b = NSButton(title: t, target: self, action: sel)
+            b.bezelStyle = .rounded
+            b.controlSize = .small
+            b.font = NSFont.systemFont(ofSize: 11)
+            // The path travels on the button, since a loose video has no id.
+            b.identifier = NSUserInterfaceItemIdentifier(url.path)
+            return b
+        }
+        buttons.addArrangedSubview(button("Play", #selector(libPlayFile(_:))))
+        buttons.addArrangedSubview(button("Show in Finder", #selector(libRevealFile(_:))))
+        buttons.addArrangedSubview(button("Delete…", #selector(libDeleteFile(_:))))
+        col.addArrangedSubview(buttons)
+
+        box.addArrangedSubview(col)
+        return box
+    }
+
+    @objc func libPlayFile(_ sender: Any?) {
+        guard let path = (sender as? NSButton)?.identifier?.rawValue else { return }
+        NSWorkspace.shared.open(URL(fileURLWithPath: path))
+    }
+
+    @objc func libRevealFile(_ sender: Any?) {
+        guard let path = (sender as? NSButton)?.identifier?.rawValue else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+    }
+
+    @objc func libDeleteFile(_ sender: Any?) {
+        guard let path = (sender as? NSButton)?.identifier?.rawValue else { return }
+        let url = URL(fileURLWithPath: path)
+        let alert = NSAlert()
+        alert.messageText = "Delete “\(url.lastPathComponent)”?"
+        alert.informativeText = "This deletes the video. Your artwork is untouched."
+        alert.addButton(withTitle: "Delete"); alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        // To the Trash, not unlinked: this is a video somebody may have spent an
+        // evening making, and a wrong click should be undoable.
+        try? FileManager.default.trashItem(at: url, resultingItemURL: nil)
+        refreshLibraryTab()
     }
 
     private func folderSize(_ path: String) -> Int64 {
