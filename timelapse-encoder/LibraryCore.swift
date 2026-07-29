@@ -205,8 +205,25 @@ struct Drawing: Codable, Equatable {
 /// The whole library. Serialised to JSON in Application Support; the videos
 /// themselves are the real artefact, and this is only the bookkeeping that says
 /// which belong together.
+/// A session that looked like it might continue an existing drawing, filed as
+/// its own drawing until somebody says otherwise.
+///
+/// It is NOT a blocked or half-finished state: the piece is filed, its video
+/// exists, and leaving the question unanswered forever is a supported outcome.
+/// The only cost of ignoring it is two rows in the library instead of one.
+struct Pending: Codable, Equatable {
+    /// The piece, as filed — the identity used by the ask-once rule.
+    var pieceFile: String
+    /// Where it went: a drawing of its own.
+    var drawingId: String
+    /// What it might belong to instead.
+    var candidateId: String
+    var askedAt: Date
+}
+
 struct Library: Codable, Equatable {
     var drawings: [Drawing] = []
+    var pending: [Pending] = []
     /// "sessionFile|drawingId" pairs somebody has already said no to.
     ///
     /// Asking twice about the same pair is how a prompt becomes noise people

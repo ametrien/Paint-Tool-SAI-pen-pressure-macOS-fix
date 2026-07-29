@@ -21,13 +21,13 @@ echo "Version: $VERSION"
 echo "Building helper (with --app support)..."
 if [ "${UNIVERSAL:-1}" = "1" ]; then
   ( cd "$REPO/wacom-helper" \
-    && swiftc -O -target x86_64-apple-macos12.0 -o .helper-x86 main.swift PressureCore.swift \
-    && swiftc -O -target arm64-apple-macos12.0  -o .helper-arm main.swift PressureCore.swift \
+    && swiftc -O -target x86_64-apple-macos12.0 -o .helper-x86 main.swift PressureCore.swift LibraryStore.swift LibraryUI.swift ../timelapse-encoder/LibraryCore.swift \
+    && swiftc -O -target arm64-apple-macos12.0  -o .helper-arm main.swift PressureCore.swift LibraryStore.swift LibraryUI.swift ../timelapse-encoder/LibraryCore.swift \
     && lipo -create -output wacom-pressure-helper .helper-x86 .helper-arm \
     && rm -f .helper-x86 .helper-arm )
   echo "  architectures: $(lipo -archs "$REPO/wacom-helper/wacom-pressure-helper")"
 else
-  ( cd "$REPO/wacom-helper" && swiftc -O -o wacom-pressure-helper main.swift PressureCore.swift )
+  ( cd "$REPO/wacom-helper" && swiftc -O -o wacom-pressure-helper main.swift PressureCore.swift LibraryStore.swift LibraryUI.swift ../timelapse-encoder/LibraryCore.swift )
   echo "  host architecture only (UNIVERSAL=0)"
 fi
 
@@ -38,13 +38,13 @@ fi
 echo "Building timelapse encoder..."
 if [ "${UNIVERSAL:-1}" = "1" ]; then
   ( cd "$REPO/timelapse-encoder" \
-    && swiftc -O -target x86_64-apple-macos12.0 -o .enc-x86 EncoderCore.swift main.swift \
-    && swiftc -O -target arm64-apple-macos12.0  -o .enc-arm EncoderCore.swift main.swift \
+    && swiftc -O -target x86_64-apple-macos12.0 -o .enc-x86 EncoderCore.swift LibraryCore.swift main.swift \
+    && swiftc -O -target arm64-apple-macos12.0  -o .enc-arm EncoderCore.swift LibraryCore.swift main.swift \
     && lipo -create -output sai-timelapse-encoder .enc-x86 .enc-arm \
     && rm -f .enc-x86 .enc-arm )
 else
   ( cd "$REPO/timelapse-encoder" \
-    && swiftc -O -o sai-timelapse-encoder EncoderCore.swift main.swift )
+    && swiftc -O -o sai-timelapse-encoder EncoderCore.swift LibraryCore.swift main.swift )
 fi
 
 echo "Assembling bundle..."

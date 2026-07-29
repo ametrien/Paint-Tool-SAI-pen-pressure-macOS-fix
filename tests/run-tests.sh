@@ -60,7 +60,12 @@ printf 'NEW-EXE'      > "$UPD/newsrc/sai2.exe"
 printf 'FACTORY'      > "$UPD/newsrc/sai2.ini"
 printf 'SHIPPED'      > "$UPD/newsrc/init/brushform.conf"
 
-swiftc -o "$WORK/helper-upd" "$REPO/wacom-helper/main.swift" "$REPO/wacom-helper/PressureCore.swift"
+# The helper is one binary: main.swift now refers to the library tab, so every
+# source it needs has to be here too.
+HELPER_SRC=("$REPO/wacom-helper/main.swift" "$REPO/wacom-helper/PressureCore.swift"
+            "$REPO/wacom-helper/LibraryStore.swift" "$REPO/wacom-helper/LibraryUI.swift"
+            "$REPO/timelapse-encoder/LibraryCore.swift")
+swiftc -o "$WORK/helper-upd" "${HELPER_SRC[@]}"
 SAI_PREFIX="$UPD/prefix" SAIPP_CONFIG_DIR="$UPD/cfg" \
   SAIPP_SELFTEST_UPDATE="$UPD/newsrc" "$WORK/helper-upd" > "$UPD/out" 2>&1 || {
     echo "  FAIL update reported: $(cat "$UPD/out")"; exit 1; }
@@ -244,3 +249,106 @@ esac
 
 [ "$reb_fail" = 0 ] || exit 1
 echo "All rebuild tests passed."
+
+echo ""
+echo "== Sessions are filed into drawings, across evenings (real filesystem) =="
+# Filing MOVES a session's only copy into a drawing's folder, so this runs
+# against a throwaway videos folder rather than being reasoned about.
+LIB="$WORK/lib"; mkdir -p "$LIB/.recording"
+lib_fail=0
+swiftc -o "$WORK/helper-lib" "${HELPER_SRC[@]}"
+
+# A finished session: a video plus the fingerprint sidecar beside it.
+#
+# `pattern` picks WHICH drawing this is; the two progress numbers are how much
+# ink was on the canvas when the session opened and when it closed. Marks accrue
+# in a fixed order per pattern, so opening at exactly the previous session's
+# closing count models reopening a saved file — which looks, as it must, almost
+# identical to how it was left.
+mksession() {  # name title started pattern open_progress close_progress
+  python3 - "$LIB/.recording" "$@" <<'PYSESSION'
+import json, sys, pathlib
+out, name, title, started, pattern, popen, pclose = sys.argv[1:8]
+side = 16
+def canvas(marks):
+    cells = [255] * (side * side)
+    rng = int(pattern) * 2654435761 % (2**32)
+    for _ in range(int(marks)):
+        rng = (rng * 1103515245 + 12345) % (2**31)
+        cells[rng % (side * side)] = 30
+    return {"cells": cells, "width": 200, "height": 150}
+pathlib.Path(f"{out}/{name}.json").write_text(json.dumps({
+    "title": title, "startedAt": started, "frames": 40,
+    "width": 200, "height": 150,
+    "opening": canvas(popen), "closing": canvas(pclose)}))
+pathlib.Path(f"{out}/{name}.mp4").write_bytes(b"fake video " + name.encode())
+PYSESSION
+}
+# Piece names are local-time timestamps; pin the zone so the expectations below
+# read the same wherever this runs.
+file_them() { TZ=UTC SAIPP_SELFTEST_LIBRARY="$LIB" "$@" "$WORK/helper-lib"; }
+
+# Evening one: a new drawing.
+mksession "session 2026-07-27 2015" "Sketch" "2026-07-27T20:15:00Z" 7 5 40
+out=$(file_them)
+echo "$out" | grep -q "filed 2026-07-27 2015.mp4 -> Sketch" \
+  && echo "  ok   filing: a new drawing gets its own folder" \
+  || { echo "  FAIL filing: $out"; lib_fail=1; }
+[ -f "$LIB/Sketch/pieces/2026-07-27 2015.mp4" ] \
+  && echo "  ok   filing: the session lands in that drawing's pieces folder" \
+  || { echo "  FAIL filing: piece not moved: $(find "$LIB" -name '*.mp4')"; lib_fail=1; }
+[ -f "$LIB/.recording/session 2026-07-27 2015.mp4" ] \
+  && { echo "  FAIL filing: the session was left in staging too"; lib_fail=1; } \
+  || echo "  ok   filing: staging is left clean"
+
+# Evening two: the same file reopened (opening 41 = where evening one closed,
+# plus tonight's first stroke) and drawn on further — while the canvas has been
+# RENAMED in between.
+#
+# THE TRAP: match on the title instead of the canvas contents and this lands in
+# a second folder called "final v2", which is the bug that started all of this.
+mksession "session 2026-07-28 1903" "final v2" "2026-07-28T19:03:00Z" 7 41 60
+out=$(file_them)
+echo "$out" | grep -q "filed 2026-07-28 1903.mp4 -> Sketch" \
+  && echo "  ok   filing: a renamed canvas rejoins the same drawing" \
+  || { echo "  FAIL filing: $out"; lib_fail=1; }
+echo "$out" | grep -q "drawing Sketch: 2026-07-27 2015.mp4, 2026-07-28 1903.mp4" \
+  && echo "  ok   filing: both evenings are in it, in the order drawn" \
+  || { echo "  FAIL filing: $out"; lib_fail=1; }
+
+# A genuinely different drawing must NOT be swept into it.
+mksession "session 2026-07-29 1000" "Portrait" "2026-07-29T10:00:00Z" 91 5 40
+out=$(file_them)
+echo "$out" | grep -q "filed 2026-07-29 1000.mp4 -> Portrait" \
+  && echo "  ok   filing: an unrelated drawing gets its own folder" \
+  || { echo "  FAIL filing: $out"; lib_fail=1; }
+
+# THE TRAP FOR THE PROMPT: a session that opens well past where the drawing was
+# left (80 marks against 60) is plausible, not certain — someone may have worked
+# on it elsewhere, or this may be a different picture altogether. It must be
+# filed as its own drawing AND recorded as a question, never merged silently,
+# because a wrong silent merge welds two drawings into one video with nothing on
+# screen to say so.
+mksession "session 2026-07-30 2100" "Sketch" "2026-07-30T21:00:00Z" 7 80 100
+out=$(file_them)
+echo "$out" | grep -q "ask:Sketch" \
+  && echo "  ok   filing: a plausible continuation asks instead of merging" \
+  || { echo "  FAIL filing: expected a question, got: $out"; lib_fail=1; }
+echo "$out" | grep -q "drawing Sketch: 2026-07-27 2015.mp4, 2026-07-28 1903.mp4$" \
+  && echo "  ok   filing: and is NOT quietly added to the drawing it might belong to" \
+  || { echo "  FAIL filing: the pending session was merged anyway: $out"; lib_fail=1; }
+
+# Answering "same drawing" moves it across — on disk, not just in the index.
+out=$(file_them env SAIPP_SELFTEST_CONFIRM=same)
+echo "$out" | grep -q "confirmed same -> Sketch" \
+  && echo "  ok   confirm: answering yes moves the session into the drawing" \
+  || { echo "  FAIL confirm: $out"; lib_fail=1; }
+[ -f "$LIB/Sketch/pieces/2026-07-30 2100.mp4" ] \
+  && echo "  ok   confirm: and the file itself moves with it" \
+  || { echo "  FAIL confirm: file not moved: $(find "$LIB" -name '2026-07-30*')"; lib_fail=1; }
+[ "$(find "$LIB" -name '2026-07-30 2100.mp4' | wc -l | tr -d ' ')" = "1" ] \
+  && echo "  ok   confirm: exactly one copy of it exists afterwards" \
+  || { echo "  FAIL confirm: the session was duplicated or lost"; lib_fail=1; }
+
+[ "$lib_fail" = 0 ] || exit 1
+echo "All library filing tests passed."

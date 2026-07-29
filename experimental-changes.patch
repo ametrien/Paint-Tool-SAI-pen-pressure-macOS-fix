@@ -1,0 +1,60 @@
+diff --git a/wacom-helper/main.swift b/wacom-helper/main.swift
+index 84103c6..f09f762 100644
+--- a/wacom-helper/main.swift
++++ b/wacom-helper/main.swift
+@@ -855,8 +855,27 @@ func keepAlive() {
+ // untouched so SAI's own mouse painting still works — streaming hover packets
+ // for every mouse move told SAI a pen was always present and suppressed mouse
+ // paint entirely. A tablet-generated mouse event carries subtype tabletPoint(1).
++func extractPressure(from event: CGEvent) -> Double {
++    var pr = event.getDoubleValueField(.tabletEventPointPressure)
++    if pr == 0, let nsEv = NSEvent(cgEvent: event) {
++        pr = Double(nsEv.pressure)
++    }
++    return pr
++}
++
+ func isTabletMouse(_ e: CGEvent) -> Bool {
+-    return e.getIntegerValueField(.mouseEventSubtype) == 1   // kCGEventMouseSubtypeTabletPoint
++    let sub = e.getIntegerValueField(.mouseEventSubtype)
++    let nsEv = NSEvent(cgEvent: e)
++    let nsSub = nsEv?.subtype.rawValue ?? -1
++    let press = nsEv?.pressure ?? -1.0
++    
++    if e.type == .leftMouseDown || e.type == .leftMouseDragged {
++        print("[DEBUG] evt=\(e.type.rawValue) cgSub=\(sub) nsSub=\(nsSub) press=\(press) penInRange=\(penInRange)")
++    }
++    
++    if sub == 1 { return true }
++    if nsSub == NSEvent.EventSubtype.tabletPoint.rawValue { return true }
++    return false
+ }
+ 
+ // Set by the app's wizard (app mode) to the "wake SAI" action; the event tap
+@@ -906,7 +925,7 @@ let tapCallback: CGEventTapCallBack = { _, type, event, _ in
+         g_evTabletPtr += 1
+         g_lastTabletEvAt = CFAbsoluteTimeGetCurrent(); g_penEverSeen = true
+         penInRange = true
+-        let pr = event.getDoubleValueField(.tabletEventPointPressure)
++        let pr = extractPressure(from: event)
+         noteRawPressure(pr)
+         emit(pressure: Int(PressureCore.curved(pr) * Double(PressureCore.maxPressure)), loc: event.location)
+     case .leftMouseUp:
+@@ -916,7 +935,7 @@ let tapCallback: CGEventTapCallBack = { _, type, event, _ in
+             g_evTabletMouse += 1
+             g_lastTabletEvAt = CFAbsoluteTimeGetCurrent(); g_penEverSeen = true
+             penInRange = true
+-            let pr = event.getDoubleValueField(.tabletEventPointPressure)
++            let pr = extractPressure(from: event)
+             noteRawPressure(pr)
+             emit(pressure: Int(PressureCore.curved(pr) * Double(PressureCore.maxPressure)), loc: event.location)
+         } else {
+@@ -999,7 +1018,7 @@ func startPressureEngine() -> Bool {
+     mask |= CGEventMask(1) << 29
+     mask |= CGEventMask(1) << 30
+     guard let tap = CGEvent.tapCreate(
+-        tap: .cghidEventTap, place: .headInsertEventTap, options: .listenOnly,
++        tap: .cgSessionEventTap, place: .headInsertEventTap, options: .listenOnly,
+         eventsOfInterest: mask, callback: tapCallback, userInfo: nil) else { return false }
+     gTap = tap
+     CFRunLoopAddSource(CFRunLoopGetCurrent(), CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0), .commonModes)
