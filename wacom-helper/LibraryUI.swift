@@ -25,6 +25,103 @@ enum LibraryExport {
     }
 }
 
+
+/// A poster frame that plays the video when the pointer is over it.
+///
+/// A timelapse is motion; a still frame of one is the least informative thing
+/// about it, and the last frame of two drawings can look very alike. Hovering to
+/// see it move is how you tell them apart without opening anything.
+///
+/// The player is built on entry and torn down on exit rather than kept around:
+/// a folder with thirty drawings in it would otherwise hold thirty decoders open
+/// for a list nobody is looking at.
+final class HoverVideoView: NSView {
+    private let url: URL
+    private let poster = NSImageView()
+    private var player: AVPlayer?
+    private var layerView: NSView?
+    private var endObserver: Any?
+    /// Exposed so the wiring can be tested without synthesising mouse events —
+    /// tracking areas are AppKit's job, but "hovering starts the video" is ours.
+    private(set) var isPreviewing = false
+
+    init(url: URL, image: NSImage?) {
+        self.url = url
+        super.init(frame: .zero)
+        poster.imageScaling = .scaleProportionallyUpOrDown
+        poster.image = image
+        poster.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(poster)
+        NSLayoutConstraint.activate([
+            poster.topAnchor.constraint(equalTo: topAnchor),
+            poster.bottomAnchor.constraint(equalTo: bottomAnchor),
+            poster.leadingAnchor.constraint(equalTo: leadingAnchor),
+            poster.trailingAnchor.constraint(equalTo: trailingAnchor),
+        ])
+    }
+
+    @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for a in trackingAreas { removeTrackingArea(a) }
+        // .activeInKeyWindow, so a background window does not start playing
+        // video because the pointer happens to be over it.
+        addTrackingArea(NSTrackingArea(rect: bounds,
+                                       options: [.mouseEnteredAndExited, .activeInKeyWindow],
+                                       owner: self))
+    }
+
+    override func mouseEntered(with event: NSEvent) { beginPreview() }
+    override func mouseExited(with event: NSEvent) { endPreview() }
+
+    func beginPreview() {
+        guard !isPreviewing, FileManager.default.fileExists(atPath: url.path) else { return }
+        let p = AVPlayer(url: url)
+        p.isMuted = true                       // there is no audio, and never will be
+        let host = NSView()
+        host.wantsLayer = true
+        host.translatesAutoresizingMaskIntoConstraints = false
+        let pl = AVPlayerLayer(player: p)
+        pl.videoGravity = .resizeAspect
+        pl.frame = bounds
+        pl.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
+        host.layer?.addSublayer(pl)
+        addSubview(host)
+        NSLayoutConstraint.activate([
+            host.topAnchor.constraint(equalTo: topAnchor),
+            host.bottomAnchor.constraint(equalTo: bottomAnchor),
+            host.leadingAnchor.constraint(equalTo: leadingAnchor),
+            host.trailingAnchor.constraint(equalTo: trailingAnchor),
+        ])
+        // Loop: a timelapse of one evening can be two seconds long, and a
+        // preview that plays once and freezes looks like it has crashed.
+        endObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime, object: p.currentItem, queue: .main) { [weak p] _ in
+                p?.seek(to: .zero); p?.play()
+            }
+        player = p
+        layerView = host
+        isPreviewing = true
+        p.play()
+    }
+
+    func endPreview() {
+        guard isPreviewing else { return }
+        player?.pause()
+        if let o = endObserver { NotificationCenter.default.removeObserver(o) }
+        endObserver = nil
+        layerView?.removeFromSuperview()
+        layerView = nil
+        player = nil
+        isPreviewing = false
+    }
+
+    deinit {
+        if let o = endObserver { NotificationCenter.default.removeObserver(o) }
+    }
+}
+
 extension SetupController {
 
     // MARK: - the tab
@@ -38,7 +135,8 @@ extension SetupController {
         tab.addArrangedSubview(lbl("Your videos", 18, bold: true))
         tab.addArrangedSubview(
             lbl("One video per drawing. Come back to a drawing later and it is added "
-                + "to the same video.", 11, color: .secondaryLabelColor))
+                + "to the same video.\nHover over a still to play it.",
+                11, color: .secondaryLabelColor))
 
         libStack = NSStackView()
         libStack.orientation = .vertical
@@ -148,12 +246,10 @@ extension SetupController {
         box.alignment = .top
         box.spacing = 12
 
-        let thumb = NSImageView()
-        thumb.imageScaling = .scaleProportionallyUpOrDown
+        let thumb = HoverVideoView(url: store.videoURL(d), image: poster(for: store.videoURL(d)))
         thumb.translatesAutoresizingMaskIntoConstraints = false
         thumb.widthAnchor.constraint(equalToConstant: 96).isActive = true
         thumb.heightAnchor.constraint(equalToConstant: 72).isActive = true
-        thumb.image = poster(for: store.videoURL(d))
         box.addArrangedSubview(thumb)
 
         let col = NSStackView()
@@ -248,12 +344,10 @@ extension SetupController {
         box.alignment = .top
         box.spacing = 12
 
-        let thumb = NSImageView()
-        thumb.imageScaling = .scaleProportionallyUpOrDown
+        let thumb = HoverVideoView(url: url, image: poster(for: url))
         thumb.translatesAutoresizingMaskIntoConstraints = false
         thumb.widthAnchor.constraint(equalToConstant: 96).isActive = true
         thumb.heightAnchor.constraint(equalToConstant: 72).isActive = true
-        thumb.image = poster(for: url)
         box.addArrangedSubview(thumb)
 
         let col = NSStackView()

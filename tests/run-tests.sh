@@ -516,3 +516,67 @@ case "$base" in
   *) echo "  FAIL upgrade: recording would write to '$base'"; exit 1 ;;
 esac
 echo "All upgrade tests passed."
+
+echo ""
+echo "== Changing the videos folder reloads the list, without a restart =="
+# Two folders, and the app is pointed at the second while it is running. The
+# list must show the second folder's contents immediately — and the index has to
+# follow, which is why it lives IN the folder: a single global index went on
+# describing drawings that were somewhere else entirely.
+SWA="$WORK/folderA"; SWB="$WORK/folderB"
+mkdir -p "$SWA/cfg" "$SWA/videos" "$SWB/videos"
+sw_fail=0
+printf '%s' "$SWA/videos" > "$SWA/cfg/timelapse-folder.txt"
+cp "$E2E/videos"/*/*.mp4 "$SWA/videos/In folder A.mp4" 2>/dev/null || : > "$SWA/videos/In folder A.mp4"
+: > "$SWB/videos/In folder B.mp4"
+
+out=$(SAIPP_CONFIG_DIR="$SWA/cfg" SAIPP_SELFTEST_TABLAYOUT=1 \
+      SAIPP_SELFTEST_FOLDERSWITCH="$SWB/videos" "$WORK/helper-lib" 2>/dev/null)
+before=$(echo "$out" | sed -n '1,/after switching/p')
+after=$(echo "$out" | sed -n '/after switching/,$p')
+
+echo "$before" | grep -q "In folder A" \
+  && echo "  ok   folder: the first folder's video is listed to start with" \
+  || { echo "  FAIL folder: folder A's video missing"; echo "$before"; sw_fail=1; }
+# THE TRAP: refresh only the Recording tab (as the Choose button used to) and
+# the list keeps showing folder A while recording goes to folder B.
+echo "$after" | grep -q "In folder B" \
+  && echo "  ok   folder: switching folders shows the new folder's videos" \
+  || { echo "  FAIL folder: folder B's video never appeared"; echo "$after"; sw_fail=1; }
+echo "$after" | grep -q "In folder A" \
+  && { echo "  FAIL folder: the old folder's videos are still listed"; sw_fail=1; } \
+  || echo "  ok   folder: and stops showing the old folder's"
+
+# The index belongs to the folder it describes, so a folder carried elsewhere
+# arrives knowing which sessions belong together.
+[ -f "$E2E/videos/.library.json" ] \
+  && echo "  ok   folder: the index lives in the videos folder" \
+  || { echo "  FAIL folder: no .library.json in the videos folder"; sw_fail=1; }
+
+[ "$sw_fail" = 0 ] || exit 1
+echo "All folder switching tests passed."
+
+echo ""
+echo "== Hovering a still plays the video =="
+# A timelapse is motion, and the last frame of two drawings can look much alike.
+# The tracking area is AppKit's business; that a row is wired to a player, and
+# lets go of it again, is ours — a list of thirty drawings must not hold thirty
+# decoders open for something nobody is looking at.
+HOV="$WORK/hover"; mkdir -p "$HOV/cfg" "$HOV/videos"
+hov_fail=0
+printf '%s' "$HOV/videos" > "$HOV/cfg/timelapse-folder.txt"
+cp "$E2E/videos"/*/*.mp4 "$HOV/videos/Something.mp4" 2>/dev/null
+out=$(SAIPP_CONFIG_DIR="$HOV/cfg" SAIPP_SELFTEST_TABLAYOUT=1 SAIPP_SELFTEST_HOVER=1 \
+      "$WORK/helper-lib" 2>/dev/null)
+echo "$out" | grep -q "hoverable 1" \
+  && echo "  ok   hover: the video's still is hoverable" \
+  || { echo "  FAIL hover: $(echo "$out" | grep hover)"; hov_fail=1; }
+echo "$out" | grep -q "hover begin previewing=true" \
+  && echo "  ok   hover: pointing at it starts playback" \
+  || { echo "  FAIL hover: playback never started"; hov_fail=1; }
+echo "$out" | grep -q "hover end previewing=false" \
+  && echo "  ok   hover: moving away tears the player down again" \
+  || { echo "  FAIL hover: the player was left running"; hov_fail=1; }
+
+[ "$hov_fail" = 0 ] || exit 1
+echo "All hover tests passed."

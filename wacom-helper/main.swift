@@ -814,6 +814,35 @@ if let dir = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_TABLAYOUT"] {
     dump(tab, 0)
     print("rows \(c.libStack.arrangedSubviews.count) "
           + "stack \(Int(c.libStack.frame.width))x\(Int(c.libStack.frame.height))")
+
+    // Changing the videos folder must reload the list in place — the whole point
+    // being that you do not have to quit the app to see the other folder.
+    if let switchTo = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_FOLDERSWITCH"] {
+        c.setTimelapseFolder(switchTo)
+        w.layoutIfNeeded()
+        print("--- after switching to \(switchTo)")
+        dump(tab, 0)
+        print("rows \(c.libStack.arrangedSubviews.count) "
+              + "stack \(Int(c.libStack.frame.width))x\(Int(c.libStack.frame.height))")
+    }
+
+    // Hovering plays the video. The tracking area is AppKit's business; that a
+    // row is wired to a player, and lets go of it again, is ours.
+    if ProcessInfo.processInfo.environment["SAIPP_SELFTEST_HOVER"] != nil {
+        var found = 0
+        func hover(_ v: NSView) {
+            if let hv = v as? HoverVideoView {
+                found += 1
+                hv.beginPreview()
+                print("hover begin previewing=\(hv.isPreviewing)")
+                hv.endPreview()
+                print("hover end previewing=\(hv.isPreviewing)")
+            }
+            for sub in v.subviews { hover(sub) }
+        }
+        hover(tab)
+        print("hoverable \(found)")
+    }
     _ = dir
     exit(0)
 }
@@ -879,12 +908,27 @@ func timelapseSessionBase() -> String {
     return base
 }
 
-/// The library index. Beside the settings rather than in the videos folder: it
-/// is bookkeeping, and the videos have to stand on their own without it.
-func timelapseLibraryPath() -> String { appSupport() + "/library.json" }
+/// The library index, INSIDE the videos folder.
+///
+/// It started beside the settings, on the reasoning that it is bookkeeping and
+/// the videos should stand on their own without it. That was wrong in a way that
+/// only showed when somebody moved their videos folder: one global index went on
+/// describing drawings that lived somewhere else entirely, so the new folder
+/// showed rows with no videos behind them. An index describes one folder, so it
+/// belongs to that folder — and a folder carried to another Mac now arrives
+/// knowing which sessions belong together.
+func timelapseLibraryPath() -> String { timelapseOutputFolder() + "/.library.json" }
 
 func makeLibraryStore() -> LibraryStore {
-    LibraryStore(videosDir: timelapseOutputFolder(), indexPath: timelapseLibraryPath())
+    let path = timelapseLibraryPath()
+    // One-time move for anyone who recorded with the build that kept it in
+    // Application Support.
+    let old = appSupport() + "/library.json"
+    let fm = FileManager.default
+    if fm.fileExists(atPath: old), !fm.fileExists(atPath: path) {
+        try? fm.moveItem(atPath: old, toPath: path)
+    }
+    return LibraryStore(videosDir: timelapseOutputFolder(), indexPath: path)
 }
 
 /// File whatever sessions have just finished, then rebuild the drawings they
@@ -3011,9 +3055,20 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         p.prompt = "Choose"
         p.directoryURL = URL(fileURLWithPath: timelapseOutputFolder())
         guard p.runModal() == .OK, let url = p.url else { return }
-        try? url.path.write(toFile: appSupport() + "/timelapse-folder.txt",
-                            atomically: true, encoding: .utf8)
+        setTimelapseFolder(url.path)
+    }
+
+    /// Point recording at another folder, and show what is in it.
+    ///
+    /// Separate from the panel so it can be tested, and because refreshing the
+    /// Recording tab alone left the Videos tab showing the previous folder's
+    /// contents — with a cached store still pointing at the old index.
+    func setTimelapseFolder(_ path: String) {
+        try? path.write(toFile: appSupport() + "/timelapse-folder.txt",
+                        atomically: true, encoding: .utf8)
+        libStore = nil
         refreshRecordingTab()
+        refreshLibraryTab()
     }
 
     /// Quitting the app ends the recording too. SAI closing is the usual way a
