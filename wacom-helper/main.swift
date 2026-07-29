@@ -794,6 +794,48 @@ func timelapseSessionBase() -> String {
     return base
 }
 
+/// Turn whatever has been recorded into finished videos, now, and wait for it.
+///
+/// Called when SAI closes, so a session always ends with a video rather than
+/// with segments that only become one if somebody thinks to press a button.
+/// Losing a drawing session because you quit without pressing Make video is not
+/// a reasonable thing to ask of anyone.
+///
+/// Synchronous on purpose: the caller is usually on its way to exit(0), and a
+/// half-written video is one no player will open.
+@discardableResult
+func finalizeTimelapseNow() -> Bool {
+    guard let res = Bundle.main.resourcePath else { return false }
+    let enc = "\(res)/sai-timelapse-encoder"
+    guard FileManager.default.isExecutableFile(atPath: enc) else { return false }
+    let frames = "\(appPrefix)/drive_c/sai-timelapse/frames"
+    // Nothing captured? Then there is nothing to finish, and no empty file to
+    // leave behind.
+    let hasFrames = ((try? FileManager.default.contentsOfDirectory(atPath: frames)) ?? [])
+        .contains { $0.hasSuffix(".frame") }
+    let outDir = timelapseOutputFolder()
+    let hasSegments = ((try? FileManager.default.contentsOfDirectory(atPath: outDir)) ?? [])
+        .contains { n in
+            guard n.hasSuffix(".mp4") else { return false }
+            let parts = n.dropLast(4).split(separator: ".")
+            return parts.count >= 2 && Int(parts[parts.count - 1]) != nil
+        }
+    guard hasFrames || hasSegments else { return false }
+
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: enc)
+    var args = ["--frames", frames, "--out", timelapseSessionBase(), "--fps", "12", "--finalize"]
+    if timelapseMaxSeconds() > 0 { args += ["--max-seconds", "\(timelapseMaxSeconds())"] }
+    p.arguments = args
+    p.standardOutput = FileHandle.nullDevice
+    p.standardError = FileHandle.nullDevice
+    do { try p.run() } catch { wlog("timelapse: auto-finalise could not start — \(error)"); return false }
+    p.waitUntilExit()
+    wlog("timelapse: auto-finalised on close (exit \(p.terminationStatus))")
+    if p.terminationStatus == 0 { endTimelapseSession() }
+    return p.terminationStatus == 0
+}
+
 /// Forget the session, so the next recording starts a new set of files rather
 /// than appending to one that has already been turned into a video.
 func endTimelapseSession() {
@@ -969,6 +1011,7 @@ func launchSAIApp() {
     p.terminationHandler = { _ in
         try? "0".write(toFile: pf, atomically: true, encoding: .ascii)
         stopLiveEncoder()
+        finalizeTimelapseNow()
         // The process we spawned exiting does NOT always mean SAI closed — Wine
         // can hand off to another process and let this one exit immediately,
         // which used to make us quit while SAI was still on screen. Only exit
@@ -2725,6 +2768,9 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         recordingTab.addArrangedSubview(recPreview)
 
         recordingTab.addArrangedSubview(
+            lbl("Closing SAI makes the video by itself — this button is only for making one early.",
+                11, color: .tertiaryLabelColor))
+        recordingTab.addArrangedSubview(
             lbl("You can make a video while SAI is still open — recording carries on afterwards.",
                 11, color: .tertiaryLabelColor))
         recordingTab.addArrangedSubview(
@@ -2850,6 +2896,14 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         try? url.path.write(toFile: appSupport() + "/timelapse-folder.txt",
                             atomically: true, encoding: .utf8)
         refreshRecordingTab()
+    }
+
+    /// Quitting the app ends the recording too. SAI closing is the usual way a
+    /// session finishes, but not the only one — and segments left behind look
+    /// to anyone reading the folder like nothing was recorded at all.
+    func applicationWillTerminate(_ note: Notification) {
+        stopLiveEncoder()
+        finalizeTimelapseNow()
     }
 
     func tabView(_ tabView: NSTabView, didSelect item: NSTabViewItem?) {
