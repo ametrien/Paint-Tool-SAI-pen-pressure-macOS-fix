@@ -100,6 +100,12 @@ connection (USB/BT), SAI version.** Tick each item ✅/❌ and note anything odd
 - [ ] "Take out of this drawing" moves a session into its own drawing, and both videos rebuild.
 - [ ] Export at 30s → a separate file; the drawing's own video is still full length.
 - [ ] Resize a canvas between sessions → the combined video fits both, with neither squashed.
+- [ ] Hover a still in the Videos tab → it plays in place and loops; move away and it stops.
+- [ ] **Change the videos folder while the app is open**: Recording tab → Choose… → pick another
+      folder → Videos tab lists that folder's contents immediately, and no longer the old one's.
+      Change it back and the first folder's videos return. No restart at any point.
+      (Each folder keeps its own `.library.json`, so drawings recorded into one do not follow you
+      into the other.)
 
 ### Safety / lifecycle
 - [ ] Kill switch: `echo 0 > <prefix>/drive_c/wt_pressure.txt` stops pressure immediately.
