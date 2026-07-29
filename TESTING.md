@@ -107,6 +107,15 @@ connection (USB/BT), SAI version.** Tick each item ✅/❌ and note anything odd
       (Each folder keeps its own `.library.json`, so drawings recorded into one do not follow you
       into the other.)
 
+### Safety / lifecycle (the destructive paths now have automated cover)
+Uninstall, the licence rescue and a damaged library index are covered by
+`tests/run-tests.sh` against throwaway folders. Two things it deliberately does
+NOT do, and which therefore need a human: removing **Wine** during uninstall (it
+moves a real application to the Trash), and the **Wine prefix rebuild** itself
+(needs a real `wineboot`). Check those by hand on a machine you can restore.
+- [ ] Uninstall with "Move Wine to Trash" → Wine Staging is in the Trash, and only it.
+- [ ] Rebuild the prefix with a licence installed → SAI still saves afterwards.
+
 ### Safety / lifecycle
 - [ ] Kill switch: `echo 0 > <prefix>/drive_c/wt_pressure.txt` stops pressure immediately.
 - [ ] Closing SAI quits the helper/app cleanly (no lingering process, cursor released).
