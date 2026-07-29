@@ -5,6 +5,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
 
 ## [Unreleased]
 
+### Added
+- **A drawing made over several evenings becomes one video.** Reopen a picture tomorrow and tonight's
+  recording is added to it, instead of leaving you with a folder of disconnected clips named after
+  dates. Each session is still kept as its own file, and the combined video is rebuilt from them —
+  so nothing that already exists is ever rewritten, and a failure can only cost the session that
+  failed.
+- **The app recognises a drawing by what it looks like**, not by its name. Rename the canvas, move
+  the file, Save As — it still knows. Inside one session a canvas is identified by its address in
+  SAI's memory, which means nothing once SAI has quit; comparing the picture is what survives.
+- **It asks when it isn't sure.** A session that has moved on a long way since you last drew is
+  plausible rather than certain, so it becomes its own drawing and asks — with the two pictures side
+  by side — instead of merging quietly. Saying no is remembered. Ignoring the question is fine: the
+  video already exists either way.
+- **A Timelapses tab** listing your drawings, with a still from each, and buttons to play, rebuild,
+  export or take a session out of the drawing it was put in.
+
+### Changed
+- **Video length is chosen when you export**, not while recording. Your drawing keeps its full-length
+  video and the cap makes a separate copy, so asking for 30 seconds twice never compounds.
+- Recording now happens in a hidden staging folder, so the videos folder holds only finished work.
+
 ## [0.2.2] — 2026-07-28
 
 ### Fixed
