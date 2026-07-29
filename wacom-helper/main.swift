@@ -110,7 +110,12 @@ func timelapseOutputFolder() -> String {
     return d
 }
 
-/// Index into the Recording tab's length popup: 30s, 1m, 2m, everything.
+/// Index into the export-length popup: 30s, 1m, 2m, everything.
+///
+/// This used to cap the recording itself. It no longer does: a drawing's video
+/// is kept at full length and lossless, and a cap makes a separate copy when you
+/// export one. Capping the archive meant re-timing already re-timed material
+/// every time a drawing gained another evening.
 func storedTimelapseLengthIndex() -> Int {
     guard let s = try? String(contentsOfFile: appSupport() + "/timelapse-length.txt", encoding: .utf8),
           let i = Int(s.trimmingCharacters(in: .whitespacesAndNewlines)), (0...3).contains(i)
@@ -2780,18 +2785,6 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         recUsageLabel.maximumNumberOfLines = 8
         recordingTab.addArrangedSubview(recUsageLabel)
 
-        let lenRow = NSStackView(); lenRow.orientation = .horizontal
-        lenRow.alignment = .centerY; lenRow.spacing = 8
-        lenRow.addArrangedSubview(lbl("Video length", 12, bold: true))
-        recLengthPopup = NSPopUpButton()
-        recLengthPopup.addItems(withTitles: ["30 seconds", "1 minute", "2 minutes", "Everything"])
-        recLengthPopup.selectItem(at: storedTimelapseLengthIndex())
-        recLengthPopup.target = self; recLengthPopup.action = #selector(recLengthChanged)
-        lenRow.addArrangedSubview(recLengthPopup)
-        lenRow.addArrangedSubview(
-            lbl("frames are dropped evenly to hit the target", 11, color: .tertiaryLabelColor))
-        recordingTab.addArrangedSubview(lenRow)
-
         let folderRow = NSStackView(); folderRow.orientation = .horizontal
         folderRow.alignment = .centerY; folderRow.spacing = 8
         folderRow.addArrangedSubview(lbl("Save to", 12, bold: true))
@@ -2852,7 +2845,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
             lbl("You can make a video while SAI is still open — recording carries on afterwards.",
                 11, color: .tertiaryLabelColor))
         recordingTab.addArrangedSubview(
-            lbl("Several canvases open at once are recorded separately — you get one video each.",
+            lbl("Drawing on this again another day adds to the same video — see the Timelapses tab.",
                 11, color: .tertiaryLabelColor))
         recordingTab.addArrangedSubview(
             lbl("Undo is captured at your next stroke rather than the moment you press it.",

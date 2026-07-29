@@ -15,6 +15,16 @@ import AVFoundation
 import AVKit
 import Foundation
 
+/// The export lengths offered, in one place: the tab's default popup and the
+/// export dialog have to agree, and they drifted apart when they each had their
+/// own list.
+enum LibraryExport {
+    static let choiceTitles = ["30 seconds", "1 minute", "2 minutes", "Full length"]
+    static func seconds(at index: Int) -> Int {
+        [30, 60, 120, 0][max(0, min(index, 3))]
+    }
+}
+
 extension SetupController {
 
     // MARK: - the tab
@@ -42,6 +52,21 @@ extension SetupController {
         scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 260).isActive = true
         scroll.widthAnchor.constraint(greaterThanOrEqualToConstant: 460).isActive = true
         tab.addArrangedSubview(scroll)
+
+        // The export default lives here rather than with the recording
+        // settings: nothing about recording is capped any more, and a control
+        // sitting next to the thing it governs needs less explaining.
+        let lenRow = NSStackView(); lenRow.orientation = .horizontal
+        lenRow.alignment = .centerY; lenRow.spacing = 8
+        lenRow.addArrangedSubview(lbl("Export length", 12, bold: true))
+        recLengthPopup = NSPopUpButton()
+        recLengthPopup.addItems(withTitles: LibraryExport.choiceTitles)
+        recLengthPopup.selectItem(at: storedTimelapseLengthIndex())
+        recLengthPopup.target = self; recLengthPopup.action = #selector(recLengthChanged)
+        lenRow.addArrangedSubview(recLengthPopup)
+        lenRow.addArrangedSubview(
+            lbl("your drawings always keep a full-length video", 11, color: .tertiaryLabelColor))
+        tab.addArrangedSubview(lenRow)
 
         libFooter = lbl("", 11, color: .secondaryLabelColor)
         tab.addArrangedSubview(libFooter)
@@ -203,19 +228,16 @@ extension SetupController {
     @objc func libExport(_ sender: Any?) {
         guard let d = drawing(from: sender), let store = libStore,
               let res = Bundle.main.resourcePath else { return }
-        let choices = [("30 seconds", 30), ("1 minute", 60), ("2 minutes", 120),
-                       ("Full length", 0)]
-        let menu = NSMenu()
-        for (t, _) in choices { menu.addItem(withTitle: t, action: nil, keyEquivalent: "") }
         let alert = NSAlert()
         alert.messageText = "Export “\(d.title)”"
         alert.informativeText = "The drawing keeps its full-length video; this makes a separate copy."
         let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 200, height: 26))
-        popup.addItems(withTitles: choices.map(\.0))
+        popup.addItems(withTitles: LibraryExport.choiceTitles)
+        popup.selectItem(at: storedTimelapseLengthIndex())
         alert.accessoryView = popup
         alert.addButton(withTitle: "Export…"); alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let seconds = choices[popup.indexOfSelectedItem].1
+        let seconds = LibraryExport.seconds(at: popup.indexOfSelectedItem)
 
         let panel = NSSavePanel()
         panel.nameFieldStringValue = seconds > 0 ? "\(d.folder) (\(seconds)s).mp4" : "\(d.folder).mp4"
