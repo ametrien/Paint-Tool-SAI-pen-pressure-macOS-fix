@@ -14,6 +14,7 @@ wacom-helper/SAIProcess.swift
 wacom-helper/Setup.swift
 wacom-helper/Licence.swift
 wacom-helper/RecordingUI.swift
+wacom-helper/RecordingActions.swift
 wacom-helper/LibraryStore.swift
 wacom-helper/LibraryUI.swift
 timelapse-encoder/LibraryCore.swift
