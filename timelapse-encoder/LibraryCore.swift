@@ -377,10 +377,46 @@ enum LibraryCore {
 // MARK: - naming
 
 extension LibraryCore {
-    /// Folder name for a drawing. Two drawings must never share a folder, so a
-    /// clash is resolved by numbering rather than by merging them on disk —
-    /// which is exactly the accident the whole ladder exists to prevent.
-    static func folderName(title: String, taken: Set<String>) -> String {
+    /// A timestamp for names: sortable, and identical on every machine.
+    ///
+    /// DateFormatter with a fixed POSIX locale, deliberately. The modern
+    /// replacement — `Date.formatted(.verbatim(...))` — needs macOS 13, and this
+    /// app deploys to macOS 12; the localised styles that ARE available on 12
+    /// produce different text on a machine set to another locale, which is fine
+    /// for a label and wrong for a file name that has to sort chronologically.
+    ///
+    /// One function rather than a formatter built at each use: folder names and
+    /// piece names have to agree, and they had already started drifting.
+    static func stamp(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HHmm"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone.current
+        return f.string(from: date)
+    }
+
+    /// Folder name for a drawing: its title, then when it was started.
+    ///
+    /// The date is there because the title very often is not distinguishing. SAI
+    /// calls every new document NewCanvas1, so a week of sketching produced
+    /// "NewCanvas1", "NewCanvas1 2", "NewCanvas1 3" — names that say only which
+    /// order they happened to be filed in. "NewCanvas1 2026-07-30 1357" says
+    /// which drawing it is.
+    ///
+    /// Title first so a folder listing groups a drawing's own name together, and
+    /// numbering still resolves the remaining case of two drawings with one title
+    /// started in the same minute.
+    static func folderName(title: String, startedAt: Date, taken: Set<String>) -> String {
+        let base = folderStem(title: title)
+        let stem = "\(base) \(stamp(startedAt))"
+        guard taken.contains(stem) else { return stem }
+        var n = 2
+        while taken.contains("\(stem) \(n)") { n += 1 }
+        return "\(stem) \(n)"
+    }
+
+    /// The title part of a folder name, cleaned for the filesystem.
+    static func folderStem(title: String) -> String {
         let bad = CharacterSet(charactersIn: "/\\:?%*|\"<>")
         var stem = title.components(separatedBy: bad).joined()
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -388,20 +424,13 @@ extension LibraryCore {
         if stem.trimmingCharacters(in: CharacterSet(charactersIn: ".")).isEmpty { stem = "" }
         if stem.isEmpty { stem = "Drawing" }
         if stem.count > 60 { stem = String(stem.prefix(60)).trimmingCharacters(in: .whitespaces) }
-        guard taken.contains(stem) else { return stem }
-        var n = 2
-        while taken.contains("\(stem) \(n)") { n += 1 }
-        return "\(stem) \(n)"
+        return stem
     }
 
     /// File name for one session's piece. Sorts chronologically as text, which
     /// is what a file browser and the rebuild both want.
     static func pieceName(startedAt: Date) -> String {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd HHmm"
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = TimeZone.current
-        return "\(f.string(from: startedAt)).mp4"
+        "\(stamp(startedAt)).mp4"
     }
 
     /// Make a piece name unique inside its folder. A second session inside the
@@ -430,7 +459,8 @@ extension Library {
 
     mutating func addDrawing(title: String, path: String?, piece: Piece) -> String {
         let id = Library.newId(startedAt: piece.startedAt, salt: drawings.count)
-        let folder = LibraryCore.folderName(title: title, taken: Set(drawings.map(\.folder)))
+        let folder = LibraryCore.folderName(title: title, startedAt: piece.startedAt,
+                                            taken: Set(drawings.map(\.folder)))
         drawings.append(Drawing(id: id, title: title, folder: folder, path: path, pieces: [piece]))
         return id
     }
