@@ -5,6 +5,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-07-30
+
+### Changed
+- **A drawing's folder is named for when it was started** — `NewCanvas1 2026-07-30 1357` rather than
+  `NewCanvas1`. SAI calls every new document NewCanvas1, so a week of sketching produced
+  `NewCanvas1`, `NewCanvas1 2`, `NewCanvas1 3`: names that said only what order they happened to be
+  filed in.
+- **A drawing's name follows the canvas.** Save an untitled drawing and SAI stops calling it
+  NewCanvas1; the library used to go on doing so forever. It now takes the newer name as its label,
+  while the folder keeps the name it was created with. (Saving has never created a *second* drawing —
+  identity is decided by what the canvas looks like, not by its name — and there is now a test saying
+  so.)
+
+### Internal
+- `main.swift` was 4,607 lines covering settings, Wine setup, licences, SAI process control, the
+  event tap and every tab. It is 2,515 now, with ten files beside it, moved verbatim.
+- What each binary is built from lives in one manifest per binary instead of being written out in
+  three places, which is what turned CI red on the 0.3.0 tag. The test checks the manifest against
+  what is on disk in both directions.
+- The session sidecar — a wire format between two processes — had two definitions. It has one.
+
+
 ## [0.3.1] — 2026-07-29
 
 ### Fixed
