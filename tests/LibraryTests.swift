@@ -383,22 +383,39 @@ do {
 // MARK: - naming
 
 do {
-    expect(LibraryCore.folderName(title: "Sketch", taken: []) == "Sketch",
-           "naming: a plain title is its own folder")
-    expect(!LibraryCore.folderName(title: "a/b:c", taken: []).contains("/"),
+    let t0 = Date(timeIntervalSince1970: 1_750_000_000)
+    let t1 = t0.addingTimeInterval(86_400)
+    expect(LibraryCore.folderName(title: "Sketch", startedAt: t0, taken: []).hasPrefix("Sketch "),
+           "naming: a folder keeps the drawing's title")
+    // The date is the point: SAI calls every new document NewCanvas1, so a week
+    // of sketching used to produce NewCanvas1, NewCanvas1 2, NewCanvas1 3 —
+    // names that say only what order they were filed in.
+    expect(LibraryCore.folderName(title: "Sketch", startedAt: t0, taken: [])
+           == "Sketch " + LibraryCore.stamp(t0),
+           "naming: and says when it was started")
+    expect(LibraryCore.folderName(title: "NewCanvas1", startedAt: t0, taken: [])
+           != LibraryCore.folderName(title: "NewCanvas1", startedAt: t1, taken: []),
+           "naming: two drawings with SAI's default name are told apart by date")
+    expect(!LibraryCore.folderName(title: "a/b:c", startedAt: t0, taken: []).contains("/"),
            "naming: path separators are stripped")
-    expect(LibraryCore.folderName(title: "   ", taken: []) == "Drawing",
+    expect(LibraryCore.folderName(title: "   ", startedAt: t0, taken: []).hasPrefix("Drawing "),
            "naming: an empty title falls back")
-    expect(LibraryCore.folderName(title: "..", taken: []) == "Drawing",
+    expect(LibraryCore.folderName(title: "..", startedAt: t0, taken: []).hasPrefix("Drawing "),
            "naming: a name of only dots does not become a directory traversal")
 
     // THE TRAP: two drawings in one folder would interleave their pieces and
-    // rebuild into a single video containing both. Remove the uniquing and this
-    // goes red.
-    expect(LibraryCore.folderName(title: "Sketch", taken: ["Sketch"]) == "Sketch 2",
-           "naming: a second drawing with the same title gets its own folder")
-    expect(LibraryCore.folderName(title: "Sketch", taken: ["Sketch", "Sketch 2"]) == "Sketch 3",
-           "naming: and a third")
+    // rebuild into a single video containing both. Two drawings of the same name
+    // started in the same MINUTE is the case the date cannot separate, so the
+    // numbering still has to be there.
+    let same = "Sketch " + LibraryCore.stamp(t0)
+    expect(LibraryCore.folderName(title: "Sketch", startedAt: t0, taken: [same]) == same + " 2",
+           "naming: two drawings named alike in one minute still get separate folders")
+    expect(LibraryCore.folderName(title: "Sketch", startedAt: t0, taken: [same, same + " 2"])
+           == same + " 3", "naming: and a third")
+    // Folder names and piece names must agree about how a date is written; they
+    // had already started drifting when each built its own formatter.
+    expect(LibraryCore.pieceName(startedAt: t0) == LibraryCore.stamp(t0) + ".mp4",
+           "naming: a piece is named with the same stamp as a folder")
 
     let t = Date(timeIntervalSince1970: 1_750_000_000)
     let name = LibraryCore.pieceName(startedAt: t)

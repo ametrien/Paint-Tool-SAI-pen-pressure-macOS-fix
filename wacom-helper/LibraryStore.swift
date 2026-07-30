@@ -193,6 +193,17 @@ final class LibraryStore {
                     taken: Set(lib.drawing(id: id)?.pieces.map(\.file) ?? []))
                 var p = piece; p.file = filedName
                 lib.attach(p, to: id)
+                // Follow the canvas's current name. Save an untitled drawing and
+                // SAI stops calling it NewCanvas1 — the drawing is the same one,
+                // so it should stop being LABELLED NewCanvas1 too. Only a real
+                // name replaces the old one: SAI's own default is not an
+                // improvement on whatever is there, and the folder keeps the name
+                // it was created with either way, so nothing moves on disk.
+                if !side.title.isEmpty, !LibraryCore.isDefaultTitle(side.title),
+                   let i = lib.drawings.firstIndex(where: { $0.id == id }),
+                   lib.drawings[i].title != side.title {
+                    lib.drawings[i].title = side.title
+                }
                 target = id
             case .new, .ask:
                 // A drawing of its own, in a folder of its own — nothing to
