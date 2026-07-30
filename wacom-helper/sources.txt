@@ -13,6 +13,7 @@ wacom-helper/Settings.swift
 wacom-helper/SAIProcess.swift
 wacom-helper/Setup.swift
 wacom-helper/Licence.swift
+wacom-helper/SetupUI.swift
 wacom-helper/Diagnostics.swift
 wacom-helper/MenuBar.swift
 wacom-helper/Updates.swift
