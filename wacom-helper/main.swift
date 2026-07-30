@@ -1633,92 +1633,13 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
 
     var statusItem: NSStatusItem?
 
-    // REBUILT FROM SCRATCH (issue #14). The previous version accumulated
-    // attempted fixes — autosaveName, an explicit isVisible, a symbol
-    // configuration — none of which helped, and each of which was one more
-    // difference from the thing that demonstrably works.
-    //
-    // A minimal test app on this same machine places its item correctly at
-    // x≈863, while ours landed at x=1321, underneath the system clock. Five
-    // theories were tested and disproven (dark emoji glyph, missing
-    // autosaveName, ad-hoc signing, a full menu bar — 125pt free against 31pt
-    // needed — and a stale persisted position). So rather than add a sixth,
-    // this is deliberately reduced to exactly what the working control app did:
-    // create, set an image, attach a menu, retain. Nothing else.
-    func setUpStatusItem() {
-        let si = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
-        // Template image, not the old "🖊": U+1F58A is a dark-grey COLOUR glyph
-        // that can't adapt to the menu bar, and was near-invisible in dark mode.
-        // AppKit recolours a template for both appearances.
-        if let pen = NSImage(systemSymbolName: "applepencil", accessibilityDescription: "SAI Pen Pressure") {
-            pen.isTemplate = true
-            si.button?.image = pen
-        } else {
-            si.button?.title = "✏️"        // high-contrast fallback, older macOS
-        }
-        si.button?.toolTip = "SAI Pen Pressure"
-        si.menu = makeMenu()
-        statusItem = si
 
-        // Report where macOS actually put it. Kept because this bug is invisible
-        // from the outside — the item reports itself as visible either way, and
-        // only the frame distinguishes "shown" from "parked under the clock".
-        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak si] in
-            guard let si = si else { wlog("statusItem: DEALLOCATED"); return }
-            let f = si.button?.window?.frame
-            let x = f?.origin.x ?? -1
-            wlog("statusItem: visible=\(si.isVisible) frame=\(f.map { "\($0)" } ?? "nil") -> \(x > 1200 ? "BAD (parked far right, likely hidden)" : "looks placed")")
-        }
-    }
-
-    /// Rebuild both menus after something that changes their contents (dev mode).
-    func rebuildMenus() { statusItem?.menu = makeMenu() }
-
-    /// One menu definition shared by the 🖊 menu-bar item and the right-click
-    /// Dock menu, so the two can't drift apart.
-    func makeMenu() -> NSMenu {
-        let menu = NSMenu()
-        func add(_ title: String, _ sel: Selector, state: NSControl.StateValue? = nil, indent: Int = 0) {
-            let it = NSMenuItem(title: title, action: sel, keyEquivalent: "")
-            it.target = self
-            it.indentationLevel = indent
-            if let s = state { it.state = s }
-            menu.addItem(it)
-        }
-        // Kept deliberately short. Everything else lives in the Setup, Pen,
-        // Recording and Developer tabs, and duplicating it here just made a menu
-        // nobody could scan. What survives is what you want WITHOUT opening the
-        // window: unstick SAI, see at a glance whether recording is on, and get
-        // to the window itself.
-        add("Wake SAI window (if stuck)   ⌃⌥⌘Space", #selector(wakeSAI))
-        menu.addItem(.separator())
-        let frames = timelapseFrameCount()
-        add(timelapseOn ? "Recording timelapse" : "Timelapse recording is off",
-            #selector(toggleTimelapse(_:)), state: timelapseOn ? .on : .off)
-        if frames > 0 {
-            add("Make video from \(frames) frame\(frames == 1 ? "" : "s")…",
-                #selector(makeTimelapseVideo), indent: 1)
-        }
-        menu.addItem(.separator())
-        add("Open Setup window", #selector(showSetupWindow))
-        menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
-        return menu
-    }
 
     @objc func reinstallTapped() { showSetupWindow(); reinstallMenu() }
     @objc func licenseTapped()   { showSetupWindow(); chooseLicense() }
 
-    @objc func showSetupWindow() {
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-    }
 
-    // Right-click on our Dock icon. Left-click focuses SAI; the useful actions —
-    // including the Developer-mode toggle — live here, which is the second place
-    // (besides the menu-bar item) you can reach them.
-    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? { makeMenu() }
 
 
     func applicationDidBecomeActive(_ note: Notification) { refresh() }   // re-check when refocused
@@ -1731,68 +1652,10 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     var latestNotes: String = ""
     let repoSlug = "ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix"
 
-    func currentVersion() -> String {
-        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0.0.0"
-    }
 
-    /// true if a > b, comparing dotted numeric versions ("0.1.4" > "0.1.3")
-    func isNewer(_ a: String, than b: String) -> Bool {
-        func parts(_ s: String) -> [Int] {
-            s.trimmingCharacters(in: CharacterSet(charactersIn: "vV ")).split(separator: ".").map { Int($0.prefix(while: \.isNumber)) ?? 0 }
-        }
-        let x = parts(a), y = parts(b)
-        for i in 0..<max(x.count, y.count) {
-            let l = i < x.count ? x[i] : 0, r = i < y.count ? y[i] : 0
-            if l != r { return l > r }
-        }
-        return false
-    }
 
-    // Ask GitHub for the newest release. Read-only, anonymous, ~1 request per
-    // launch; silently does nothing if offline.
-    func checkForUpdates() {
-        guard let url = URL(string: "https://api.github.com/repos/\(repoSlug)/releases/latest") else { return }
-        var req = URLRequest(url: url)
-        req.timeoutInterval = 8
-        req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
-            guard let self = self, let d = data,
-                  let j = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any],
-                  let tag = j["tag_name"] as? String else { return }
-            let notes = (j["body"] as? String) ?? ""
-            DispatchQueue.main.async { self.showUpdateStatus(tag: tag, notes: notes) }
-        }.resume()
-    }
 
-    func showUpdateStatus(tag: String, notes: String) {
-        latestTag = tag; latestNotes = notes
-        guard updateLabel != nil else { return }
-        if isNewer(tag, than: currentVersion()) {
-            // Keep the label SHORT — a release-notes teaser here overflowed the
-            // row. The first meaningful line goes in the tooltip instead (with
-            // markdown markers stripped); full notes are behind the button.
-            let first = notes.split(separator: "\n")
-                .map { $0.trimmingCharacters(in: .whitespaces) }
-                .first { !$0.isEmpty && !$0.hasPrefix("#") && !$0.hasPrefix(">") } ?? ""
-            let teaser = first.replacingOccurrences(of: "**", with: "")
-                .replacingOccurrences(of: "`", with: "")
-            updateLabel.stringValue = "· Update available: \(tag)"
-            updateLabel.toolTip = teaser.isEmpty ? nil : teaser
-            updateLabel.textColor = .controlAccentColor
-            updateBtn.isHidden = false
-        } else {
-            updateLabel.stringValue = "· up to date"
-            updateLabel.toolTip = nil
-            updateLabel.textColor = .tertiaryLabelColor
-            updateBtn.isHidden = true
-        }
-    }
 
-    @objc func openReleasePage() {
-        let s = latestTag.map { "https://github.com/\(repoSlug)/releases/tag/\($0)" }
-            ?? "https://github.com/\(repoSlug)/releases/latest"
-        if let u = URL(string: s) { NSWorkspace.shared.open(u) }
-    }
 
     // The process that owns SAI's on-screen window (see saiWindowOwnerPID).
     func saiTarget() -> NSRunningApplication? {
