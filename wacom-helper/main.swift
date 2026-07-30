@@ -461,7 +461,7 @@ if let dir = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_LIBRARY"] {
         print("confirmed same -> \(store.lib.drawing(id: p.candidateId)?.folder ?? "?")")
     }
     for d in store.lib.drawings.sorted(by: { $0.folder < $1.folder }) {
-        print("drawing \(d.folder): \(d.ordered.map(\.file).joined(separator: ", "))")
+        print("drawing \(d.folder) [\(d.title)]: \(d.ordered.map(\.file).joined(separator: ", "))")
     }
     exit(0)
 }

@@ -322,7 +322,7 @@ out=$(file_them)
 echo "$out" | grep -q "filed 2026-07-27 2015.mp4 -> Sketch" \
   && echo "  ok   filing: a new drawing gets its own folder" \
   || { echo "  FAIL filing: $out"; lib_fail=1; }
-[ -f "$LIB/Sketch/pieces/2026-07-27 2015.mp4" ] \
+[ -f "$LIB/Sketch $(TZ=UTC date -r 1785103200 '+%Y-%m-%d %H%M' 2>/dev/null)/pieces/2026-07-27 2015.mp4" ] || [ -n "$(find "$LIB" -path '*/pieces/2026-07-27 2015.mp4')" ] \
   && echo "  ok   filing: the session lands in that drawing's pieces folder" \
   || { echo "  FAIL filing: piece not moved: $(find "$LIB" -name '*.mp4')"; lib_fail=1; }
 [ -f "$LIB/.recording/session 2026-07-27 2015.mp4" ] \
@@ -340,9 +340,20 @@ out=$(file_them)
 echo "$out" | grep -q "filed 2026-07-28 1903.mp4 -> Sketch" \
   && echo "  ok   filing: a renamed canvas rejoins the same drawing" \
   || { echo "  FAIL filing: $out"; lib_fail=1; }
-echo "$out" | grep -q "drawing Sketch: 2026-07-27 2015.mp4, 2026-07-28 1903.mp4" \
+echo "$out" | grep -q "2026-07-27 2015.mp4, 2026-07-28 1903.mp4" \
   && echo "  ok   filing: both evenings are in it, in the order drawn" \
   || { echo "  FAIL filing: $out"; lib_fail=1; }
+
+# Saving an untitled drawing renames the canvas. It is the same drawing, so it
+# must stay ONE folder — and stop being labelled with SAI's default name, which
+# is what the folder was created with. The folder never changes (files would have
+# to move); the label follows the canvas.
+echo "$out" | grep -qE "^drawing Sketch [0-9-]+ [0-9]+ .final v2.:" \
+  && echo "  ok   filing: a renamed canvas relabels its drawing instead of adding one" \
+  || { echo "  FAIL filing: label not updated: $out"; lib_fail=1; }
+[ "$(echo "$out" | grep -c '^drawing ')" = "1" ] \
+  && echo "  ok   filing: and there is still exactly one drawing" \
+  || { echo "  FAIL filing: more than one drawing after a rename: $out"; lib_fail=1; }
 
 # A genuinely different drawing must NOT be swept into it.
 mksession "session 2026-07-29 1000" "Portrait" "2026-07-29T10:00:00Z" 91 5 40
@@ -362,7 +373,7 @@ out=$(file_them)
 echo "$out" | grep -q "ask:Sketch" \
   && echo "  ok   filing: a plausible continuation asks instead of merging" \
   || { echo "  FAIL filing: expected a question, got: $out"; lib_fail=1; }
-echo "$out" | grep -q "drawing Sketch: 2026-07-27 2015.mp4, 2026-07-28 1903.mp4$" \
+echo "$out" | grep -qE ": 2026-07-27 2015.mp4, 2026-07-28 1903.mp4$" \
   && echo "  ok   filing: and is NOT quietly added to the drawing it might belong to" \
   || { echo "  FAIL filing: the pending session was merged anyway: $out"; lib_fail=1; }
 
@@ -371,7 +382,7 @@ out=$(file_them env SAIPP_SELFTEST_CONFIRM=same)
 echo "$out" | grep -q "confirmed same -> Sketch" \
   && echo "  ok   confirm: answering yes moves the session into the drawing" \
   || { echo "  FAIL confirm: $out"; lib_fail=1; }
-[ -f "$LIB/Sketch/pieces/2026-07-30 2100.mp4" ] \
+[ -n "$(find "$LIB" -path '*/pieces/2026-07-30 2100.mp4')" ] \
   && echo "  ok   confirm: and the file itself moves with it" \
   || { echo "  FAIL confirm: file not moved: $(find "$LIB" -name '2026-07-30*')"; lib_fail=1; }
 [ "$(find "$LIB" -name '2026-07-30 2100.mp4' | wc -l | tr -d ' ')" = "1" ] \
@@ -434,7 +445,7 @@ echo "$out2" | grep -qE "^drawing [^:]+: .*, .*" \
   && echo "  ok   end-to-end: the second evening joined the first drawing" \
   || { echo "  FAIL end-to-end: two separate drawings:"; echo "$out2"; e2e_fail=1; }
 
-folder=$(echo "$out2" | sed -n 's/^drawing \([^:]*\):.*/\1/p' | head -1)
+folder=$(echo "$out2" | sed -n 's/^drawing \(.*\) \[.*/\1/p' | head -1)
 count=$(ls "$E2E/videos/$folder/pieces"/*.mp4 2>/dev/null | wc -l | tr -d ' ')
 [ "$count" = "2" ] && echo "  ok   end-to-end: both sessions are on disk as pieces" \
   || { echo "  FAIL end-to-end: $count piece(s) in $folder"; e2e_fail=1; }
@@ -669,10 +680,10 @@ echo "$out" | grep -q "recovered from a broken index" \
   || { echo "  FAIL broken: $out"; brk_fail=1; }
 # THE TRAP: delete the recovery and both of these go red — the drawings vanish
 # while their videos sit there ungrouped.
-echo "$out" | grep -q "drawing Sketch: 2026-07-27 2015.mp4, 2026-07-28 1903.mp4" \
+echo "$out" | grep -q "2026-07-27 2015.mp4, 2026-07-28 1903.mp4" \
   && echo "  ok   broken: a drawing's sessions are recovered from its folder" \
   || { echo "  FAIL broken: Sketch not recovered: $out"; brk_fail=1; }
-echo "$out" | grep -q "drawing Portrait: 2026-07-29 1000.mp4" \
+echo "$out" | grep -q "drawing Portrait [[]Portrait[]]: 2026-07-29 1000.mp4" \
   && echo "  ok   broken: and so is every other drawing" \
   || { echo "  FAIL broken: Portrait not recovered"; brk_fail=1; }
 # The unreadable file is evidence: never quietly replaced.
