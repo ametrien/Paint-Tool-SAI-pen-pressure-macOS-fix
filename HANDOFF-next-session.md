@@ -82,6 +82,38 @@ Input Monitoring, the Wacom driver, Bluetooth pairing, the `wintab32` DLL overri
 
 ---
 
+## Where the code lives
+
+`wacom-helper/main.swift` was one 4,600-line file holding settings, Wine setup,
+licences, SAI process control, the event tap and every tab. It is 2,515 lines now
+and holds only what it must: the top-level statements that run **in written
+order**, the globals they initialise, the self-test hooks, the event tap, and the
+window that ties the tabs together.
+
+| file | what it holds |
+|---|---|
+| `main.swift` | startup order, globals, self-test hooks, the CGEventTap, the window |
+| `Settings.swift` | everything remembered between launches (`SAIPP_CONFIG_DIR` redirects it all) |
+| `Licence.swift` | the `.slc`: stash, adopt, install, restore — the one file a user cannot recreate |
+| `Setup.swift` | prefix install/repair/update, `stopWineForPrefix`, DLL sync |
+| `SAIProcess.swift` | launching SAI, noticing it open/close, the recording lifecycle |
+| `SetupUI.swift` | the Setup tab and first-run flow, including `performUninstall` |
+| `RecordingUI.swift` / `RecordingActions.swift` | the Recording tab, and its buttons |
+| `LibraryUI.swift` / `LibraryStore.swift` | the Videos tab, and the filing beneath it |
+| `Diagnostics.swift` | the Developer tab: logs, health report, pressure recorder |
+| `MenuBar.swift`, `Updates.swift` | the menu-bar item; the update check |
+| `../timelapse-encoder/LibraryCore.swift` | shared with the encoder — one definition of the fingerprint, the identity ladder and the session sidecar |
+
+**Swift only allows top-level statements in `main.swift`.** Functions and types
+move freely; a global moved out becomes lazily initialised instead of running in
+sequence, which is why the globals stayed put and went last.
+
+**What each binary is built from lives in `wacom-helper/sources.txt` and
+`timelapse-encoder/sources.txt`**, read by `make-app.sh`, `tests/run-tests.sh` and
+CI through `tools/sources.sh`. That list used to be written out in three places
+and a release went red when two of them disagreed; `run-tests.sh` now checks the
+manifest against what is on disk in both directions.
+
 ## Architecture
 
 ```
