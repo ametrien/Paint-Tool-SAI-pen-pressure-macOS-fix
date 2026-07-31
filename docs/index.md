@@ -21,8 +21,9 @@ This project is that translator.
 - [**How it works**](how-it-works.md) — the architecture, and the file-layout question that trips up nearly everyone.
 - [**Engineering notes**](notes.md) — decisions, mistakes, and the reasoning behind both.
 
-New in v0.2.0: [**canvas timelapse recording**](#canvas-timelapse) — one frame per brush stroke,
-reading the canvas itself rather than the screen.
+New in v0.3: [**canvas timelapse recording**](#canvas-timelapse) that spans sessions — a drawing you
+come back to over several evenings becomes **one video**, recognised by what the canvas looks like
+rather than by its name.
 
 ## What you need
 
@@ -58,7 +59,7 @@ That is what most people have done, and it works. It is also heavy for what you 
 | Your tablet | forwarded over virtual USB into the guest | stays on macOS, using the driver you already installed |
 | Pen pressure | depends on USB passthrough and the guest's tablet driver | read natively on macOS and handed to SAI |
 | Starting SAI | boot the VM, wait, then launch SAI | double-click |
-| Timelapse of your drawing | screen-record the VM window, panels, cursor and all | **built in** — records the canvas itself |
+| Timelapse of your drawing | screen-record the VM window, panels, cursor and all | **built in** — records the canvas itself, and joins up the evenings you spend on one picture |
 
 To be straight about that first row: **SAI itself is commercial software either way.** You need a
 licence from SYSTEMAX to *save* your work, whichever route you take — and you can draw, and test
@@ -88,7 +89,7 @@ and a pen that behaves like a pen.
 
 ## Canvas timelapse
 
-*Requires v0.2.0 or later. macOS only — on Windows or Linux use
+*Requires v0.3.0 or later for drawings that span sessions. macOS only — on Windows or Linux use
 [art-timelapse](https://github.com/cromachina/art-timelapse), which is where this idea came from.*
 
 <p align="center">
@@ -105,15 +106,44 @@ reads SAI's canvas directly out of memory — so the video shows the flat artwor
 cursor, and no camera movement when you zoom, pan or rotate while working. Because what is
 recorded is the *composited* canvas, layer opacity and blend modes appear exactly as you see them.
 
-Draw, quit SAI, then press **Make video…** on the Recording tab. Videos land in
-`~/Movies/SAI Timelapses`.
+Just draw. Closing SAI makes the video by itself; there is a **Make video…** button on the Recording
+tab if you want one early. Videos land in `~/Movies/SAI Timelapses`, one folder per drawing.
+
+### A drawing over several evenings is one video
+
+Reopen a picture tomorrow and tonight's recording is added to the same video rather than becoming an
+unrelated clip named after a date.
+
+The hard part is knowing it *is* the same picture. Inside one session SAI identifies a canvas by its
+address in memory, which is exact and completely useless once SAI quits. Titles are no better:
+rename a canvas and it looks like a new drawing, and every unsaved document in SAI is called
+`NewCanvas1`, so two brand-new pictures are indistinguishable on the day it matters most.
+
+What survives all of that is what the drawing *looks like* — you reopened it because it is the
+picture you left. So a small fingerprint of the canvas is compared against where each drawing was
+last left. Rename it, move the file, Save As: it still knows.
+
+When the evidence is strong it files the session automatically. When it is merely plausible — you
+worked on the picture somewhere else in between, say — it keeps the session as its own drawing and
+**asks**, showing both stills side by side, because a wrong merge welds two drawings into one video
+and a wrong split only leaves two rows in a list. Saying no is remembered, and ignoring the question
+is fine: the video exists either way.
+
+### The Videos tab
+
+Your drawings, with a still from each — hover one to play it in place. From there you can play,
+export, rebuild, rename, and take a session out of a drawing it was filed into wrongly. Videos
+recorded before this all existed are listed alongside.
 
 A few things worth knowing before you rely on it:
 
-- **Several open canvases are recorded separately** — one video each. They are tracked by identity
-  rather than by name, so renaming a canvas mid-session relabels its video instead of splitting it.
-- **Video length is a duration, not a frame rate.** Frames are captured per stroke, so asking for
-  "1 minute" drops frames evenly to reach it. The default keeps everything.
+- **Several open canvases are recorded separately** — one video each, tracked by identity rather than
+  by name, so renaming a canvas mid-session relabels its video instead of splitting it.
+- **Each session is kept as its own file** and the combined video is rebuilt from those, so nothing
+  already recorded is ever rewritten. A failure can cost the session that failed, never the evenings
+  before it.
+- **Length is chosen when you export**, not while recording. Your drawing keeps its full-length
+  video and a capped copy is a separate file, so asking for 30 seconds twice never compounds.
 - **Undo is captured at your next stroke**, not the moment you press it.
 - **Frames are large** while a session is in progress. Past 2 GB every second frame is dropped,
   which halves the size while still spanning the whole session rather than losing its beginning.
