@@ -49,7 +49,7 @@ mostly there to make the fiddly parts unfiddly.
 
 ## Recording the canvas
 
-*Requires v0.2.0 or later.*
+*Requires v0.2.0 or later; sessions are joined into one video per drawing since v0.3.0.*
 
 The timelapse does not screen-record. It reads SAI's canvas out of SAI's own memory, which is why
 the video contains the artwork and nothing else — no panels, no cursor, and no camera movement when
@@ -70,6 +70,27 @@ The one cost of living inside SAI is that a bad pointer would take SAI down, alo
 So every read is checked against the memory map before it happens, the canvas structures are
 validated before anything inside them is followed, and a fault of any kind switches recording off for
 the session rather than trying again.
+
+### Knowing it is the same drawing tomorrow
+
+A canvas's identity inside a session is its address in SAI's memory — exact, and meaningless once
+SAI quits. So joining up sessions needs a different signal, and every obvious one fails: titles get
+renamed and default to `NewCanvas1` for every new document; the document's path would help but is
+not among the offsets we read; thousands of drawings are 1000×700.
+
+What survives is the picture. Each session records a 16×16 fingerprint of the canvas as it opened
+and as it closed, and a new session is compared against where each drawing was last left.
+
+The comparison is a **correlation**, not a difference, and that distinction is the whole trick. Two
+canvases one stroke old, marked in different places, differ by less than the same drawing does after
+an evening's work — because both are almost entirely blank paper. Measured on synthetic canvases:
+two unrelated beginnings sit 0.019 apart while a genuine continuation sits at 0.085. Correlation
+separates them cleanly: −0.03 against +0.80. A canvas with nothing on it correlates with nothing at
+all, which is what stops two blank documents being welded together.
+
+Merging happens only on strong evidence. Plausible evidence produces a question instead, and
+anything weaker starts a new drawing — because a wrong merge puts two people's evenings into one
+video, and a wrong split only makes a longer list.
 
 The offsets those structures live at are specific to each SAI build, and change with every release.
 They are recorded in a table, and there is a scanner in the repository that derives them from a
