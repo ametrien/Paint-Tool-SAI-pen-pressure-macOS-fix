@@ -3,7 +3,7 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.3.3] — 2026-09-10
 
 ### Fixed
 - **A prefix that Wine never loaded our DLL into now heals itself.** Installing `wintab32.dll` is

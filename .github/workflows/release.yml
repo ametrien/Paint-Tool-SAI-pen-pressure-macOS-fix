@@ -25,19 +25,34 @@ jobs:
         run: |
           cd dist
           ditto -c -k --keepParent "SAI Pen Pressure.app" "SAI-Pen-Pressure-${GITHUB_REF_NAME}.zip"
-          # safety: the zip must never contain a SAI license or executable
-          ! unzip -l "SAI-Pen-Pressure-${GITHUB_REF_NAME}.zip" | grep -iE "\.slc|\.exe"
+          # Safety: never ship a SAI license or a SAI binary. The ONE .exe we do
+          # ship is our own bridge probe, cross-built from wintab-src/wtprobe.c
+          # in this repo; a blanket "no .exe" would now reject every release.
+          BAD="$(unzip -l "SAI-Pen-Pressure-${GITHUB_REF_NAME}.zip" \
+                 | grep -iE "\.slc|\.exe" | grep -ivE "wtprobe\.exe" || true)"
+          if [ -n "$BAD" ]; then echo "unexpected payload in the zip:"; echo "$BAD"; exit 1; fi
+
+      - name: Build the .dmg (drag-to-Applications)
+        run: |
+          STAGE="dist/dmg"
+          rm -rf "$STAGE"; mkdir -p "$STAGE"
+          cp -R "dist/SAI Pen Pressure.app" "$STAGE/"
+          ln -s /Applications "$STAGE/Applications"
+          hdiutil create -volname "SAI Pen Pressure" -srcfolder "$STAGE" \
+            -ov -format UDZO "dist/SAI-Pen-Pressure-${GITHUB_REF_NAME}.dmg"
+          hdiutil verify "dist/SAI-Pen-Pressure-${GITHUB_REF_NAME}.dmg"
 
       - name: Create/refresh the GitHub Release with the zip
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ZIP="dist/SAI-Pen-Pressure-${GITHUB_REF_NAME}.zip"
+          DMG="dist/SAI-Pen-Pressure-${GITHUB_REF_NAME}.dmg"
           # One-line summary for the release = the annotated tag's message.
           # Cut releases with:  git tag -a vX.Y.Z -m "Short: what changed"
           SUMMARY="$(git tag -l --format='%(contents:subject)' "$GITHUB_REF_NAME")"
-          gh release create "$GITHUB_REF_NAME" --generate-notes "$ZIP" \
-            || gh release upload "$GITHUB_REF_NAME" "$ZIP" --clobber
+          gh release create "$GITHUB_REF_NAME" --generate-notes "$DMG" "$ZIP" \
+            || gh release upload "$GITHUB_REF_NAME" "$DMG" "$ZIP" --clobber
           # Prepend the summary sentence above the auto-generated notes.
           if [ -n "$SUMMARY" ]; then
             BODY="$(gh release view "$GITHUB_REF_NAME" --json body --jq .body)"
