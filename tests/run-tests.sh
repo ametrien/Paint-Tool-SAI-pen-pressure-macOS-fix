@@ -28,6 +28,14 @@ swiftc -o "$WORK/core-tests" "$REPO/wacom-helper/PressureCore.swift" "$REPO/test
 "$WORK/core-tests"
 
 echo ""
+echo "== Swift core (BridgeCheck.swift) =="
+# Is the bridge alive INSIDE SAI? Everything else the app checks is on the mac
+# side, and #29 was a prefix where all of that passed while Wine loaded its own
+# wintab32. The registry parse below is the check that would have caught it.
+swiftc -o "$WORK/bridge-tests" "$REPO/wacom-helper/BridgeCheck.swift" "$REPO/tests/BridgeTests.swift"
+"$WORK/bridge-tests"
+
+echo ""
 echo "== Swift core (EncoderCore.swift) =="
 swiftc -o "$WORK/encoder-tests" "$REPO/timelapse-encoder/EncoderCore.swift" "$REPO/tests/EncoderTests.swift"
 "$WORK/encoder-tests"
@@ -113,6 +121,82 @@ if [ -f "$D/obsolete.dll" ]; then echo "  FAIL update: a file removed upstream l
 else echo "  ok   update: a file removed upstream is gone"; fi
 [ "$fail" = 0 ] || exit 1
 echo "All SAI update tests passed."
+
+echo ""
+echo "== The bridge check tells the truth about a prefix (real filesystem) =="
+# The check that #29 was missing. Wine loads its OWN wintab32 unless the prefix
+# says otherwise, so "our DLL is in place" and "SAI will use our DLL" are two
+# different facts — and the app used to state only the first. Each case below is
+# a prefix shape a real user has been in, asserted against the same binary the
+# app ships. (Reuses the helper built for the update tests above.)
+BR="$WORK/bridge"; mkdir -p "$BR/prefix/drive_c"
+bridge() { SAI_PREFIX="$BR/prefix" SAIPP_CONFIG_DIR="$BR/cfg" SAIPP_SELFTEST_BRIDGE=1 "$WORK/helper-upd"; }
+bfail=0
+want() {  # name haystack needle
+  case "$2" in *"$3"*) echo "  ok   $1";; *) echo "  FAIL $1"; echo "$2" | sed 's/^/        /'; bfail=1;; esac
+}
+
+# A machine that has never been set up is not a broken machine. The first build
+# of this row told a fresh install its DLL "isn't the one shipped with this app",
+# which is both true and useless — nothing is installed yet.
+out=$(bridge)
+want "bridge: an empty prefix is pending, not faulty" "$out" "Installed with SAI when you press Launch"
+
+mkdir -p "$BR/prefix/drive_c/SAI2" "$BR/prefix/drive_c/windows/system32"
+printf 'EXE' > "$BR/prefix/drive_c/SAI2/sai2.exe"
+printf 'DLL' > "$BR/prefix/drive_c/windows/system32/wintab32.dll"
+out=$(bridge)
+want "bridge: SAI installed but no registry -> not installed" "$out" "installedOK=false"
+
+# The #29 shape: the file is there and correct, the registry sends Wine to its
+# own built-in DLL, and every other check in the app passes.
+cat > "$BR/prefix/user.reg" <<'REG'
+WINE REGISTRY Version 2
+
+[Software\\Wine\\DllOverrides] 1757000001
+"wintab32"="builtin,native"
+REG
+out=$(bridge)
+want "bridge: builtin-first override is reported as NOT installed" "$out" "installedOK=false"
+want "bridge: and says so in words the user can act on"           "$out" "OWN wintab32"
+
+sed -i '' 's/builtin,native/native,builtin/' "$BR/prefix/user.reg"
+out=$(bridge)
+want "bridge: repaired override reads as installed" "$out" "installedOK=true"
+case "$out" in
+  *saiRunning=false*) want "bridge: with nothing to report until SAI runs" "$out" "While SAI is running";;
+  *) echo "  skip bridge: 'nothing to report yet' (SAI is open on this machine)";;
+esac
+
+# What the DLL says from inside SAI once it IS running.
+printf 'v=1\nbuild=test build\nopen=1\nrecv=100\nposted=90\nfetched=88\npmax=4095\n' \
+  > "$BR/prefix/drive_c/wt_status.txt"
+out=$(bridge)
+want "bridge: a live status file is read as working" "$out" "verdict=working"
+want "bridge: and reports what SAI actually drew"    "$out" "88 points"
+
+# Loaded, but SAI was never told to use WinTab — a different fix entirely, and
+# one nobody could distinguish from the above before.
+printf 'v=1\nbuild=test build\nopen=0\nrecv=0\nposted=0\nfetched=0\npmax=1023\n' \
+  > "$BR/prefix/drive_c/wt_status.txt"
+out=$(bridge)
+want "bridge: loaded but no context is its own diagnosis" "$out" "verdict=noContext"
+want "bridge: which points at SAI's own setting"          "$out" "Use WinTab API"
+
+# A status file left over from yesterday must not read as a live bridge.
+# Two of these cases assume SAI is NOT on screen: with SAI up and the far side
+# silent the app is supposed to say so instead — that IS #29 — so they are
+# skipped rather than failed when the machine running the tests has SAI open.
+touch -t 202001010000 "$BR/prefix/drive_c/wt_status.txt"
+out=$(bridge)
+want "bridge: a stale status file is not evidence of a live bridge" "$out" "verdict=notLoaded"
+case "$out" in
+  *saiRunning=false*) want "bridge: it falls back to what can be checked without SAI" "$out" "While SAI is running";;
+  *) echo "  skip bridge: 'falls back without SAI' (SAI is open on this machine)";;
+esac
+
+[ "$bfail" = 0 ] || exit 1
+echo "All bridge check tests passed."
 
 echo ""
 echo "== Live encoding accumulates instead of overwriting =="

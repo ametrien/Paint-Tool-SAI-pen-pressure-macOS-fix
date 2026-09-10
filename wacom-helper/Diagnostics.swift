@@ -11,16 +11,75 @@ import Foundation
 
 extension SetupController {
 
-    func openPath(_ p: String, createIfMissing: Bool = false) {
+    /// A log that has not been written yet used to say only "Nothing there
+    /// yet: <path>". To someone already lost that reads as "this is broken",
+    /// which is the wrong turn the DLL log's empty case sent people down in
+    /// #29 — the true answer is always "this log appears once X has happened".
+    /// So the empty case says what the log is FOR and what makes it exist.
+    func openPath(_ p: String, createIfMissing: Bool = false,
+                  what: String = "", how: String = "") {
         if !FileManager.default.fileExists(atPath: p) {
-            guard createIfMissing else { alertUser("Nothing there yet:\n\n\(p)"); return }
+            guard createIfMissing else {
+                var msg = what.isEmpty ? "" : what + "\n\n"
+                msg += "There's nothing to open yet:\n\(p)"
+                if !how.isEmpty { msg += "\n\n" + how }
+                alertUser(msg)
+                return
+            }
             try? "".write(toFile: p, atomically: true, encoding: .utf8)
         }
         NSWorkspace.shared.open(URL(fileURLWithPath: p))
     }
-    @objc func openHelperLog() { openPath("\(appPrefix)/helper.log") }
-    @objc func openWakeLog()   { openPath("/tmp/sai-wake.log") }
-    @objc func openDLLLog()    { openPath("\(appPrefix)/drive_c/wtlog.txt") }
+
+    /// Only install.sh writes this file — it redirects the standalone helper
+    /// into the prefix. Inside the .app the pressure engine runs in THIS
+    /// process, so unless the prefix was built by the command-line install
+    /// there is no helper.log and never will be. Better to say that than to
+    /// leave a button that silently never works and let someone conclude the
+    /// mac side is dead.
+    @objc func openHelperLog() {
+        openPath("\(appPrefix)/helper.log",
+                 what: "The helper log is the MAC side of the bridge: what the tablet reported, and what was sent on towards SAI.",
+                 how: "Only the command-line install (install.sh) writes one — this app runs the helper inside itself instead. For the mac side here use Health check or Copy diagnostics; for what SAI actually received, use the DLL log.")
+    }
+
+    @objc func openWakeLog() {
+        openPath("/tmp/sai-wake.log",
+                 what: "The wake log records the attempts to un-stick SAI's window when Wine leaves it ignoring input (issue #2), and the bridge repairs done at launch.",
+                 how: "It is written while this app is running SAI — launch SAI and use it for a bit, then open this again. The per-second keepalive detail only appears when the app is started with WT_WAKELOG=1.")
+    }
+    /// The DLL writes a log ONLY when SAI was launched with logging switched on
+    /// — it is off by default because it flushes a line per pen packet. Saying
+    /// "Nothing there yet" without that context reads as "the DLL isn't even
+    /// running", which is the wrong conclusion to hand someone who is already
+    /// lost: it happened in #29. Offer the switch instead of the shrug.
+    @objc func openDLLLog() {
+        let path = "\(appPrefix)/drive_c/wtlog.txt"
+        if FileManager.default.fileExists(atPath: path) {
+            NSWorkspace.shared.open(URL(fileURLWithPath: path)); return
+        }
+        if dllLoggingEnabled() {
+            alertUser("The DLL log is the SAI side of the bridge: a line per pen packet, as our wintab32 saw it from inside SAI's own process.\n\nThere's nothing to open yet, but logging is already ON for the next launch — start SAI, draw a little, then open this again.")
+            return
+        }
+        let c = osa("button returned of (display dialog \"There's no DLL log yet.\n\nIt is the SAI side of the bridge: a line per pen packet, as our wintab32 saw it from inside SAI's own process. It is what to read when pressure reaches this app but not the canvas.\n\nThe DLL only writes one when SAI is launched with logging switched on, and that is off by default — a line per packet is a lot of disk.\n\nTurn it on for the next launch?\" buttons {\"Not now\", \"Turn on\"} default button \"Turn on\" with icon note)")
+        if c == "Turn on" {
+            setDLLLogging(true)
+            alertUser("Logging is on.\n\nQuit SAI if it's running, launch it again, draw a little — then open the DLL log.")
+        }
+    }
+
+    /// What the DLL last reported from inside SAI, in one line. This is the
+    /// line that was missing from every field report so far: everything else
+    /// people paste describes the mac side, which is rarely where it breaks.
+    func bridgeDiagnosticLine() -> String {
+        let (st, age) = bridgeStatus()
+        guard let st = st, let age = age else {
+            return "never seen — SAI has not loaded our DLL (or hasn't run since it was installed)"
+        }
+        let v = BridgeCheck.verdict(st, ageSeconds: age)
+        return "\(v) · \(Int(age))s ago · open=\(st.open) recv=\(st.recv) posted=\(st.posted) fetched=\(st.fetched) pmax=\(st.pmax) · built \(st.build)"
+    }
     @objc func revealPrefix() {
         NSWorkspace.shared.selectFile(prefixSAIExe, inFileViewerRootedAtPath: appPrefix)
     }
@@ -116,11 +175,19 @@ extension SetupController {
         }
 
         // --- registry
+        // Read from user.reg rather than asked of wine: instant, works with Wine
+        // missing, and it is the SAME read the launch path heals from — so this
+        // check can never disagree with what the app actually does.
+        check("Wine loads OUR wintab32 (DllOverrides)", bridgeOverrideInstalled(),
+              BridgeCheck.overrideValue(inUserReg: readUserReg() ?? "")
+                ?? "key not set — Wine loads its own wintab32, so SAI draws without pressure. Repair fixes it.")
+        // Not fatal: SAI is usually closed when someone runs a health check, and
+        // "we have never seen the far side" is not the same as "it is broken".
+        let (bst, bage) = bridgeStatus()
+        check("bridge seen alive inside SAI", BridgeCheck.verdict(bst, ageSeconds: bage) == .working,
+              bridgeDiagnosticLine(), fatal: false)
         if let w = wine {
             let env = ["WINEPREFIX": appPrefix, "WINEDEBUG": "-all"]
-            let ov = runCapture(w, ["reg", "query", "HKCU\\Software\\Wine\\DllOverrides", "/v", "wintab32"], env: env)
-            check("DllOverrides wintab32 = native,builtin", ov.contains("native,builtin"),
-                  ov.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "key not set" : "")
             let cmd = runCapture(w, ["reg", "query", "HKCU\\Software\\Wine\\Mac Driver", "/v", "LeftCommandIsCtrl"], env: env)
             check("Cmd→Ctrl remap (LeftCommandIsCtrl=Y)", cmd.uppercased().contains("Y"),
                   "", fatal: false)
@@ -251,7 +318,12 @@ extension SetupController {
             "sai2.exe in prefix: \(saiInstalledInPrefix())",
             "prefix stale: \(prefixIsStale())",
             "license: \(installedLicenseName() ?? "none")",
-            "wintab32.dll: \(fm.fileExists(atPath: "\(appPrefix)/drive_c/windows/system32/wintab32.dll"))",
+            // "the file is there" was the ONLY thing this used to say about the
+            // bridge, and #29 was a machine where the file was there, correct,
+            // and never loaded. The next two lines are the ones that answer it.
+            "wintab32.dll: \(fm.fileExists(atPath: "\(appPrefix)/drive_c/windows/system32/wintab32.dll")) (\(bridgeDLLMatchesApp() ? "matches this app" : "DIFFERENT from this app — Repair"))",
+            "DLL override: \(BridgeCheck.overrideValue(inUserReg: readUserReg() ?? "") ?? "MISSING — Wine loads its own wintab32")",
+            "bridge in SAI: \(bridgeDiagnosticLine())",
             "Input Monitoring: \(inputMonitoringGranted())",
             "auto-wake: \(autoWake)",
         ]

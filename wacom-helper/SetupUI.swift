@@ -583,6 +583,32 @@ extension SetupController {
     func markWineInstalledByUs() {
         try? "1".write(toFile: appSupport() + "/wine-ours.txt", atomically: true, encoding: .utf8)
     }
+    /// Put both halves of the bridge back: our DLL in the prefix, and the Wine
+    /// setting that makes SAI load it instead of Wine's own.
+    ///
+    /// Deliberately a plain button rather than another entry in the reinstall
+    /// menu. It writes only what is actually missing, takes a second, and keeps
+    /// SAI, the licence and every setting exactly where they are — so there is
+    /// nothing to warn about and no reason to make someone read a dialog first.
+    @objc func repairBridge() {
+        guard let wine = wineBin() else {
+            alertUser("Install Wine first — the bridge lives inside the Wine prefix."); return
+        }
+        let wasComplete = bridgeInstalledOK()
+        syncBridgeDLL()
+        let overrideRepaired = ensureBridgeOverride(wine)
+        refresh()
+        guard bridgeInstalledOK() else {
+            alertUser("Couldn't repair the bridge.\n\nTry Reinstall… → Repair, which rebuilds this part of the prefix from scratch.")
+            return
+        }
+        if wasComplete {
+            alertUser("The bridge was already complete — nothing needed fixing.\n\nIf pressure still doesn't reach SAI, launch SAI and read this row again: while SAI runs it shows what SAI is actually receiving.")
+        } else {
+            alertUser("Fixed.\n\n\(overrideRepaired ? "Wine had been loading its own wintab32; it now loads ours. " : "")Restart SAI for this to take effect.")
+        }
+    }
+
     func doReinstall(mode: SetupMode) {
         guard let wine = wineBin(), let src = savedSAIPath() else { refresh(); return }
         let wasRunning = running

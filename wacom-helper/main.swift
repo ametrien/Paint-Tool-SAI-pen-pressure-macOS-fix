@@ -298,6 +298,44 @@ if let src = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_UPDATE"] {
 /// view's documentView is laid out by constraints and it had been left on
 /// autoresizing translation. Nothing about the code reads as wrong; only the
 /// measured frames say so, which is exactly what this prints.
+/// Self-test hook for the bridge check (#29): print what the app would say
+/// about the prefix in SAI_PREFIX, and exit.
+///
+/// "Is the bridge installed?" became a question with consequences — a wrong yes
+/// sends someone off re-granting permissions and reinstalling their tablet
+/// driver while the actual fault sits in one registry line — so the answer is
+/// asserted against a real throwaway prefix rather than reasoned about. Inert
+/// without the environment variable.
+if let mode = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_BRIDGE"] {
+    // "repair" exercises the healing path itself against a real prefix — the
+    // half that unit tests cannot reach, because putting the key back needs
+    // wine. Run it with SAI CLOSED: wineserver rewrites user.reg when it exits
+    // and would undo the repair, which is the same reason the app repairs
+    // before launching rather than after.
+    if mode == "repair" {
+        print("before=\(BridgeCheck.overrideValue(inUserReg: readUserReg() ?? "") ?? "-")")
+        let repaired = ensureBridgeOverride(wineBin())
+        print("repaired=\(repaired)")
+        // Two answers on purpose. user.reg still names the OLD value for
+        // seconds after a repair that worked — wineserver flushes it on exit —
+        // so "after" asks wine, and "afterFile" is printed beside it to keep
+        // that lag visible rather than surprising. Believing the file here is
+        // exactly what made the app report a successful repair as a failure.
+        print("after=\(wineBin().flatMap { bridgeOverrideViaWine($0) } ?? "-")")
+        print("afterFile=\(BridgeCheck.overrideValue(inUserReg: readUserReg() ?? "") ?? "-")")
+        exit(bridgeOverrideInstalled() ? 0 : 1)
+    }
+    let (st, age) = bridgeStatus()
+    // Printed so the tests can skip the cases that assume SAI is closed rather
+    // than fail on a machine where it happens to be open.
+    print("saiRunning=\(saiRunningInWine())")
+    print("installedOK=\(bridgeInstalledOK())")
+    print("override=\(BridgeCheck.overrideValue(inUserReg: readUserReg() ?? "") ?? "-")")
+    print("verdict=\(BridgeCheck.verdict(st, ageSeconds: age))")
+    print("detail=\(bridgeDetailLine())")
+    exit(0)
+}
+
 /// Self-test hook for the uninstall: the most destructive path in the app.
 ///
 /// removeWine is ALWAYS false here. The real thing can move Wine Staging to the
@@ -1364,6 +1402,23 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
                 enabledIf: { wineBin() != nil && saiReady() },
                 blockedHint: "Needs Wine and a SAI folder first — SAI is installed INTO the Wine prefix.",
                 extraTitle: "Show ▸", extraAction: { [weak self] in self?.openSAIInWine() }),
+            // THE BRIDGE ITSELF — a file in the prefix and a Wine setting that
+            // decides whether that file is ever loaded. Both used to be assumed
+            // rather than shown, and #29 was a machine where the assumption was
+            // wrong: everything else on this checklist was green while SAI drew
+            // with the plain mouse. While SAI runs, the detail line stops being
+            // a check of our own files and becomes what the DLL reports from
+            // INSIDE SAI: whether SAI opened a tablet, whether our samples
+            // arrive, and whether SAI reads the packets we post.
+            Req(title: "Pressure bridge (what carries pressure into SAI)",
+                detail: "our wintab32.dll, plus the Wine setting that makes SAI load it",
+                fixTitle: "Repair…",
+                ok: { bridgeInstalledOK() },
+                fix: { [weak self] in self?.repairBridge() }, required: true,
+                dynamicDetail: { bridgeDetailLine() },
+                keepButton: true, keepButtonTitle: "Repair…",
+                enabledIf: { wineBin() != nil },
+                blockedHint: "Needs Wine first — the bridge is installed into the Wine prefix."),
             // Optional (⚪️ not ❌): SAI launches without a licence, you just
             // can't save. Lives next to the INSTALLED row because that's the
             // folder it has to land in.
@@ -2491,6 +2546,10 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
             // reaches the prefix if setup runs. Heal it here so the two halves
             // can never drift apart (issue #21).
             ensureBridgeUpToDate(wine)
+            // ...and the half of it that lives in the registry. Without this
+            // key Wine loads its OWN wintab32 and every line above is wasted
+            // work — a prefix in that state used to stay in it forever (#29).
+            ensureBridgeOverride(wine)
             let ok = ensureSetup(sai, wine)
             DispatchQueue.main.async {
                 guard ok else { self.subtitle.stringValue = "Setup failed. Re-check the SAI folder."; self.refresh(); return }
