@@ -330,6 +330,16 @@ if let mode = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_BRIDGE"] {
     // wine. Run it with SAI CLOSED: wineserver rewrites user.reg when it exits
     // and would undo the repair, which is the same reason the app repairs
     // before launching rather than after.
+    // "install" runs the whole bridge install and prints whether it worked.
+    // Point SAIPP_SELFTEST_WINE at something that isn't wine and it must answer
+    // false: before #34 there was no answer at all, which is how a prefix could
+    // come out of setup with no override and nobody any the wiser.
+    if mode == "install" {
+        let w = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_WINE"] ?? wineBin() ?? ""
+        print("installBridge=\(installBridge(w))")
+        print("override=\(BridgeCheck.overrideValue(inUserReg: readUserReg() ?? "") ?? "-")")
+        exit(0)
+    }
     if mode == "repair" {
         print("before=\(BridgeCheck.overrideValue(inUserReg: readUserReg() ?? "") ?? "-")")
         let repaired = ensureBridgeOverride(wineBin())

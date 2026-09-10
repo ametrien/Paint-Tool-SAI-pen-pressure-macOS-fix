@@ -53,16 +53,35 @@ func stopWineForPrefix(_ wine: String, timeout: Double = 10) -> Bool {
     if p.isRunning { p.terminate(); return false }
     return true
 }
-func installBridge(_ wine: String) {
-    let env = ["WINEPREFIX": appPrefix, "WINEDEBUG": "-all"]
-    if let res = Bundle.main.resourcePath {
+/// Install both halves of the bridge into the prefix: our DLL, and the registry
+/// override that decides whether Wine ever loads it.
+///
+/// Returns false when the prefix comes out of here WITHOUT a working bridge, so
+/// the caller can say so while the user is still standing in front of it.
+///
+/// It used to return nothing and check nothing. The `reg add` went out through
+/// `try? p.run()`: exit status unread, value never verified, not a line in any
+/// log. A write that failed was therefore undetectable by construction — and
+/// permanent, because performSetup(.ensure) returns early on every later launch
+/// once sai2.exe exists, so nothing revisited it. #29 was a prefix in exactly
+/// that state, and #34 is this. The override now goes through the SAME verified
+/// path the launch and the Repair button use, rather than a second, unchecked
+/// copy of the same command.
+@discardableResult
+func installBridge(_ wine: String) -> Bool {
+    var dllOK = true
+    if let res = Bundle.main.resourcePath, FileManager.default.fileExists(atPath: "\(res)/wintab32.dll") {
         let sys = "\(appPrefix)/drive_c/windows/system32"
         try? FileManager.default.createDirectory(atPath: sys, withIntermediateDirectories: true)
-        try? FileManager.default.removeItem(atPath: "\(sys)/wintab32.dll")
-        try? FileManager.default.copyItem(atPath: "\(res)/wintab32.dll", toPath: "\(sys)/wintab32.dll")
+        try? FileManager.default.removeItem(atPath: bridgeDLLPath())
+        try? FileManager.default.copyItem(atPath: "\(res)/wintab32.dll", toPath: bridgeDLLPath())
+        dllOK = bridgeDLLMatchesApp()
+        if !dllOK { wlog("bridge: copying wintab32.dll into the prefix FAILED") }
     }
-    runProc(wine, ["reg", "add", "HKCU\\Software\\Wine\\DllOverrides", "/v", "wintab32",
-                   "/t", "REG_SZ", "/d", "native,builtin", "/f"], env: env)
+    ensureBridgeOverride(wine)          // verifies through wine, and logs either way
+    let overrideOK = bridgeOverrideInstalled()
+    wlog("bridge: installed — dll=\(dllOK) override=\(overrideOK)")
+    return dllOK && overrideOK
 }
 // ---- the half of the bridge that lives in the Wine registry ---------------
 // Installing our wintab32.dll is only half the job: Wine prefers its OWN
@@ -536,9 +555,16 @@ func performSetup(_ saiSrc: String, _ wine: String, mode: SetupMode = .ensure, q
     }
 
     progress?(0.94, 1.00, "Installing the pressure bridge…", 2)
-    installBridge(wine)
+    let bridgeOK = installBridge(wine)
     restoreStashedLicenses()
     setInstalledSrcPath(saiSrc)          // the prefix now matches this source
+    // A bridge that didn't install is NOT a failed setup: SAI is in the prefix
+    // and runs, and every later launch tries the override again. But it is the
+    // difference between drawing with pressure and drawing without, so it is
+    // said out loud here rather than discovered a week later in an issue (#34).
+    if !bridgeOK && !quiet {
+        alertUser("SAI is installed, but the Wine setting that makes it load the pressure driver could not be written.\n\nPressure won't work until it is. Press Repair on the \"Pressure bridge\" row in the setup window — or just press Launch, which tries again every time.")
+    }
     return saiInstalledInPrefix()
 }
 /// What in the prefix's SAI folder belongs to the USER rather than to the
