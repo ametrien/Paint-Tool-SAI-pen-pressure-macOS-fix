@@ -55,9 +55,10 @@ Almost always the permission.
 
 ## Bluetooth: the tablet is connected, and macOS ignores it anyway
 
-Not this project's fault, and nothing here can fix it — the pen isn't reaching macOS at all, so
-there is nothing for us to pass on. It's worth a section because it looks exactly like a broken
-install, and because it happens now and then to a Wacom on Bluetooth in any app.
+I've seen this happen on a Mac with none of this installed, so it isn't ours and nothing here can
+fix it: the pen never reaches macOS in the first place, so there is nothing for us to pass on. It
+still earns a place on this page, because it is part of drawing on a Mac with a Wacom — and
+because from the outside it looks exactly like a broken install.
 
 **How to tell.** The tablet is paired and shown as connected, the Pen tab even names it
 (*"Intuos BT S connected"*), and still nothing happens: the cursor doesn't move and **Test pen**
