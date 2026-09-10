@@ -174,6 +174,28 @@ didn't work.
 
 ---
 
+## Something not working?
+
+First: **[Troubleshooting](https://ametrien.github.io/Paint-Tool-SAI-pen-pressure-macOS-fix/troubleshooting)**,
+organised by how to tell which problem you have. If pressure is the problem, the **Pen** tab's
+**Test pen** shows two bars: what the app sends, and what actually arrives on the other side,
+inside Wine, where SAI would read it. If the top one moves and the bottom stays flat, the app
+will tell you what to press.
+
+If that doesn't sort it, **[open an issue](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/new/choose)**
+and start it with **Copy problem report** on the Setup tab:
+
+<p align="center">
+  <img src="docs/assets/screenshots/setup.png" alt="The Setup tab, with the Copy problem report button next to Reset everything and Uninstall" width="88%">
+</p>
+
+That one button collects everything needed to help: your Mac and chip, macOS and Wine versions,
+your tablet and how it is connected, whether Wine is loading the pressure bridge or ignoring it,
+what SAI last received, and the recent log. Paste it into the issue and there is usually nothing
+else to gather.
+
+---
+
 ## Build from source (contributors)
 
 Only `wintab32.dll` is committed prebuilt (cross-compiling it needs mingw-w64). The Swift
