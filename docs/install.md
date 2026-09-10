@@ -24,10 +24,10 @@ Either works. The app handles the licence difference for you.
 
 ## 3. The app
 
-Download `SAI-Pen-Pressure-….zip` from the
+Download `SAI-Pen-Pressure-….dmg` from the
 [latest release](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/releases/latest),
-unzip, and **move it to /Applications** before granting permissions — the grant is matched by
-path.
+open it, and **drag the app to /Applications** before granting permissions — the grant is matched
+by path. (A `.zip` is published as well, if you'd rather have that.)
 
 First launch: **right-click → Open** (the one-time unsigned-developer bypass).
 
@@ -78,6 +78,36 @@ If the `.slc` is already sitting in your SAI folder, you don't need to do anythi
 or reinstall — and the *SAI license* row will say so.
 
 *This project cannot supply, generate or activate a licence.*
+
+## Updating to a new build
+
+The app notices a new release and says so at the bottom of the setup window, with a button to the
+notes — but it does not update itself. An app that replaces its own binary loses the Input
+Monitoring grant it was holding, silently, which is a worse first impression than a manual swap.
+
+The swap is short:
+
+1. **Quit the app** — and SAI, if it's running.
+2. Download the new `SAI-Pen-Pressure-….dmg` from the
+   [latest release](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/releases/latest),
+   open it, and **drag the app into /Applications**, replacing the old one. Keep the same path:
+   the permission is matched by it.
+3. **Right-click → Open** on the first launch, as with a fresh install.
+4. **Re-grant Input Monitoring** (see above). Every build is a different app as far as macOS is
+   concerned, so the old permission is dropped without a word. This is the step people miss, and
+   it looks exactly like the new version having broken pressure.
+
+**Nothing else needs doing, and nothing of yours is lost.** The Wine prefix (`~/SAI2-pressure`),
+the SAI installed inside it, your licence, brushes and preferences all live outside the app
+bundle and are not touched. There's no need to rebuild the prefix or to pick your SAI folder
+again.
+
+**Don't use Uninstall… to update.** That button removes the Wine prefix — which is where SAI
+itself is installed. It's for removing the installation, not for replacing the app.
+
+Upgrading is enough to pick up fixes that live deeper than the app: the bundled `wintab32.dll` is
+refreshed into the prefix on the next Launch, and since **v0.3.3** the Wine setting that decides
+whether SAI loads it is checked and repaired at the same moment. Neither needs a command from you.
 
 ---
 
