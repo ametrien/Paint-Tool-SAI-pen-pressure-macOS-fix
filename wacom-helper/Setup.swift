@@ -189,6 +189,130 @@ func bridgeStatus() -> (BridgeCheck.Status?, Double?) {
     return (st, mod.map { Date().timeIntervalSince($0) })
 }
 
+/// The bridge probe shipped in the bundle. nil in dev mode (running outside a
+/// .app), where there is nothing to run and the button says so.
+func bridgeProbePath() -> String? {
+    guard let res = Bundle.main.resourcePath else { return nil }
+    let p = "\(res)/wtprobe.exe"
+    return FileManager.default.fileExists(atPath: p) ? p : nil
+}
+
+/// Run wtprobe.exe under Wine and read back what the far side actually did.
+///
+/// This is the half the app could never see. Everything else it checks lives on
+/// the mac side; the probe is a real Windows process that loads wintab32.dll
+/// through the SAME registry override SAI's load goes through, so a prefix in
+/// the #29 state answers here exactly as it answers SAI — with SAI closed and
+/// nothing drawn.
+///
+/// Blocks for `seconds` while it listens. Call it off the main thread.
+func runBridgeProbe(_ wine: String, seconds: Int = 5) -> BridgeCheck.Probe? {
+    guard let exe = bridgeProbePath() else { return nil }
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: wine)
+    p.arguments = [exe, "\(seconds)"]
+    var e = ProcessInfo.processInfo.environment
+    e["WINEPREFIX"] = appPrefix; e["WINEDEBUG"] = "-all"
+    p.environment = e
+    let out = Pipe(); p.standardOutput = out; p.standardError = Pipe()
+    guard (try? p.run()) != nil else { return nil }
+    // Drain before waiting — see bridgeOverrideViaWine.
+    let data = out.fileHandleForReading.readDataToEndOfFile()
+    p.waitUntilExit()
+    // A non-zero exit is NOT a failure to report as such: the probe exits 5
+    // when it could not open a context, which is a finding, not an error. The
+    // output decides; parseProbe returns nil when there is no output to read.
+    return String(data: data, encoding: .utf8).flatMap { BridgeCheck.parseProbe($0) }
+}
+
+/// A probe kept running ALONGSIDE the pen test, so both halves of the bridge
+/// can be watched at the same moment.
+///
+/// One-shot answers were not enough: the question people actually have is
+/// "I can see it being sent — is it being received?", and two numbers taken a
+/// minute apart do not answer it. With this the Pen tab shows the value going
+/// out and the value arriving inside Wine side by side, from the same stroke.
+final class BridgeProbeStream {
+    private var proc: Process?
+    private var tail = ""            // partial line left over from the last read
+    private var header = ""          // the key-per-line preamble, before ticks start
+    private var toldVerdict = false
+
+    /// Both are called on the main queue.
+    var onTick: ((BridgeCheck.Tick) -> Void)?
+    var onVerdict: ((BridgeCheck.ProbeVerdict, BridgeCheck.Probe?) -> Void)?
+
+    func start(_ wine: String, seconds: Int = 3600) {
+        stop()
+        guard let exe = bridgeProbePath() else { report(.didNotRun, nil); return }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: wine)
+        p.arguments = [exe, "\(seconds)"]
+        var e = ProcessInfo.processInfo.environment
+        e["WINEPREFIX"] = appPrefix; e["WINEDEBUG"] = "-all"
+        p.environment = e
+        let out = Pipe(); p.standardOutput = out
+        // stderr goes nowhere rather than into a pipe nobody drains: this
+        // process can live for the whole of a pen test, and a full stderr pipe
+        // would block wine mid-write with no sign of why.
+        p.standardError = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { report(.didNotRun, nil); return }
+        proc = p
+
+        // A dedicated reader rather than readabilityHandler: the handler never
+        // fired here at all — the probe streamed perfectly into a shell pipe
+        // while the second bar sat at "starting…" — and a blocking read on a
+        // thread of our own is both simpler and something we can reason about.
+        let fh = out.fileHandleForReading
+        Thread.detachNewThread { [weak self] in
+            while true {
+                let data = fh.availableData          // blocks until there is some
+                if data.isEmpty { break }            // EOF: the probe has gone
+                guard let self = self else { return }
+                if let chunk = String(data: data, encoding: .utf8) { self.consume(chunk) }
+            }
+            // Reaching EOF without a tick is itself the answer — no context,
+            // or Wine's own DLL — and it is the most important one there is.
+            self?.flushVerdict()
+        }
+    }
+
+    private func consume(_ chunk: String) {
+        tail += chunk
+        for line in BridgeCheck.takeLines(&tail) {
+            if let t = BridgeCheck.parseTick(line) {
+                // The first tick means the preamble is complete: everything
+                // needed to judge the far side has arrived.
+                flushVerdict()
+                DispatchQueue.main.async { self.onTick?(t) }
+            } else {
+                header += line + "\n"
+            }
+        }
+    }
+
+    private func flushVerdict() {
+        guard !toldVerdict else { return }
+        toldVerdict = true
+        let pr = BridgeCheck.parseProbe(header)
+        report(BridgeCheck.probeVerdict(pr), pr)
+    }
+
+    private func report(_ v: BridgeCheck.ProbeVerdict, _ p: BridgeCheck.Probe?) {
+        DispatchQueue.main.async { self.onVerdict?(v, p) }
+    }
+
+    func stop() {
+        if let p = proc {
+            (p.standardOutput as? Pipe)?.fileHandleForReading.readabilityHandler = nil
+            p.terminationHandler = nil
+            if p.isRunning { p.terminate() }
+        }
+        proc = nil
+        tail = ""; header = ""; toldVerdict = false
+    }
+}
+
 /// Everything the app can check about the bridge without SAI running.
 func bridgeInstalledOK() -> Bool { bridgeDLLMatchesApp() && bridgeOverrideInstalled() }
 

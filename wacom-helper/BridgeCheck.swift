@@ -181,4 +181,178 @@ enum BridgeCheck {
             return "Working — SAI has drawn \(status?.fetched ?? 0) points."
         }
     }
+
+    // ---- 3. the probe: the far side, tested with SAI closed ------------------
+    // Everything above answers "what is happening right now inside SAI", which
+    // needs SAI to be running and being drawn in. That is a lot to ask of
+    // someone reporting a bug, and it is the reason #29 went round twice: the
+    // only proof anyone could offer was a stroke that came out flat.
+    //
+    // wtprobe.exe removes SAI from the question. It is a separate Windows
+    // process that loads wintab32.dll the same way SAI does — through the same
+    // DllOverrides key — opens a context and answers the DLL's WT_PACKET
+    // messages. So it exercises every link the pen depends on, in three
+    // seconds, with nothing else open. Parsing what it says is deterministic,
+    // so it lives here; running it needs Wine and lives in Setup.swift.
+
+    struct Probe: Equatable {
+        var dllLoaded = false      // a wintab32 loaded at all
+        var ours = false           // ...and it was OURS, not Wine's built-in
+        var build = ""             // which build of ours
+        var entryPoints = false    // the WinTab functions resolved
+        var contextOpen = false    // a tablet context could be opened
+        var msgs = 0               // WT_PACKET messages the DLL posted
+        var fetched = 0            // of those, the ones WTPacket handed over
+        var down = 0               // packets with the tip switch pressed
+        var pmaxSeen = 0           // strongest pressure that arrived
+        var secs = 0               // how long it listened
+    }
+
+    /// Parse wtprobe.exe's key=value output. nil when the output isn't the
+    /// probe's at all (wine printed an error, nothing ran, the file is
+    /// missing) — which must not be mistaken for a probe that ran and found
+    /// nothing, because those two call for opposite advice.
+    static func parseProbe(_ text: String) -> Probe? {
+        var p = Probe()
+        var sawMarker = false
+        for raw in text.components(separatedBy: .newlines) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            guard let eq = line.firstIndex(of: "=") else { continue }
+            let key = String(line[line.startIndex..<eq])
+            let val = String(line[line.index(after: eq)...])
+            switch key {
+            case "probe":       sawMarker = true
+            case "dll":         p.dllLoaded = (val == "loaded")
+            case "ours":        p.ours = (val == "yes")
+            case "build":       p.build = (val == "-") ? "" : val
+            case "entrypoints": p.entryPoints = (val == "ok")
+            case "ctx":         p.contextOpen = (val == "open")
+            case "msgs":        p.msgs = Int(val) ?? 0
+            case "fetched":     p.fetched = Int(val) ?? 0
+            case "down":        p.down = Int(val) ?? 0
+            case "pmax_seen":   p.pmaxSeen = Int(val) ?? 0
+            case "secs":        p.secs = Int(val) ?? 0
+            default: break
+            }
+        }
+        return sawMarker ? p : nil
+    }
+
+    /// One streamed line from a probe running ALONGSIDE the pen test:
+    ///
+    ///     tick=1 p=1234 msgs=88 fetched=87 pmax=3381 down=80
+    ///
+    /// Space-separated on a single line, unlike the one-key-per-line summary,
+    /// because this is read live out of a pipe and one line is the unit that
+    /// arrives whole. `p` is the pressure in the most recent packet, which is
+    /// what makes a received-side bar possible next to the sent-side one.
+    struct Tick: Equatable {
+        var pressure = 0
+        var msgs = 0
+        var fetched = 0
+        var pmax = 0
+        var down = 0
+    }
+
+    /// Take whole lines off the front of a streaming buffer, leaving any
+    /// partial last line behind for the next read.
+    ///
+    /// THE TRAP: this reads the output of a WINDOWS program, so its lines end
+    /// with CRLF — and Swift counts "\r\n" as ONE Character, which is not
+    /// equal to "\n". `firstIndex(of: "\n")` therefore never matches, the
+    /// buffer grows without ever yielding a line, and the caller sits waiting
+    /// for data it has already been given. That is not hypothetical: it is
+    /// exactly how the received-side bar came to sit at "starting…" while the
+    /// probe was streaming perfectly into the pipe. Matching a character SET
+    /// is what makes it work for CRLF and LF alike.
+    static func takeLines(_ buffer: inout String) -> [String] {
+        var lines: [String] = []
+        while let r = buffer.rangeOfCharacter(from: .newlines) {
+            let line = String(buffer[buffer.startIndex..<r.lowerBound])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            buffer.removeSubrange(buffer.startIndex..<r.upperBound)
+            // CR and LF are matched one at a time, so a CRLF hands back the
+            // line and then an empty string. Every line the probe writes is a
+            // key=value, never blank, so dropping blanks is safe — and it makes
+            // CRLF, plain LF, and a read that happens to split between the two
+            // all behave identically, which is worth more here than fidelity to
+            // whitespace nobody sends.
+            if !line.isEmpty { lines.append(line) }
+        }
+        return lines
+    }
+
+    /// nil for any line that isn't a tick — the probe's header lines come down
+    /// the same pipe, and treating one of those as an all-zero tick would park
+    /// the received bar at zero while the pen was being pressed.
+    static func parseTick(_ line: String) -> Tick? {
+        var t = Tick()
+        var isTick = false
+        for field in line.split(separator: " ") {
+            let parts = field.split(separator: "=", maxSplits: 1)
+            guard parts.count == 2, let v = Int(parts[1]) else { continue }
+            switch parts[0] {
+            case "tick":    isTick = (v == 1)
+            case "p":       t.pressure = v
+            case "msgs":    t.msgs = v
+            case "fetched": t.fetched = v
+            case "pmax":    t.pmax = v
+            case "down":    t.down = v
+            default: break
+            }
+        }
+        return isTick ? t : nil
+    }
+
+    enum ProbeVerdict: Equatable {
+        case didNotRun      // wine couldn't run it, or it isn't the probe's output
+        case noDLL          // nothing called wintab32 loaded at all
+        case wineOwnDLL     // a wintab32 loaded — Wine's. THIS is #29.
+        case unusable       // ours, but the entry points aren't there
+        case noContext      // ours, loaded, but it wouldn't open a context
+        case noPackets      // all wired up; nothing came down the wire
+        case notReadable    // packets were posted but couldn't be read back
+        case working
+    }
+
+    /// Order is the argument. "A wintab32 loaded" was the answer that made #29
+    /// look healthy for weeks, so `dllLoaded` is never good news on its own —
+    /// `ours` is asked immediately after, and everything else is only worth
+    /// saying once that is a yes.
+    static func probeVerdict(_ p: Probe?) -> ProbeVerdict {
+        guard let p = p else { return .didNotRun }
+        if !p.dllLoaded { return .noDLL }
+        if !p.ours { return .wineOwnDLL }
+        if !p.entryPoints { return .unusable }
+        if !p.contextOpen { return .noContext }
+        if p.msgs == 0 { return .noPackets }
+        if p.fetched == 0 { return .notReadable }
+        return .working
+    }
+
+    /// One sentence for someone who has just pressed a button called "Test the
+    /// SAI side" and is owed a plain answer. Longer than explain()'s, because
+    /// these are shown in a result label rather than a checklist row.
+    static func explainProbe(_ v: ProbeVerdict, _ p: Probe?) -> String {
+        switch v {
+        case .didNotRun:
+            return "The test couldn't run inside Wine. Check that Wine is installed."
+        case .noDLL:
+            return "Wine has no wintab32 at all — press Repair to install ours."
+        case .wineOwnDLL:
+            return "Wine loaded its OWN wintab32, not ours — so SAI would get no pressure. Press Repair."
+        case .unusable:
+            return "The wintab32 in Wine is ours but unusable — press Repair to reinstall it."
+        case .noContext:
+            return "Our DLL loaded but wouldn't open a tablet context — press Repair."
+        case .noPackets:
+            return "Our DLL is live inside Wine, but no pen data reached it. Press the pen on the tablet while the test runs."
+        case .notReadable:
+            return "Pen data reached our DLL but couldn't be read back out — please report this."
+        case .working:
+            let n = p?.fetched ?? 0
+            let peak = p?.pmaxSeen ?? 0
+            return "Working — \(n) pen packets arrived inside Wine, up to \(peak). This is what SAI would receive."
+        }
+    }
 }

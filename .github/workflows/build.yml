@@ -24,7 +24,9 @@ jobs:
           x86_64-w64-mingw32-gcc -shared -O2 -o wintab32.dll \
             wintab32.c wintab32_res.o wintab32.def \
             -lgdi32 -luser32 -lws2_32 -municode
+          x86_64-w64-mingw32-gcc -O2 -Wall -Wextra -o wtprobe.exe wtprobe.c -luser32
           test -f wintab32.dll
+          test -f wtprobe.exe
 
       - name: Build the native helper
         run: |
@@ -46,6 +48,7 @@ jobs:
           # downloaded apps with error -47 — regression guard)
           file "$APP/Contents/MacOS/SAIPenPressure" | grep -q "Mach-O"
           test -f "$APP/Contents/Resources/wintab32.dll"
+          test -f "$APP/Contents/Resources/wtprobe.exe"
           test -f "$APP/Contents/Resources/install-wine.sh"
           test -f "$APP/Contents/Resources/AppIcon.icns"
           /usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP/Contents/Info.plist" | grep -qx "SAIPenPressure"

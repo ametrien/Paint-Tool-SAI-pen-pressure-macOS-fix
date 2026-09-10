@@ -1099,6 +1099,16 @@ HWND WINAPI WTMgrContextOwner(HANDLE mgr, HANDLE ctx) { log_line("WTMgrContextOw
 HANDLE WINAPI WTMgrDefContext(HANDLE mgr, BOOL sys) { log_line("WTMgrDefContext"); (void)mgr;(void)sys; return NULL; }
 HANDLE WINAPI WTMgrDefContextEx(HANDLE mgr, UINT dev, BOOL sys) { log_line("WTMgrDefContextEx"); (void)mgr;(void)dev;(void)sys; return NULL; }
 
+/* ---- not WinTab: how a probe tells OUR wintab32 from Wine's ---------------
+ * Wine's built-in wintab32 exports every name above, so from outside the
+ * process there is no way to know which of the two a LoadLibrary just resolved
+ * to — and that is the entire question behind #29, where the file on disk was
+ * ours and the DLL in SAI was Wine's. GetProcAddress finds this name only in
+ * ours, and it hands back the build stamp so a probe can say WHICH build it
+ * found rather than just "a good one". Deliberately not a WT* name: nothing
+ * that scans for WinTab entry points should ever pick it up. */
+__declspec(dllexport) const char * WINAPI SAIPP_BridgeBuild(void) { return WT_BUILD_STAMP; }
+
 BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID r) {
     (void)h; (void)r;
     if (reason == DLL_PROCESS_DETACH && g_click_hook) {

@@ -13,6 +13,11 @@ tools/sai-offset-scan
 # NEVER commit proprietary SAI files or licenses
 *.exe
 *.slc
+# ...but OUR OWN Windows build artifact is not one of those. wtprobe.exe is the
+# bridge probe, committed for the same reason wintab32.dll is: building it needs
+# mingw-w64, which no user of this app has. The blanket *.exe above exists to
+# keep SAI's binaries out, not ours.
+!wintab-src/wtprobe.exe
 PaintToolSAI/
 SAI2/
 
