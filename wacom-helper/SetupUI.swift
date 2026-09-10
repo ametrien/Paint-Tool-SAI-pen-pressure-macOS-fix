@@ -25,7 +25,7 @@ extension SetupController {
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
         if saiWindowIsOpen() {
-            alertUser("Quit SAI first — its files are in use while it is running.")
+            alertUser("Quit SAI first. Its files are in use while it runs.")
             return
         }
         if let problem = updateSAIFromFolder(url.path) {
@@ -82,7 +82,7 @@ extension SetupController {
             } else {
                 // several installs — let the user pick which one
                 let items = found.map { "\"\(($0 as NSString).abbreviatingWithTildeInPath)\"" }.joined(separator: ", ")
-                if let picked = osa("choose from list {\(items)} with prompt \"Found more than one SAI folder — pick the one to use:\" OK button name \"Use this folder\" cancel button name \"Choose another…\""),
+                if let picked = osa("choose from list {\(items)} with prompt \"Found more than one SAI folder. Pick the one to use:\" OK button name \"Use this folder\" cancel button name \"Choose another…\""),
                    picked != "false" {
                     let full = found.first { ($0 as NSString).abbreviatingWithTildeInPath == picked }
                     if let f = full { adoptSAIFolder(f); return }
@@ -97,7 +97,7 @@ extension SetupController {
                                  ?? NSHomeDirectory() + "/Documents")
         panel.prompt = "Choose"
         panel.message = found.isEmpty
-            ? "Select your SAI Ver.2 folder — the one that directly contains sai2.exe"
+            ? "Select your SAI Ver.2 folder (the one containing sai2.exe)"
             : "Select your SAI Ver.2 folder (we found one at \((found[0] as NSString).abbreviatingWithTildeInPath))"
         if panel.runModal() == .OK, let url = panel.url {
             if FileManager.default.fileExists(atPath: url.appendingPathComponent("sai2.exe").path) {
@@ -118,7 +118,7 @@ extension SetupController {
         if let lic = adoptLicenseFromSourceFolder(path) {
             let where_ = installedLicenseName() != nil
                 ? "It's installed in every folder SAI might read it from, and saved so a rebuild can restore it."
-                : "Saved — it will be installed automatically when SAI is set up."
+                : "Saved. It installs automatically when SAI is set up."
             alertUser("License detected ✅\n\n\(lic) was already in the folder you picked.\n\n\(where_)")
         }
         if saiInstalledInPrefix() && prefixIsStale() {
@@ -150,7 +150,7 @@ extension SetupController {
     /// never add one, you still approve in System Settings — and it asks first.
     @objc func resetOwnPermission() {
         let bid = Bundle.main.bundleIdentifier ?? "com.runasharp.saipenpressure"
-        let c = osa("button returned of (display dialog \"Make macOS ask for Input Monitoring again?\n\nThis clears only this app's own permission entry (\(bid)) so the system prompt reappears — much quicker than adding the app by hand.\n\nIt cannot grant anything: you still approve it in System Settings. The app will relaunch.\" buttons {\"Cancel\", \"Reset & ask again\"} default button \"Reset & ask again\" with icon caution)")
+        let c = osa("button returned of (display dialog \"Make macOS ask for Input Monitoring again?\n\nThis clears only this app's own permission entry (\(bid)) so the system prompt reappears.\n\nYou still approve it in System Settings. The app will relaunch.\" buttons {\"Cancel\", \"Reset & ask again\"} default button \"Reset & ask again\" with icon caution)")
         guard c == "Reset & ask again" else { return }
         _ = runCapture("/usr/bin/tccutil", ["reset", "ListenEvent", bid])
         // The prompt only fires on a fresh launch, so bounce ourselves.
@@ -183,12 +183,12 @@ extension SetupController {
 
         If it isn't listed, click + and either:
           • drag "SAI Pen Pressure" from the Finder window that just opened, or
-          • press ⇧⌘G and paste (⌘V) — the path is already on your clipboard.
+          • press ⇧⌘G and paste (⌘V). The path is already on your clipboard.
 
         This app's path:
         \(appPath)
 
-        Tip: if you see several "SAI Pen Pressure" entries from older builds, turn off or remove the old ones — only the one at the path above is this build.
+        Tip: if you see several "SAI Pen Pressure" entries from older builds, turn off or remove the old ones. Only the one at the path above is this build.
         """)
     }
     @objc func openOfficialSAISite() {
@@ -196,7 +196,7 @@ extension SetupController {
     }
     func chooseLicense() {
         if installedLicenseName() == nil {
-            let c = osa("button returned of (display dialog \"You need your own SAI license certificate (.slc).\n\nPaintTool SAI is commercial software by SYSTEMAX. Buy a license and download your .slc from the official site — this app is NOT affiliated with SYSTEMAX, and it cannot supply, generate or activate a license for you.\n\nIt only copies a .slc you already own into the folder SAI reads.\" buttons {\"Cancel\", \"Open official site\", \"I have my .slc\"} default button \"I have my .slc\" with icon note)")
+            let c = osa("button returned of (display dialog \"You need your own SAI license certificate (.slc).\n\nPaintTool SAI is commercial software by SYSTEMAX. Buy a license and download your .slc from the official site. This app is not affiliated with SYSTEMAX and cannot supply or activate a license.\n\nIt only copies a .slc you already own into the folder SAI reads.\" buttons {\"Cancel\", \"Open official site\", \"I have my .slc\"} default button \"I have my .slc\" with icon note)")
             if c == "Open official site" { openOfficialSAISite(); return }
             if c != "I have my .slc" { return }
         }
@@ -220,7 +220,7 @@ extension SetupController {
                 .map { "  \(($0 as NSString).abbreviatingWithTildeInPath)/\(url.lastPathComponent)" }
                 .joined(separator: "\n")
             alertUser("""
-            License installed — copied to both places SAI might read it:
+            License installed. Copied to both places SAI might read it:
 
             \(paths)
 
@@ -236,11 +236,11 @@ extension SetupController {
     // ---- reinstall / repair (issue #10) -------------------------------------
     func reinstallMenu() {
         guard let wine = wineBin() else {
-            alertUser("Wine isn't installed yet — install it first (top row)."); return
+            alertUser("Wine isn't installed yet. Install it first (top row)."); return
         }
         guard savedSAIPath() != nil else { chooseSAI(); return }
         _ = wine
-        let c = osa("button returned of (display dialog \"How much do you want to reinstall?\n\n• Repair — copy SAI and the pressure bridge back into the existing Wine prefix. Keeps your license and Wine settings. Try this first.\n\n• Full rebuild — delete \(( appPrefix as NSString).abbreviatingWithTildeInPath) entirely and build it from scratch. Use this if the prefix is damaged. Your license is saved and put back automatically.\" buttons {\"Cancel\", \"Full rebuild…\", \"Repair\"} default button \"Repair\" with icon caution)")
+        let c = osa("button returned of (display dialog \"How much do you want to reinstall?\n\n• Repair: copy SAI and the pressure bridge back into the existing Wine prefix. Keeps your license and Wine settings. Try this first.\n\n• Full rebuild: delete \(( appPrefix as NSString).abbreviatingWithTildeInPath) entirely and build it from scratch. Use this if the prefix is damaged. Your license is saved and put back automatically.\" buttons {\"Cancel\", \"Full rebuild…\", \"Repair\"} default button \"Repair\" with icon caution)")
         switch c {
         case "Repair":       doReinstall(mode: .repair)
         case "Full rebuild…":
@@ -268,7 +268,7 @@ extension SetupController {
         if hadWine {
             let q = ours
                 ? "Also remove Wine?\n\nThis app installed Wine Staging for SAI, so removing it should be safe. It goes to the Trash and you can reinstall it from this window anytime."
-                : "Also remove Wine?\n\nWine Staging was NOT installed by this app — you may be using it for other Windows programs. Keeping it is the safe choice."
+                : "Also remove Wine?\n\nWine Staging was not installed by this app; you may be using it for other Windows programs. Keeping it is the safe choice."
             let def = ours ? "Move Wine to Trash" : "Keep Wine"
             let w = osa("button returned of (display dialog \(q.debugDescription) buttons {\"Keep Wine\", \"Move Wine to Trash\"} default button \(def.debugDescription) with icon caution)")
             removeWine = (w == "Move Wine to Trash")
@@ -285,13 +285,13 @@ extension SetupController {
         refresh()
 
         if removeWine || wineBin() == nil {
-            alertUser("Reset done. Everything was removed.\n\nInstall Wine again from this window, then pick your SAI folder and Launch — your license is saved and will be restored automatically.")
+            alertUser("Reset done. Everything was removed.\n\nInstall Wine again from this window, then pick your SAI folder and Launch. Your license is saved and will be restored automatically.")
             return
         }
         // --- rebuild ----------------------------------------------------------
         chooseSAI()                                   // forgotten on purpose: ask again
         guard savedSAIPath() != nil else {
-            alertUser("Reset done. Choose your SAI folder in this window whenever you're ready — your license is saved and will be restored.")
+            alertUser("Reset done. Choose your SAI folder in this window whenever you're ready. Your license is saved and will be restored.")
             return
         }
         doReinstall(mode: .rebuild)
@@ -394,7 +394,7 @@ extension SetupController {
                 guard let self = self else { return }
                 self.wineProc = nil
                 let ok = wineBin() != nil
-                self.wineLabel.stringValue = ok ? "Wine installed ✅" : "Wine install failed — try the Terminal fallback."
+                self.wineLabel.stringValue = ok ? "Wine installed ✅" : "Wine install failed. Try the Terminal fallback."
                 self.wineBar.value = ok ? 1 : 0
                 self.refresh()
                 if !ok {
@@ -422,7 +422,7 @@ extension SetupController {
         DispatchQueue.global().async { self.autoSteps() }
     }
     func step(_ n: Int, _ msg: String) {
-        DispatchQueue.main.async { self.subtitle.stringValue = "Step \(n)/5 — \(msg)" }
+        DispatchQueue.main.async { self.subtitle.stringValue = "Step \(n)/5: \(msg)" }
     }
     /// Run a main-thread UI call from the background and wait for its result.
     func onMain<T>(_ work: @escaping () -> T) -> T {
@@ -448,7 +448,7 @@ extension SetupController {
                 if waited % 20 == 0 { step(1, "waiting for Wine to finish installing… (\(waited)s)") }
             }
             guard wineBin() != nil else {
-                onMain { alertUser("Wine still isn't in /Applications, so automatic setup stopped here.\n\nFinish the Wine install in the Terminal window, then press 'Set up everything automatically' again — it will pick up from this step.") }
+                onMain { alertUser("Wine still isn't in /Applications, so automatic setup stopped here.\n\nFinish the Wine install in the Terminal window, then press 'Set up everything automatically' again. It picks up from this step.") }
                 return
             }
         }
@@ -465,7 +465,7 @@ extension SetupController {
                 onMain { self.chooseSAI() }
             }
             guard savedSAIPath() != nil else {
-                onMain { alertUser("Automatic setup stopped: no SAI folder chosen.\n\nRun it again whenever you're ready — it resumes from here.") }
+                onMain { alertUser("Automatic setup stopped: no SAI folder chosen.\n\nRun it again whenever you're ready. It resumes from here.") }
                 return
             }
         }
@@ -483,7 +483,7 @@ extension SetupController {
         // 4 — licence
         if installedLicenseName() == nil {
             step(4, "installing your license…")
-            let c = onMain { osa("button returned of (display dialog \"Do you have your SAI license file (.slc)?\n\nSAI runs and draws without it, but can't save. Licenses come from SYSTEMAX — this project is not affiliated with them and cannot provide one.\" buttons {\"Skip for now\", \"Open official site\", \"I have my .slc\"} default button \"I have my .slc\" with icon note)") }
+            let c = onMain { osa("button returned of (display dialog \"Do you have your SAI license file (.slc)?\n\nSAI runs and draws without it, but can't save. Licenses come from SYSTEMAX; this project is not affiliated with them and cannot provide one.\" buttons {\"Skip for now\", \"Open official site\", \"I have my .slc\"} default button \"I have my .slc\" with icon note)") }
             if c == "Open official site" { onMain { self.openOfficialSAISite() } }
             else if c == "I have my .slc" { onMain { self.chooseLicense() } }
         }
@@ -501,8 +501,8 @@ extension SetupController {
         // done
         let ok = wineBin() != nil && saiInstalledInPrefix() && inputMonitoringGranted()
         DispatchQueue.main.async {
-            self.subtitle.stringValue = ok ? "All set. Click Launch." : "Almost there — finish the red items above."
-            let lic = installedLicenseName() == nil ? "\n\nNo license installed yet — SAI will run but can't save." : ""
+            self.subtitle.stringValue = ok ? "All set. Click Launch." : "Almost there. Finish the red items above."
+            let lic = installedLicenseName() == nil ? "\n\nNo license installed yet. SAI will run but can't save." : ""
             alertUser(ok
                 ? "Setup complete.\n\nSAI is installed in \((prefixSAIDir as NSString).abbreviatingWithTildeInPath).\(lic)\n\nClick \"Launch SAI with Pressure\", then in SAI turn on Others → Options → Pen Tablet → Use WinTab API and restart SAI."
                 : "Automatic setup finished what it could. The remaining red items in the window need you.\(lic)")
@@ -562,7 +562,7 @@ extension SetupController {
             let ours = wineInstalledByUs()
             let q = ours
                 ? "Also remove Wine?\n\nThis app installed Wine Staging for SAI, so removing it should be safe."
-                : "Also remove Wine?\n\nWine Staging was NOT installed by this app — you may use it for other Windows programs. Keeping it is the safe choice."
+                : "Also remove Wine?\n\nWine Staging was not installed by this app; you may use it for other Windows programs. Keeping it is the safe choice."
             let def = ours ? "Move Wine to Trash" : "Keep Wine"
             removeWine = (osa("button returned of (display dialog \(q.debugDescription) buttons {\"Keep Wine\", \"Move Wine to Trash\"} default button \(def.debugDescription) with icon caution)") == "Move Wine to Trash")
         }
@@ -573,7 +573,7 @@ extension SetupController {
         let licNote = keepLicense && !slcFiles(in: licenseStashDir()).isEmpty
             ? "\n\nYour license copy was kept and will be restored on the next install."
             : ""
-        alertUser("Removed.\(licNote)\n\nThis app itself is still here — quit it and drag it to the Trash if you're done, or just pick your SAI folder again to reinstall.")
+        alertUser("Removed.\(licNote)\n\nThis app itself is still here. Quit it and drag it to the Trash if you're done, or pick your SAI folder again to reinstall.")
     }
     /// Did THIS app install Wine? Set when the user takes our "Install Wine"
     /// path, so a reset can tell "installed for SAI" from "the user's own Wine".
@@ -592,7 +592,7 @@ extension SetupController {
     /// nothing to warn about and no reason to make someone read a dialog first.
     @objc func repairBridge() {
         guard let wine = wineBin() else {
-            alertUser("Install Wine first — the bridge lives inside the Wine prefix."); return
+            alertUser("Install Wine first. The bridge lives inside the Wine prefix."); return
         }
         let wasComplete = bridgeInstalledOK()
         syncBridgeDLL()
@@ -603,7 +603,7 @@ extension SetupController {
             return
         }
         if wasComplete {
-            alertUser("The bridge was already complete — nothing needed fixing.\n\nIf pressure still doesn't reach SAI, launch SAI and read this row again: while SAI runs it shows what SAI is actually receiving.")
+            alertUser("The bridge was already complete. Nothing needed fixing.\n\nIf pressure still doesn't reach SAI, try Test pen in the Pen tab.")
         } else {
             alertUser("Fixed.\n\n\(overrideRepaired ? "Wine had been loading its own wintab32; it now loads ours. " : "")Restart SAI for this to take effect.")
         }
@@ -630,10 +630,10 @@ extension SetupController {
                 self.refresh()
                 if ok {
                     let lic = installedLicenseName().map { "\n\nLicense in place: \($0)" }
-                        ?? "\n\nNo license found — use Install… on the license row if you need to save."
+                        ?? "\n\nNo license found. Use Install… on the license row if you need to save."
                     alertUser("Done. SAI is installed in:\n\n\(( prefixSAIDir as NSString).abbreviatingWithTildeInPath)\(lic)")
                 } else {
-                    self.subtitle.stringValue = "Reinstall failed — check the SAI source folder."
+                    self.subtitle.stringValue = "Reinstall failed. Check the SAI source folder."
                 }
             }
         }

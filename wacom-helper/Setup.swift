@@ -124,7 +124,7 @@ func ensureBridgeOverride(_ wine: String?) -> Bool {
         wlog("bridge: DLL override missing and no Wine to repair it with")
         return false
     }
-    wlog("bridge: DllOverrides wintab32 missing or not native — repairing")
+    wlog("bridge: DllOverrides wintab32 missing or not native, repairing")
     runProc(w, ["reg", "add", "HKCU\\Software\\Wine\\DllOverrides", "/v", "wintab32",
                 "/t", "REG_SZ", "/d", "native,builtin", "/f"],
             env: ["WINEPREFIX": appPrefix, "WINEDEBUG": "-all"])
@@ -420,18 +420,18 @@ func bridgeDetailLine() -> String {
     // this row was seen on a fresh install.
     if !saiInstalledInPrefix() { return "Installed with SAI when you press Launch." }
     if !FileManager.default.fileExists(atPath: bridgeDLLPath()) {
-        return "Our wintab32.dll isn't in the prefix — press Repair."
+        return "Our wintab32.dll isn't in the prefix. Press Repair."
     }
     if !bridgeDLLMatchesApp() {
-        return "A different wintab32.dll than this app's — press Repair."
+        return "A different wintab32.dll than this app's. Press Repair."
     }
     if !bridgeOverrideInstalled() {
-        return "Wine loads its OWN wintab32 — no pressure. Press Repair."
+        return "Wine loads its own wintab32, not ours. Press Repair."
     }
     // Our files are right, SAI is up, and the far side is silent: it never
     // loaded us. This is the sentence that would have ended #29 on day one.
     if saiRunningInWine() { return BridgeCheck.explain(.notLoaded, st) }
-    return "Ready. While SAI is running, this row shows what it gets."
+    return "Ready. While SAI runs, this row shows what it gets."
 }
 
 /// Keep the DLL inside the prefix identical to the one shipped in this app.
@@ -452,7 +452,7 @@ func ensureBridgeUpToDate(_ wine: String?) -> Bool {
     let installed = "\(sys)/wintab32.dll"
     guard let want = FileManager.default.contents(atPath: shipped) else { return false }
     if FileManager.default.contents(atPath: installed) == want { return false }   // already current
-    wlog("bridge: installed wintab32.dll differs from the shipped one — updating")
+    wlog("bridge: installed wintab32.dll differs from the shipped one, updating")
     try? FileManager.default.createDirectory(atPath: sys, withIntermediateDirectories: true)
     try? FileManager.default.removeItem(atPath: installed)
     guard (try? FileManager.default.copyItem(atPath: shipped, toPath: installed)) != nil else { return false }
@@ -497,7 +497,7 @@ func performSetup(_ saiSrc: String, _ wine: String, mode: SetupMode = .ensure, q
         let what = mode == .rebuild ? "Rebuilding the Wine prefix from scratch"
                  : (saiInstalledInPrefix() ? "Reinstalling SAI into the Wine prefix"
                                            : "Setting up SAI for the first time")
-        alertUser("\(what) — this takes about a minute after you click OK. Please wait for SAI to appear.")
+        alertUser("\(what). This takes about a minute. Wait for SAI to appear.")
     }
 
     let env = ["WINEPREFIX": appPrefix, "WINEDEBUG": "-all"]
@@ -567,7 +567,7 @@ func updateSAIFromFolder(_ newSrc: String) -> String? {
         return "That folder doesn't contain sai2.exe.\n\n\(newSrc)\n\nPick the folder that DIRECTLY contains sai2.exe."
     }
     guard fm.fileExists(atPath: prefixSAIDir) else {
-        return "SAI isn't installed in the Wine prefix yet — use Reinstall / Repair first."
+        return "SAI isn't installed in the Wine prefix yet. Use Reinstall or Repair first."
     }
 
     // Stash the user's files somewhere the copy cannot reach.

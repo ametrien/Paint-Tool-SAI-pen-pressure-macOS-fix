@@ -25,8 +25,10 @@ Pressure isn't reaching SAI, *or* SAI is ignoring it.
    says nothing about whether SAI received it. That is what the bridge row above is for.
 3. **Check SAI's tablet API.** *Others → Options → Pen Tablet →* **Use WinTab API**, then quit
    SAI **completely** and relaunch. A rebuilt Wine prefix resets this.
-4. **Check the brush.** In SAI's tool panel, **Min Size**. At 100% pressure cannot change stroke
-   width — every stroke draws full width no matter how hard you press. Try ~10%.
+4. **Check the brush.** Test with the **AirBrush** tool: its stock settings show pressure most
+   clearly, so a stroke that still comes out flat there is a real fault rather than a brush
+   setting. On other brushes, look at **Min Size** in the tool panel: at 100% pressure cannot
+   change stroke width — every stroke draws full width no matter how hard you press. Try ~10%.
 
 ## No pressure at all — the bar never moves
 

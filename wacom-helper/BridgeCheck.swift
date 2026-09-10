@@ -170,15 +170,15 @@ enum BridgeCheck {
     static func explain(_ verdict: Verdict, _ status: Status?) -> String {
         switch verdict {
         case .notLoaded:
-            return "SAI is running but hasn't loaded our DLL — press Repair."
+            return "SAI is running but hasn't loaded our DLL. Press Repair."
         case .noContext:
-            return "Loaded, but SAI isn't set to Use WinTab API — turn it on."
+            return "Loaded, but SAI isn't set to Use WinTab API. Turn it on."
         case .noSamples:
             return "Loaded, but no pen samples are arriving from this app."
         case .ignoring:
-            return "SAI gets pressure but reads none — check the brush Min Size."
+            return "SAI gets pressure but reads none. Try the AirBrush tool."
         case .working:
-            return "Working — SAI has drawn \(status?.fetched ?? 0) points."
+            return "Working. SAI has drawn \(status?.fetched ?? 0) points."
         }
     }
 
@@ -354,23 +354,23 @@ enum BridgeCheck {
     static func explainProbe(_ v: ProbeVerdict, _ p: Probe?) -> String {
         switch v {
         case .didNotRun:
-            return "The test couldn't run inside Wine. Check that Wine is installed."
+            return "The test couldn't run inside Wine. Check Wine is installed."
         case .noDLL:
-            return "Wine has no wintab32 at all — press Repair to install ours."
+            return "Wine has no wintab32 at all. Press Repair."
         case .wineOwnDLL:
-            return "Wine loaded its OWN wintab32, not ours — so SAI would get no pressure. Press Repair."
+            return "Wine loaded its own wintab32, not ours. SAI would get no pressure. Press Repair."
         case .unusable:
-            return "The wintab32 in Wine is ours but unusable — press Repair to reinstall it."
+            return "The wintab32 in Wine is ours but unusable. Press Repair."
         case .noContext:
-            return "Our DLL loaded but wouldn't open a tablet context — press Repair."
+            return "Our DLL loaded but wouldn't open a tablet context. Press Repair."
         case .noPackets:
-            return "Our DLL is live inside Wine, but no pen data reached it. Press the pen on the tablet while the test runs."
+            return "Our DLL is live inside Wine, but no pen data reached it. Press the pen while the test runs."
         case .notReadable:
-            return "Pen data reached our DLL but couldn't be read back out — please report this."
+            return "Pen data reached our DLL but couldn't be read back out. Please report this."
         case .working:
             let n = p?.fetched ?? 0
             let peak = p?.pmaxSeen ?? 0
-            return "Working — \(n) pen packets arrived inside Wine, up to \(peak). This is what SAI would receive."
+            return "Working. \(n) packets arrived inside Wine, up to \(peak)."
         }
     }
 }

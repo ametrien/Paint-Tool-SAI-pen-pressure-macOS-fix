@@ -72,7 +72,7 @@ extension SetupController {
                 if p.terminationStatus == 0, let first = made.first {
                     self.showPreview(first)
                     if made.count > 1 {
-                        alertUser("Made \(made.count) videos — one per canvas.\n\nIn \(prettyPath(timelapseOutputFolder()))")
+                        alertUser("Made \(made.count) videos, one per canvas.\n\nIn \(prettyPath(timelapseOutputFolder()))")
                     }
                     NSWorkspace.shared.activateFileViewerSelecting(made.map { URL(fileURLWithPath: $0) })
                     self.askAboutPendingSessions()
