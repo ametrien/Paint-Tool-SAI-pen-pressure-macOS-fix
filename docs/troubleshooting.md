@@ -27,6 +27,13 @@ Pressure isn't reaching SAI, *or* SAI is ignoring it.
    - **Top moves, the bottom stays flat** — Wine is not loading our bridge, so SAI would get
      nothing. A line underneath says so and points at **Repair** on the Setup tab.
    - **Both move** — the bridge works end to end, so the fault is inside SAI. Steps 3 and 4.
+
+   <p align="center">
+     <img src="assets/screenshots/pen.png" width="620"
+          alt="The Pen tab during a test: a sending bar reading 983 of 4095, and below it a receiving bar with a packet count and peak, both filled">
+   </p>
+
+   *Both bars moving, as above, means pressure is reaching SAI's side of the bridge.*
 3. **Check SAI's tablet API.** *Others → Options → Pen Tablet →* **Use WinTab API**, then quit
    SAI **completely** and relaunch. A rebuilt Wine prefix resets this.
 4. **Check the brush.** Test with the **AirBrush** tool: its stock settings show pressure most
@@ -107,6 +114,11 @@ needed. It reports the build, your Mac and chip, the macOS and Wine versions, yo
 it is connected, what is installed where, whether Wine is loading the pressure bridge or ignoring
 it, what SAI last received, and the tail of the log. That is almost everything anyone would
 otherwise have to ask you for.
+
+<p align="center">
+  <img src="assets/screenshots/setup.png" width="620"
+       alt="The Setup tab, with the Copy problem report button in the bottom row beside Reset everything and Uninstall">
+</p>
 
 For pen problems specifically, launch with the DLL's own log enabled:
 
