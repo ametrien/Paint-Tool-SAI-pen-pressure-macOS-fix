@@ -12,6 +12,7 @@ wacom-helper/PressureCore.swift
 wacom-helper/Settings.swift
 wacom-helper/SAIProcess.swift
 wacom-helper/Setup.swift
+wacom-helper/BridgeCheck.swift
 wacom-helper/Licence.swift
 wacom-helper/SetupUI.swift
 wacom-helper/Diagnostics.swift

@@ -64,6 +64,195 @@ func installBridge(_ wine: String) {
     runProc(wine, ["reg", "add", "HKCU\\Software\\Wine\\DllOverrides", "/v", "wintab32",
                    "/t", "REG_SZ", "/d", "native,builtin", "/f"], env: env)
 }
+// ---- the half of the bridge that lives in the Wine registry ---------------
+// Installing our wintab32.dll is only half the job: Wine prefers its OWN
+// built-in one unless the prefix says otherwise, so without the DllOverrides
+// key the file we so carefully keep up to date is never loaded at all. SAI then
+// draws from the plain mouse — strokes appear, pressure is flat, and every
+// check the app used to make still passed (#29).
+//
+// The key was written once, by installBridge(), and nothing looked at it again.
+// A prefix that never got it — built by a version older than the marker, or
+// left behind by a reset that failed to finish — could not be healed by any
+// number of relaunches, because performSetup(.ensure) returns early whenever
+// sai2.exe is present. So it is checked on every launch now, and repaired in
+// place. Checking is free (user.reg is a text file); repairing costs one wine
+// call, and only when something is actually wrong.
+
+/// Where Wine keeps HKEY_CURRENT_USER for this prefix.
+func userRegPath() -> String { "\(appPrefix)/user.reg" }
+
+/// Read user.reg as text. Wine writes it UTF-8, but an old prefix can carry
+/// bytes that aren't valid UTF-8; latin-1 never fails, and a mis-decoded stray
+/// byte elsewhere in the file cannot change the answer we're looking for.
+func readUserReg() -> String? {
+    if let s = try? String(contentsOfFile: userRegPath(), encoding: .utf8) { return s }
+    return try? String(contentsOfFile: userRegPath(), encoding: .isoLatin1)
+}
+
+/// Set when we repair the override and verify it through wine. Consulted until
+/// user.reg catches up, which can take the whole of an SAI session.
+var g_overrideRepairedAt: Date?
+
+/// Is this prefix set to load OUR wintab32 rather than Wine's built-in one?
+func bridgeOverrideInstalled() -> Bool {
+    if let text = readUserReg(),
+       BridgeCheck.overrideIsNative(BridgeCheck.overrideValue(inUserReg: text)) { return true }
+    // The file lags a repair: wineserver rewrites user.reg only when it exits,
+    // so between repairing and that moment the file still names the value we
+    // replaced — and while SAI is up, wineserver never exits, so it names it
+    // for the entire session. Reading it alone made the app go on accusing a
+    // prefix it had just fixed, in the setup row, in Copy diagnostics and in
+    // the Repair button's own answer. A repair we verified through wine
+    // therefore stands in for the file until the file agrees.
+    if let t = g_overrideRepairedAt, Date().timeIntervalSince(t) < 3600 { return true }
+    return false
+}
+
+/// Put the override back if it is missing or points at the built-in DLL.
+///
+/// Written through `wine reg add`, never by editing user.reg ourselves: the
+/// wineserver holds the registry in memory and rewrites the file when it exits,
+/// so a hand-edit made while anything is running is silently reverted. Must
+/// therefore happen BEFORE SAI starts — which is where it is called from.
+///
+/// Returns true when it actually repaired something (so callers can say so).
+@discardableResult
+func ensureBridgeOverride(_ wine: String?) -> Bool {
+    if bridgeOverrideInstalled() { return false }
+    guard let w = wine else {
+        wlog("bridge: DLL override missing and no Wine to repair it with")
+        return false
+    }
+    wlog("bridge: DllOverrides wintab32 missing or not native — repairing")
+    runProc(w, ["reg", "add", "HKCU\\Software\\Wine\\DllOverrides", "/v", "wintab32",
+                "/t", "REG_SZ", "/d", "native,builtin", "/f"],
+            env: ["WINEPREFIX": appPrefix, "WINEDEBUG": "-all"])
+    // Verified through wine, NOT by re-reading user.reg — see bridgeOverrideViaWine.
+    let ok = BridgeCheck.overrideIsNative(bridgeOverrideViaWine(w))
+    if ok { g_overrideRepairedAt = Date() }
+    wlog("bridge: override after repair = \(ok ? "native,builtin" : "STILL MISSING")")
+    return ok
+}
+
+/// The override as WINESERVER holds it, rather than as user.reg spells it.
+///
+/// `wine reg add` writes into the registry wineserver keeps in MEMORY; the file
+/// on disk only catches up when wineserver exits — measured at ~5s after the
+/// last client quits on this machine, and not at all while SAI is up. So a
+/// repair that verified itself by re-reading user.reg read back the very value
+/// it had just replaced, and called a successful repair a failure: the Repair
+/// button answered "Couldn't repair the bridge" and the log said
+/// "override after repair = STILL MISSING", both while the key was, seconds
+/// later, correct on disk. `reg query` asks the same in-memory registry the
+/// write went to, so it answers about what SAI would actually load next.
+///
+/// Costs a wine spawn, so it is only used to check a write we just made;
+/// bridgeOverrideInstalled() keeps reading the file, which is accurate whenever
+/// nothing is mid-flight and free enough to call from a UI refresh.
+func bridgeOverrideViaWine(_ wine: String) -> String? {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: wine)
+    p.arguments = ["reg", "query", "HKCU\\Software\\Wine\\DllOverrides", "/v", "wintab32"]
+    var e = ProcessInfo.processInfo.environment
+    e["WINEPREFIX"] = appPrefix; e["WINEDEBUG"] = "-all"
+    p.environment = e
+    let out = Pipe(); p.standardOutput = out; p.standardError = Pipe()
+    guard (try? p.run()) != nil else { return nil }
+    // Drain before waiting: reg's output is small, but waiting first on a full
+    // pipe is the classic way to deadlock a Process.
+    let data = out.fileHandleForReading.readDataToEndOfFile()
+    p.waitUntilExit()
+    guard p.terminationStatus == 0, let text = String(data: data, encoding: .utf8) else { return nil }
+    return BridgeCheck.overrideValue(inRegQuery: text)
+}
+
+/// Where our DLL has to end up for Wine to find it.
+func bridgeDLLPath() -> String { "\(appPrefix)/drive_c/windows/system32/wintab32.dll" }
+
+/// Is the DLL in the prefix byte-identical to the one shipped in this app?
+/// True in dev mode (running outside a bundle), where there is nothing to
+/// compare against and a red row would be noise.
+func bridgeDLLMatchesApp() -> Bool {
+    guard let res = Bundle.main.resourcePath,
+          let shipped = FileManager.default.contents(atPath: "\(res)/wintab32.dll") else { return true }
+    return FileManager.default.contents(atPath: bridgeDLLPath()) == shipped
+}
+
+/// What the DLL reports from inside SAI, and how many seconds ago it said so.
+/// (nil, nil) means the file has never appeared — SAI has not loaded us.
+func bridgeStatus() -> (BridgeCheck.Status?, Double?) {
+    let path = "\(appPrefix)/drive_c/wt_status.txt"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8),
+          let st = BridgeCheck.parseStatus(text) else { return (nil, nil) }
+    let mod = (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date) ?? nil
+    return (st, mod.map { Date().timeIntervalSince($0) })
+}
+
+/// Everything the app can check about the bridge without SAI running.
+func bridgeInstalledOK() -> Bool { bridgeDLLMatchesApp() && bridgeOverrideInstalled() }
+
+/// Is SAI — the one running inside OUR Wine prefix — on screen right now?
+///
+/// Not saiWindowIsOpen(): that matches any window whose owner name contains
+/// "sai", and this app is called "SAI Pen Pressure". It excludes its own pid,
+/// which is enough for its own callers, but not for this one — a second copy of
+/// the app, or a helper binary asking the same question, sees our setup window
+/// and answers yes. Here the answer decides whether to accuse the bridge of
+/// never loading, so a false yes is a fabricated fault. Caught by the bridge
+/// tests, which run a second binary while the app is open.
+func saiRunningInWine() -> Bool {
+    let list = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
+                                           kCGNullWindowID) as? [[String: Any]]) ?? []
+    for w in list {
+        guard (w[kCGWindowLayer as String] as? Int ?? 0) == 0 else { continue }
+        let owner = (w[kCGWindowOwnerName as String] as? String ?? "").lowercased()
+        if owner.contains("pen pressure") { continue }          // that's us, whoever is asking
+        if owner.contains("sai2") || owner.contains("wine") { return true }
+    }
+    return false
+}
+
+/// One line for the setup window.
+///
+/// Order is the whole design here. What the DLL reports from INSIDE SAI outranks
+/// anything we can check from out here: if SAI is drawing points from the pen
+/// right now, a row announcing that something is broken is simply wrong (a
+/// mismatched DLL file, for instance, only matters from the next launch). Our
+/// own checks take over the moment that live answer is missing — and when SAI is
+/// on screen with nothing to say for itself, THAT is the report from #29, and it
+/// gets said in as many words.
+///
+/// Every line here is kept under about sixty characters: the row truncates, and
+/// a warning cut off mid-sentence ("— Repair replac") is worse than a short one.
+func bridgeDetailLine() -> String {
+    let (st, age) = bridgeStatus()
+    let live: BridgeCheck.Verdict? = (age.map { $0 <= 5 } ?? false)
+        ? BridgeCheck.verdict(st, ageSeconds: age) : nil
+
+    if let v = live, v != .notLoaded {
+        return BridgeCheck.explain(v, st) + (bridgeInstalledOK() ? "" : " (Repair pending.)")
+    }
+    // Nothing is set up yet. The bridge is installed together with SAI on the
+    // first Launch, and anything sterner reads as a fault on a machine that has
+    // simply never been set up — which is exactly how it read the first time
+    // this row was seen on a fresh install.
+    if !saiInstalledInPrefix() { return "Installed with SAI when you press Launch." }
+    if !FileManager.default.fileExists(atPath: bridgeDLLPath()) {
+        return "Our wintab32.dll isn't in the prefix — press Repair."
+    }
+    if !bridgeDLLMatchesApp() {
+        return "A different wintab32.dll than this app's — press Repair."
+    }
+    if !bridgeOverrideInstalled() {
+        return "Wine loads its OWN wintab32 — no pressure. Press Repair."
+    }
+    // Our files are right, SAI is up, and the far side is silent: it never
+    // loaded us. This is the sentence that would have ended #29 on day one.
+    if saiRunningInWine() { return BridgeCheck.explain(.notLoaded, st) }
+    return "Ready. While SAI is running, this row shows what it gets."
+}
+
 /// Keep the DLL inside the prefix identical to the one shipped in this app.
 ///
 /// The helper and the DLL are a matched pair: they share `maxPressure` /
