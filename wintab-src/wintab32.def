@@ -29,3 +29,4 @@ EXPORTS
     WTOpenW @1021
     WTGetW @1061
     WTSetW @1062
+    SAIPP_BridgeBuild @1500

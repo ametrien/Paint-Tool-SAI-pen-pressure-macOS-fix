@@ -63,6 +63,10 @@ chmod +x "$APP/Contents/MacOS/SAIPenPressure"
 
 # our DLL + the Wine installer live in Resources
 cp "$REPO/wintab-src/wintab32.dll"  "$APP/Contents/Resources/wintab32.dll"
+# The bridge probe: a WinTab client the app runs under Wine to test the SAI
+# side of the bridge with SAI closed. Shipped rather than built on demand for
+# the same reason as the DLL — the user has no mingw.
+cp "$REPO/wintab-src/wtprobe.exe"   "$APP/Contents/Resources/wtprobe.exe"
 cp "$REPO/install-wine.sh"          "$APP/Contents/Resources/install-wine.sh"
 chmod +x "$APP/Contents/Resources/install-wine.sh"
 # Ships inside the bundle so it is signed with the app and needs no separate

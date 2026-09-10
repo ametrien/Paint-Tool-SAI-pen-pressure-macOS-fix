@@ -32,6 +32,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
   and how many points SAI has actually drawn from them — and a new **Pressure bridge** row says it
   in a sentence, with a **Repair** button when something is missing. Four failures that used to
   look identical from the outside ("strokes draw, pressure is flat") are now one glance apart.
+- **Test pen now shows both ends of the wire at once.** The pressure bar only ever proved what
+  this app *sends* — in the report behind #29 it moved perfectly while SAI drew flat strokes, and
+  there was no way to see that the two facts were unrelated. Pressing **Test pen** now runs a
+  second bar underneath it showing what actually arrives inside Wine, from the same stroke. If the
+  top bar moves and the bottom one doesn't, that is the whole bug in one glance.
+- **A bridge test that doesn't need SAI.** The far side is measured by a small WinTab client
+  (`wtprobe.exe`) run inside Wine, which loads `wintab32.dll` through the same registry override
+  SAI's own load goes through — so it fails in exactly the ways SAI fails, in three seconds, with
+  SAI closed and nothing drawn. It is also the only thing that can say *which* wintab32 got
+  loaded: Wine's built-in one exports the same names as ours, so the DLL now carries a private
+  export that only ours has. **Developer → Bridge check** reports it on its own, no tablet needed.
 - **Diagnostics that cover the half that breaks.** Copy diagnostics used to say `wintab32.dll:
   true`, which only ever meant "the file exists" — it was true on the machine in #29 the whole
   time. It now reports whether that file matches this build, what the DLL override actually says,

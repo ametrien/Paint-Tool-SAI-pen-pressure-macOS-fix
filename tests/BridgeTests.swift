@@ -155,6 +155,140 @@ struct BridgeTests {
             expect(!BridgeCheck.explain(v, open).isEmpty, "explain: \(v) has a sentence")
         }
 
+        // --- the probe: the far side, tested with SAI closed ------------------
+        // Both fixtures below are REAL wtprobe.exe output, captured from the
+        // same prefix: once healthy, and once broken exactly as #29 was. They
+        // are pasted rather than composed so that a change to the probe's
+        // wording is caught here instead of in the field.
+
+        // A prefix in the #29 state. Note dll=loaded: something called
+        // wintab32 DID load, which is precisely why every check the app used
+        // to make came back green while SAI drew with the plain mouse.
+        let probe29 = """
+        probe=1
+        dll=loaded
+        ours=no
+        build=-
+        entrypoints=ok
+        info=0
+        defcontext=none
+        ctx=failed
+        secs=0
+        """
+        let p29 = BridgeCheck.parseProbe(probe29)
+        expect(p29?.dllLoaded == true, "probe: #29 output — a wintab32 did load")
+        expect(p29?.ours == false,     "probe: ...but not ours")
+        expect(BridgeCheck.probeVerdict(p29) == .wineOwnDLL,
+               "probe: #29 output reads as Wine's own DLL")
+        expect(BridgeCheck.explainProbe(.wineOwnDLL, p29).contains("Repair"),
+               "probe: and tells the reader what to press")
+
+        // The healthy prefix with nobody touching the tablet. This must NOT
+        // read as a fault: the bridge is proven up to the last inch, and the
+        // only thing missing is a finger on the pen. Calling this broken would
+        // send someone repairing a prefix that is fine.
+        let probeIdle = """
+        probe=1
+        dll=loaded
+        ours=yes
+        build=Sep 10 2026 19:34:12
+        entrypoints=ok
+        info=200
+        defcontext=ok
+        ctx=open
+        msgbase=32752
+        msgs=0
+        fetched=0
+        down=0
+        pmax_seen=0
+        secs=4
+        """
+        let pIdle = BridgeCheck.parseProbe(probeIdle)
+        expect(pIdle?.ours == true, "probe: healthy output — Wine loaded ours")
+        expect(pIdle?.build == "Sep 10 2026 19:34:12",
+               "probe: the build stamp keeps its spaces")
+        expect(BridgeCheck.probeVerdict(pIdle) == .noPackets,
+               "probe: loaded and open but untouched is 'no packets', not a fault")
+        expect(BridgeCheck.explainProbe(.noPackets, pIdle).contains("Press the pen"),
+               "probe: and asks for the one thing that was missing")
+
+        // The same run with the pen actually pressed.
+        let pLive = BridgeCheck.parseProbe(probeIdle
+            .replacingOccurrences(of: "msgs=0", with: "msgs=412")
+            .replacingOccurrences(of: "fetched=0", with: "fetched=409")
+            .replacingOccurrences(of: "pmax_seen=0", with: "pmax_seen=3871"))
+        expect(BridgeCheck.probeVerdict(pLive) == .working, "probe: packets arriving is working")
+        expect(BridgeCheck.explainProbe(.working, pLive).contains("409"),
+               "probe: and says how many actually arrived")
+
+        // The trap that #29 IS: "a wintab32 loaded" must never outrank "whose".
+        // A build that checked dllLoaded first, or that only looked at whether
+        // packets arrived, would call this healthy — it is the exact shape of
+        // the machine in the field report.
+        var sneaky = BridgeCheck.Probe()
+        sneaky.dllLoaded = true; sneaky.ours = false
+        sneaky.entryPoints = true; sneaky.contextOpen = true
+        sneaky.msgs = 99; sneaky.fetched = 99
+        expect(BridgeCheck.probeVerdict(sneaky) == .wineOwnDLL,
+               "probe: Wine's DLL stays the verdict even if packets flowed")
+
+        // Wine failing to run the probe at all is a DIFFERENT answer from the
+        // probe running and finding nothing, and they need opposite advice —
+        // so output that isn't the probe's must not parse into an empty Probe.
+        expect(BridgeCheck.parseProbe("wine: cannot find L\"wtprobe.exe\"") == nil,
+               "probe: output that isn't the probe's is nil, not an empty result")
+        expect(BridgeCheck.parseProbe("") == nil, "probe: no output at all is nil")
+        expect(BridgeCheck.probeVerdict(nil) == .didNotRun,
+               "probe: nil reads as 'did not run', not as a broken bridge")
+
+        // --- taking whole lines off a stream ----------------------------------
+        // THE TRAP, and it cost an evening: the probe is a WINDOWS program, so
+        // its lines end CRLF, and Swift counts "\r\n" as ONE Character that is
+        // not equal to "\n". A splitter written the obvious way finds no line
+        // ending at all, the buffer grows for ever, and the received-side bar
+        // sits at "starting…" while the probe streams perfectly into the pipe.
+        var crlf = "probe=1\r\ndll=loaded\r\ntick=1 p=5"
+        let got = BridgeCheck.takeLines(&crlf)
+        expect(got == ["probe=1", "dll=loaded"], "lines: CRLF lines are split, and split clean")
+        expect(crlf == "tick=1 p=5", "lines: the partial last line is kept for the next read")
+        // ...and plain LF must keep working, because the tests and the unit
+        // fixtures use it even where the real thing does not.
+        var lf = "a\nb\n"
+        expect(BridgeCheck.takeLines(&lf) == ["a", "b"], "lines: plain LF still splits")
+        expect(lf.isEmpty, "lines: nothing left over when the last line was complete")
+        // A read that lands between the CR and the LF must not invent a line.
+        var split1 = "alpha\r"
+        expect(BridgeCheck.takeLines(&split1) == ["alpha"], "lines: a chunk ending mid-CRLF yields its line")
+        var split2 = "\nbeta\r\n"
+        expect(BridgeCheck.takeLines(&split2) == ["beta"], "lines: and the orphaned LF adds nothing")
+
+        var none = "no newline yet"
+        expect(BridgeCheck.takeLines(&none).isEmpty, "lines: a fragment yields nothing")
+        expect(none == "no newline yet", "lines: and is left in the buffer untouched")
+
+        // --- the live ticks, streamed beside the pressure bar -----------------
+        // Real line, as wtprobe.exe emits it ~10 times a second.
+        let tick = BridgeCheck.parseTick("tick=1 p=1234 msgs=88 fetched=87 pmax=3381 down=80")
+        expect(tick?.pressure == 1234, "tick: the live pressure drives the received bar")
+        expect(tick?.fetched == 87 && tick?.msgs == 88, "tick: posted and read counted apart")
+        expect(tick?.pmax == 3381, "tick: peak carried through")
+
+        // The probe's header comes down the SAME pipe. Reading one of those as
+        // an all-zero tick would park the received bar at zero mid-stroke —
+        // i.e. show a working bridge as a dead one, the very fault being hunted.
+        expect(BridgeCheck.parseTick("ours=yes") == nil, "tick: a header line is not a tick")
+        expect(BridgeCheck.parseTick("dll=loaded") == nil, "tick: nor is dll=loaded")
+        expect(BridgeCheck.parseTick("") == nil, "tick: nor is an empty line")
+        // A partial line (the pipe split mid-write) must not read as a tick
+        // either — it would report a pressure that was never sent.
+        expect(BridgeCheck.parseTick("p=1234 msgs=88") == nil,
+               "tick: a fragment without the tick marker is refused")
+
+        for v in [BridgeCheck.ProbeVerdict.didNotRun, .noDLL, .wineOwnDLL, .unusable,
+                  .noContext, .noPackets, .notReadable, .working] {
+            expect(!BridgeCheck.explainProbe(v, pIdle).isEmpty, "probe: \(v) has a sentence")
+        }
+
         print(failures == 0 ? "BridgeCheck: all passed" : "BridgeCheck: \(failures) FAILED")
         exit(failures == 0 ? 0 : 1)
     }
