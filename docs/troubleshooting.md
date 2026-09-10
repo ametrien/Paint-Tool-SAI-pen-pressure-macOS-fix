@@ -53,6 +53,39 @@ Almost always the permission.
   grant again. Put it in **/Applications** first.
 - macOS only applies a new grant on a **fresh launch**. Quit and reopen the app.
 
+## Bluetooth: the tablet is connected, and macOS ignores it anyway
+
+Not this project's fault, and nothing here can fix it — the pen isn't reaching macOS at all, so
+there is nothing for us to pass on. It's worth a section because it looks exactly like a broken
+install, and because it happens now and then to a Wacom on Bluetooth in any app.
+
+**How to tell.** The tablet is paired and shown as connected, the Pen tab even names it
+(*"Intuos BT S connected"*), and still nothing happens: the cursor doesn't move and **Test pen**
+stays flat. That line naming your tablet comes from asking macOS which devices exist, which says
+only that it is there, not that it is sending anything. Plug the USB cable in: if the pen works
+that way, this is what you have.
+
+**Fix: restart the Wacom driver.** Both lines, in this order:
+
+```bash
+pkill -f "WacomTabletDriver|TabletDriver.app|WacomTouchDriver"
+```
+
+```bash
+launchctl kickstart -k "gui/$(id -u)/com.wacom.wacomtablet"
+```
+
+The second one matters: on the Mac this was written from, the drivers did **not** come back on
+their own after the first, and the tablet was dead until they were kicked back up. Give it a few
+seconds, then try the pen again.
+
+If it's still silent: power the tablet off and on, toggle Bluetooth off and on, or use the USB
+cable, which sidesteps the whole thing.
+
+*Unrelated but often noticed at the same time:* over Bluetooth the tablet doesn't publish its
+pressure range, so the Pen tab says *"No range reported over Bluetooth, using 4096"*. That's
+normal, not a fault — the number is remembered rather than measured.
+
 ## SAI won't save — "licence" errors
 
 Your certificate is probably in the wrong folder for your build of SAI.
