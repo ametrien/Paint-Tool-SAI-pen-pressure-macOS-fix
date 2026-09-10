@@ -109,6 +109,10 @@ struct TabletInfo {
     /// levels - 1, or nil when the tablet is connected but will not say — which
     /// is every Wacom over Bluetooth. See PressureCore.classifyTablet.
     let fullScale: Int?
+    /// "USB", "Bluetooth", ... Worth reporting: it decides whether the range is
+    /// readable at all, and Bluetooth's lower sample rate is the known cause of
+    /// boxy fast curves.
+    let transport: String
 }
 
 /// Every connected device that reports a tip-pressure range.
@@ -147,7 +151,8 @@ func detectTablets() -> [TabletInfo] {
         let short = maker.split(separator: " ").first.map(String.init)?
             .trimmingCharacters(in: CharacterSet(charactersIn: ".,")) ?? ""
         let name = (short.isEmpty || prod.lowercased().contains(short.lowercased())) ? prod : "\(short) \(prod)"
-        found.append(TabletInfo(name: name, fullScale: best))
+        let transport = (IOHIDDeviceGetProperty(d, kIOHIDTransportKey as CFString) as? String) ?? "?"
+        found.append(TabletInfo(name: name, fullScale: best, transport: transport))
     }
     // A tablet that states its range outranks one that doesn't, so Auto follows
     // something it can actually read rather than a silent Bluetooth device.
@@ -1433,8 +1438,10 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         os = os.replacingOccurrences(of: "Version ", with: "")
         let tablets = detectTablets()
         let tabletLine = tablets.isEmpty ? "none detected"
-            : tablets.map { t in t.fullScale.map { "\(t.name) \($0 + 1) levels" } ?? "\(t.name) (range not reported)" }
-                     .joined(separator: ", ")
+            : tablets.map { t in
+                let range = t.fullScale.map { "\($0 + 1) levels" } ?? "range not reported"
+                return "\(t.name) [\(t.transport)] \(range)"
+              }.joined(separator: ", ")
         wlog("=== session start · SAI Pen Pressure \(currentVersion()) · macOS \(os) ===")
         wlog("prefix \(appPrefix) · sai2.exe present: \(saiInstalledInPrefix())")
         wlog("bridge: our DLL installed: \(bridgeDLLMatchesApp()) · override: \(BridgeCheck.overrideValue(inUserReg: readUserReg() ?? "") ?? "MISSING")")
@@ -1981,19 +1988,20 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         // when the prefix is broken and you don't want to reason about which
         // half is at fault.
         scratchRow = NSStackView(); scratchRow.orientation = .horizontal; scratchRow.spacing = 8
+        // First, and outside Developer mode on purpose: the person who needs it
+        // is the one reporting a fault, and in #29 everything worth pasting was
+        // behind a switch they had no reason to find. It also has to sit before
+        // the hint below, which belongs to the two destructive buttons.
+        let reportBtn = NSButton(title: "Copy problem report", target: self, action: #selector(copyProblemReport))
+        reportBtn.bezelStyle = .rounded; reportBtn.controlSize = .small
+        scratchRow.addArrangedSubview(reportBtn)
         let scratchBtn = NSButton(title: "Reset everything & reinstall…", target: self, action: #selector(installFromScratch))
         scratchBtn.bezelStyle = .rounded; scratchBtn.controlSize = .small
         scratchRow.addArrangedSubview(scratchBtn)
         let uninstallBtn = NSButton(title: "Uninstall…", target: self, action: #selector(uninstallEverything))
         uninstallBtn.bezelStyle = .rounded; uninstallBtn.controlSize = .small
         scratchRow.addArrangedSubview(uninstallBtn)
-        // Outside Developer mode on purpose: the person who needs it is the one
-        // reporting a fault, and in #29 everything worth pasting was behind a
-        // switch they had no reason to find.
-        let reportBtn = NSButton(title: "Copy problem report", target: self, action: #selector(copyProblemReport))
-        reportBtn.bezelStyle = .rounded; reportBtn.controlSize = .small
-        scratchRow.addArrangedSubview(reportBtn)
-        let scratchHint = lbl("Your SAI folder and license are kept.", 10, color: .tertiaryLabelColor)
+        let scratchHint = lbl("Keeps your SAI folder and license.", 10, color: .tertiaryLabelColor)
         scratchRow.addArrangedSubview(scratchHint)
         // NOT appended to rowViews — that array is index-locked to `reqs` and an
         // extra entry would desync applyLayout()'s loop. It's Settings-only.
@@ -2044,6 +2052,11 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         let hc = NSButton(title: "Health check", target: self, action: #selector(healthCheckTapped))
         hc.bezelStyle = .rounded; hc.controlSize = .small
         devTools.addArrangedSubview(hc)
+        // The same button as on Setup. Duplicated deliberately: this is where
+        // someone already digging through logs expects to find it.
+        let devReportBtn = NSButton(title: "Copy problem report", target: self, action: #selector(copyProblemReport))
+        devReportBtn.bezelStyle = .rounded; devReportBtn.controlSize = .small
+        devTools.addArrangedSubview(devReportBtn)
         devSection.addArrangedSubview(devTools)
 
         // Pen feel, precisely: the dropdown picks five presets, this exposes the

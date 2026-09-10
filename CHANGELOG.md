@@ -43,12 +43,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
   SAI closed and nothing drawn. It is also the only thing that can say *which* wintab32 got
   loaded: Wine's built-in one exports the same names as ours, so the DLL now carries a private
   export that only ours has. **Developer → Bridge check** reports it on its own, no tablet needed.
+- **One button for a bug report, outside Developer mode.** Setup has **Copy problem report**: the
+  build, the machine, what is installed where, whether Wine loads our wintab32 or its own, what
+  the bridge last reported from inside SAI, and the tail of the log, in a single paste. The facts
+  #29 took two rounds of questions to establish were all obtainable already, and all of them were
+  behind a switch marked Developer that nobody reporting a fault has a reason to find. The report
+  also names the Mac and its chip, whether this app is running under Rosetta, the Wine version and
+  the architectures its binary actually contains, and each tablet with how it is connected.
+- **Every launch writes a header into the log**, so a log pasted into an issue says which build,
+  which prefix, whether the installed wintab32 is ours and what the override says. The log is also
+  readable again: the keepalive line changed state twice a second while drawing and buried
+  everything else, so it now sits behind `WT_WAKELOG` with the other chatty diagnostics.
 - **Diagnostics that cover the half that breaks.** Copy diagnostics used to say `wintab32.dll:
   true`, which only ever meant "the file exists" — it was true on the machine in #29 the whole
   time. It now reports whether that file matches this build, what the DLL override actually says,
   and what the bridge last reported from inside SAI.
 
 ### Changed
+- **A tablet connected over Bluetooth is no longer reported as missing.** Over USB a Wacom
+  publishes its pressure range and it can simply be read; over Bluetooth the same tablet publishes
+  opaque vendor reports and no pressure element at all, so the Pen tab concluded "no tablet
+  connected" about an Intuos that was driving the bar underneath the warning. Being a tablet and
+  stating your range are separate facts now, and the row says which one is missing.
 - **Interface text rewritten without em dashes, and shortened.** Roughly a hundred strings across
   every tab: each one rewritten to read the same without the dash rather than having it swapped
   for a comma, and the longer explanations cut back to what is worth reading in a window you are
