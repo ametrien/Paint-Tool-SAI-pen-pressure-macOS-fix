@@ -24,6 +24,35 @@ enum PressureCore {
     /// the hardware, and filter with `pressureDeadband` rather than by accident.
     static let maxPressureCeiling = 8191
 
+    /// What a connected HID device turned out to be.
+    enum TabletKind: Equatable {
+        case notATablet
+        case tablet(fullScale: Int)   // it published its pressure range
+        case rangeUnknown             // it IS a tablet, but won't say
+    }
+
+    /// Decide what a device is from the only two facts that distinguish them.
+    ///
+    /// `rangeUnknown` exists because of BLUETOOTH. Over USB a Wacom publishes a
+    /// tip-pressure element and its range can simply be read. Over Bluetooth the
+    /// same tablet publishes opaque vendor blobs instead — page 0xFF0D, usage
+    /// 0x01, whole reports hundreds of bits wide that only Wacom's own driver
+    /// decodes — and not one pressure element. Requiring that element therefore
+    /// concluded "no tablet connected" about a tablet that was sitting there
+    /// working, and the Pen tab said so in a warning triangle while pressure
+    /// from that very tablet drove the bar underneath it.
+    ///
+    /// THE TRAP: a MacBook's own trackpad advertises a digitizer page too — the
+    /// STANDARD one, 0x0D. Treating "has a digitizer page" as evidence promotes
+    /// the trackpad to a tablet on every Mac alive. Only the VENDOR page counts
+    /// on its own, which is the one thing the trackpad does not have.
+    static func classifyTablet(pressureSpans: [Int], hasVendorDigitizer: Bool) -> TabletKind {
+        // Ignore nonsense: some elements advertise the full 32-bit range.
+        let usable = pressureSpans.filter { $0 >= 255 && $0 <= maxPressureCeiling }
+        if let best = usable.max() { return .tablet(fullScale: best) }
+        return hasVendorDigitizer ? .rangeUnknown : .notATablet
+    }
+
     /// Levels offered in the setup window. 1024 is the long-standing default and
     /// stays first for a reason: it is the quietest.
     static let pressureChoices = [1023, 2047, 4095, 8191]
