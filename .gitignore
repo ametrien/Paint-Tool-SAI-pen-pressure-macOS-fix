@@ -27,3 +27,9 @@ helper.log
 
 dist/
 timelapse-encoder/sai-timelapse-encoder
+
+# Working notes, kept locally and OUT of the public repo. The handoff named
+# the maintainer's other GitHub accounts and local /Users paths, neither of
+# which belongs on a public page.
+HANDOFF-next-session.md
+experimental-changes.patch
