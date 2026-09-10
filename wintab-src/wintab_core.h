@@ -117,4 +117,40 @@ static int wtc_should_eat_click(int want_dedup, unsigned long dt,
     return want_dedup && dt < dedup_ms && same_root;
 }
 
+/* STATUS LINE: the DLL's answer to "did any of this reach SAI?".
+ *
+ * Everything the setup app can see lives on the mac side. Whether SAI loaded
+ * THIS dll, whether it opened a tablet context, whether our samples arrive, and
+ * whether SAI actually reads the packets we post are all known HERE — and until
+ * now they were only ever written to a debug log nobody switches on. That is
+ * how a field report (#29) could show every mac-side check passing while the
+ * bridge was inert: no one could see this side. So the producer writes these
+ * numbers to C:\wt_status.txt about once a second and the app reads the file.
+ * Two processes, one direction, no protocol to get wrong.
+ *
+ * One `key=value` per line, because the build stamp contains spaces and because
+ * a human who opens the file should learn exactly what the app learns.
+ *
+ * Returns the length written, or 0 when the buffer is too small — a truncated
+ * status parses as a confident lie, so callers write nothing at all instead.
+ */
+static int wtc_format_status(char *out, size_t cap,
+                             const char *build, int open,
+                             unsigned long recv, unsigned long posted,
+                             unsigned long fetched, int max_press) {
+    int n;
+    if (!out || cap == 0) return 0;
+    n = snprintf(out, cap,
+                 "v=1\n"
+                 "build=%s\n"
+                 "open=%d\n"
+                 "recv=%lu\n"
+                 "posted=%lu\n"
+                 "fetched=%lu\n"
+                 "pmax=%d\n",
+                 build ? build : "unknown", open ? 1 : 0, recv, posted, fetched, max_press);
+    if (n < 0 || (size_t)n >= cap) { out[0] = '\0'; return 0; }
+    return n;
+}
+
 #endif /* WINTAB_CORE_H */

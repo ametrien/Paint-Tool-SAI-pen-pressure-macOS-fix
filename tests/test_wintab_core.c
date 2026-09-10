@@ -157,6 +157,41 @@ int main(void) {
            wtc_should_eat_click(0, 302, WTC_CLICK_DEDUP_MS, 1) == 0,
            "field replay: WM_LBUTTONDOWN(dt=2ms) and WM_LBUTTONUP(dt=302ms) both survive");
 
+    /* --- wtc_format_status ------------------------------------------------
+     * The DLL's one channel back to the app (#29). The app decides what to tell
+     * the user from these seven lines, so the shape is a contract, not a log
+     * format: keys it doesn't recognise are ignorable, but a field that changes
+     * name or a truncated write would silently become "SAI never loaded us". */
+    {
+        char buf[256];
+        int n = wtc_format_status(buf, sizeof buf, "Sep 10 2026 18:07:11", 1,
+                                  1234, 1200, 1198, 4095);
+        EXPECT(n > 0 && (size_t)n == strlen(buf), "status: returns the length written");
+        EXPECT(strstr(buf, "v=1\n") == buf, "status: starts with the version marker");
+        EXPECT(strstr(buf, "\nbuild=Sep 10 2026 18:07:11\n") != NULL, "status: build stamp, spaces and all");
+        EXPECT(strstr(buf, "\nopen=1\n") != NULL, "status: open flag");
+        EXPECT(strstr(buf, "\nrecv=1234\n") != NULL && strstr(buf, "\nposted=1200\n") != NULL,
+               "status: what arrived and what we posted");
+        EXPECT(strstr(buf, "\nfetched=1198\n") != NULL, "status: what SAI actually read");
+        EXPECT(strstr(buf, "\npmax=4095\n") != NULL, "status: the pressure scale in force");
+
+        /* open=0 is a DIAGNOSIS ("SAI never asked for a tablet"), so it has to
+         * survive the round trip rather than be omitted as a falsy value. */
+        n = wtc_format_status(buf, sizeof buf, "b", 0, 0, 0, 0, 1023);
+        EXPECT(n > 0 && strstr(buf, "\nopen=0\n") != NULL, "status: closed context is written, not skipped");
+
+        /* A half-written status parses as a confident lie, so a buffer that
+         * cannot hold the whole thing must produce nothing at all. */
+        char small[8];
+        EXPECT(wtc_format_status(small, sizeof small, "Sep 10 2026", 1, 1, 1, 1, 1023) == 0 &&
+               small[0] == '\0',
+               "status: too small a buffer writes nothing rather than a truncation");
+        EXPECT(wtc_format_status(NULL, 0, "b", 1, 1, 1, 1, 1023) == 0, "status: no buffer, no crash");
+        EXPECT(wtc_format_status(buf, sizeof buf, NULL, 1, 1, 1, 1, 1023) > 0 &&
+               strstr(buf, "\nbuild=unknown\n") != NULL,
+               "status: a missing build stamp says so");
+    }
+
     if (failures) { printf("FAILED: %d test(s)\n", failures); return 1; }
     printf("All wintab_core tests passed.\n");
     return 0;

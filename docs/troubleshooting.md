@@ -12,12 +12,20 @@ Most reports fall into one of these. Each entry says **how to tell**, not just w
 
 Pressure isn't reaching SAI, *or* SAI is ignoring it.
 
-1. **Test it outside SAI first.** In the setup window click **Test pen** and press. If the bar
-   doesn't move, the problem is on the macOS side — see *no pressure at all* below. If it moves,
-   macOS is fine and the problem is inside SAI.
-2. **Check SAI's tablet API.** *Others → Options → Pen Tablet →* **Use WinTab API**, then quit
+1. **Read the "Pressure bridge" row in the setup window.** It answers this on its own. With SAI
+   closed it checks the two things that decide whether SAI can get pressure at all: our
+   `wintab32.dll` in the Wine prefix, and the Wine setting that makes SAI load it instead of
+   Wine's own (without that setting the file is ignored and every stroke is flat). If it's red,
+   press **Repair** — it takes a second and touches nothing else. **While SAI is running the same
+   row reports from inside SAI**: whether SAI asked for a tablet at all, whether pressure is
+   arriving, and how many points SAI has actually drawn from the pen.
+2. **Test it outside SAI first.** In the setup window click **Test pen** and press. If the bar
+   doesn't move, the problem is on the macOS side — see *no pressure at all* below. The bar shows
+   the exact number being sent onward, so if it moves, the mac half is fine — but on its own it
+   says nothing about whether SAI received it. That is what the bridge row above is for.
+3. **Check SAI's tablet API.** *Others → Options → Pen Tablet →* **Use WinTab API**, then quit
    SAI **completely** and relaunch. A rebuilt Wine prefix resets this.
-3. **Check the brush.** In SAI's tool panel, **Min Size**. At 100% pressure cannot change stroke
+4. **Check the brush.** In SAI's tool panel, **Min Size**. At 100% pressure cannot change stroke
    width — every stroke draws full width no matter how hard you press. Try ~10%.
 
 ## No pressure at all — the bar never moves

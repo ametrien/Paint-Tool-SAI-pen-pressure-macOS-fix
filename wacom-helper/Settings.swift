@@ -25,6 +25,19 @@ func timelapseOffMarker() -> String { appSupport() + "/timelapse-off.txt" }
 func timelapseRecordingEnabled() -> Bool {
     !FileManager.default.fileExists(atPath: timelapseOffMarker())
 }
+/// Developer tab: should our DLL write C:\wtlog.txt on the next SAI launch?
+///
+/// Off by default — it flushes a line per pen packet, so it is a debugging tool
+/// rather than a feature. A marker file, like the flags above, so that
+/// launchSAIApp() (a top-level function) can read it without going through the
+/// app delegate.
+func dllLogMarker() -> String { appSupport() + "/dlllog-on.txt" }
+func dllLoggingEnabled() -> Bool { FileManager.default.fileExists(atPath: dllLogMarker()) }
+func setDLLLogging(_ on: Bool) {
+    if on { try? "1".write(toFile: dllLogMarker(), atomically: true, encoding: .utf8) }
+    else { try? FileManager.default.removeItem(atPath: dllLogMarker()) }
+}
+
 /// Where finished videos are written. Defaults to ~/Movies; the Recording tab
 /// can point it anywhere.
 func timelapseOutputFolder() -> String {

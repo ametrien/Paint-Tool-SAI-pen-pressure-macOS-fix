@@ -5,6 +5,49 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
 
 ## [Unreleased]
 
+### Fixed
+- **A prefix that Wine never loaded our DLL into now heals itself.** Installing `wintab32.dll` is
+  only half the bridge: Wine prefers its own built-in one unless a registry setting in the prefix
+  says otherwise, and without that setting the file we keep so carefully up to date is simply
+  ignored — SAI draws from the plain mouse, every stroke the same width. That setting was written
+  once, during setup, and never looked at again, so a prefix that missed it stayed broken through
+  every relaunch, re-grant and app upgrade. It is checked on every launch now, and put back when
+  it's missing. Reported from the field, where every other check the app could make came back
+  green ([#29](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/29)).
+
+- **A repair that worked no longer reports failure.** Putting the registry setting back is done
+  through Wine, which keeps the registry in memory and only writes it out to `user.reg` when it
+  shuts down — several seconds later, and not at all while SAI is open. The app checked its own
+  repair by re-reading that file straight afterwards, so it read back the value it had just
+  replaced: the Repair button answered "Couldn't repair the bridge" and the log recorded
+  `override after repair = STILL MISSING`, both while the prefix was, moments later, correctly
+  set. The check now asks Wine what it is holding rather than what the file has got round to
+  saying, and a repair this app has made and verified stands for the rest of the session instead
+  of being contradicted by a stale file.
+
+### Added
+- **The setup window can finally see inside SAI.** Everything it checked before lived on the macOS
+  side; the half that matters runs inside SAI's own process, and nothing looked at it. The DLL now
+  reports what it is doing — whether SAI asked for a tablet, whether pen samples are arriving,
+  and how many points SAI has actually drawn from them — and a new **Pressure bridge** row says it
+  in a sentence, with a **Repair** button when something is missing. Four failures that used to
+  look identical from the outside ("strokes draw, pressure is flat") are now one glance apart.
+- **Diagnostics that cover the half that breaks.** Copy diagnostics used to say `wintab32.dll:
+  true`, which only ever meant "the file exists" — it was true on the machine in #29 the whole
+  time. It now reports whether that file matches this build, what the DLL override actually says,
+  and what the bridge last reported from inside SAI.
+
+### Changed
+- **The log buttons stop saying "Nothing there yet" and leaving it there.** An empty log used to
+  read like "this part isn't running", which is the wrong conclusion to hand someone who is
+  already lost — it is what happened in #29. Each of the three now says what the log is *for* and
+  what makes it appear: the DLL log explains that it is the SAI side of the bridge and offers to
+  switch logging on for the next launch; the wake log says it fills up while the app is running
+  SAI; and the helper log admits outright that only the command-line install writes one — this
+  app runs the helper inside itself — and points at Health check and the DLL log instead of
+  leaving a button that could never work.
+
+
 ## [0.3.2] — 2026-07-30
 
 ### Changed

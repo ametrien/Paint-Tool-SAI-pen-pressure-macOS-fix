@@ -66,6 +66,10 @@ typedef struct {
  * advertise to SAI can never disagree -- and SAI reads the axis at WTOpen, so
  * it must be settled before then. Missing or invalid file -> 1023 (the long-standing
  * default). */
+/* Build stamp: the only way to answer "is the fix even loaded?" from the
+ * outside. It goes into the log line AND into the status file the app reads. */
+#define WT_BUILD_STAMP __DATE__ " " __TIME__
+
 #define MAX_PRESS_CEILING 8191
 static int g_max_press = 1023;
 #define MAX_PRESS  g_max_press
@@ -748,6 +752,26 @@ static void ensure_click_dedup(void) {
 /* parse "p [x y w h]" into a SAMPLE (pure logic lives in wintab_core.h) */
 static int parse_sample(const char *buf, SAMPLE *out) { return wtc_parse_sample(buf, out); }
 
+/* Write the DLL -> app status file (format and rationale: wtc_format_status).
+ *
+ * Rewritten whole, every time: it is seven short lines, the app only ever reads
+ * it complete, and a partial rewrite would be read as a state we are not in.
+ * Unlike the debug log this is ALWAYS on — the whole point is that the answer
+ * exists before anyone thinks to switch logging on. Cost is one small write a
+ * second, off the drawing path.
+ */
+static void write_status(unsigned long recv, unsigned long posted) {
+    char buf[256];
+    int n = wtc_format_status(buf, sizeof buf, WT_BUILD_STAMP, g_open ? 1 : 0,
+                              recv, posted, g_fetch_count, g_max_press);
+    FILE *f;
+    if (n <= 0) return;
+    f = fopen("C:\\wt_status.txt", "wb");
+    if (!f) return;
+    fwrite(buf, 1, (size_t)n, f);
+    fclose(f);
+}
+
 /* producer: block on the UDP socket and post EACH datagram the instant it
  * arrives (no fixed poll interval — removes up to 6 ms of cursor-vs-ink lag
  * and packet clumping). A 100 ms recv timeout lets us do heartbeat logging
@@ -759,7 +783,7 @@ static int parse_sample(const char *buf, SAMPLE *out) { return wtc_parse_sample(
  * and posted= vs SAI's WTPacket fetch count — this locates where samples are
  * lost (capture vs transport vs SAI-side) instead of guessing. */
 static DWORD WINAPI producer(LPVOID arg) {
-    DWORD lastBeat = 0, lastDatagram = 0;
+    DWORD lastBeat = 0, lastDatagram = 0, lastStatus = 0;
     unsigned long recvCount = 0, gaps = 0;
     long lastSeq = -1;
     SOCKET sock = INVALID_SOCKET;
@@ -819,6 +843,11 @@ static DWORD WINAPI producer(LPVOID arg) {
                                           * ends are known exactly rather than
                                           * guessed from mouse events */
                 lastDatagram = GetTickCount();
+                /* A long stroke never reaches the housekeeping tick below — we
+                 * `continue` for as long as datagrams keep arriving — so the
+                 * status file would freeze exactly while everything works.
+                 * Refresh it from the hot path too, rarely enough to be free. */
+                if ((recvCount & 255) == 0) write_status(recvCount, g_posted);
             }
             flush_pending();            /* deliver freshest if SAI just caught up */
             continue;                   /* drain any backlog before housekeeping */
@@ -836,6 +865,10 @@ static DWORD WINAPI producer(LPVOID arg) {
         check_win32_wake(now);          /* helper asked us to restore Win32 focus? */
         check_zoom(now);                /* ...or asked us to zoom (pinch gesture) */
         flush_pending();                /* pen still/lifted: deliver the final point */
+        if (now - lastStatus > 1000) {
+            lastStatus = now;
+            write_status(recvCount, g_posted);
+        }
         if (now - lastBeat > 2000) {
             lastBeat = now;
             log_line("producer: open=%d hwnd=%p posted=%lu recv=%lu gaps=%lu fetched=%u udp=%s",
@@ -1092,7 +1125,7 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID r) {
          * nothing refreshed it on upgrade — so "is the fix even loaded?" was
          * unanswerable from the log, and a stale DLL looked exactly like a
          * broken fix. One line here settles it. */
-        log_line("==== OwnTab wintab32.dll loaded; built " __DATE__ " " __TIME__
+        log_line("==== OwnTab wintab32.dll loaded; built " WT_BUILD_STAMP
                  "; screen %dx%d virtual %dx%d maxPress=%d ====",
              g_screenW, g_screenH, g_virtW, g_virtH, g_max_press);
         CreateThread(NULL, 0, producer, NULL, 0, NULL);

@@ -244,6 +244,10 @@ func launchSAIApp() {
     }
     writeMaxPressureForDLL()      // must land before the DLL loads
     applyWineShortcutRemap(g_wine)          // Cmd->Ctrl via Wine (every launch; idempotent)
+    // Last session's status file must not be read as this session's. The app
+    // also treats an old timestamp as "not running", but a wrong "the bridge is
+    // live" is the single answer this must never give, so it gets two guards.
+    try? FileManager.default.removeItem(atPath: "\(appPrefix)/drive_c/wt_status.txt")
     let pf = "\(appPrefix)/drive_c/wt_pressure.txt"
     try? "0".write(toFile: pf, atomically: true, encoding: .ascii)
     let p = Process()
@@ -256,6 +260,10 @@ func launchSAIApp() {
     // next launch, which is why the menu title says so. An explicit
     // WT_TIMELAPSE in the environment always wins, for testing.
     if e["WT_TIMELAPSE"] == nil, timelapseRecordingEnabled() { e["WT_TIMELAPSE"] = "1" }
+    // The DLL reads this at load too, so the Developer tab's logging switch can
+    // only take effect on the next launch — which is why the dialog that offers
+    // it says to restart SAI.
+    if e["WT_DEBUG"] == nil, dllLoggingEnabled() { e["WT_DEBUG"] = "1" }
     p.environment = e
     startLiveEncoder()
     p.terminationHandler = { _ in
