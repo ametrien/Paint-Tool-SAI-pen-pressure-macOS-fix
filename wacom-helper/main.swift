@@ -106,7 +106,9 @@ let appPrefix: String = {
 /// simply doesn't report one. Callers fall back to 1023.
 struct TabletInfo {
     let name: String        // e.g. "Wacom Intuos BT S"
-    let fullScale: Int      // levels - 1
+    /// levels - 1, or nil when the tablet is connected but will not say — which
+    /// is every Wacom over Bluetooth. See PressureCore.classifyTablet.
+    let fullScale: Int?
 }
 
 /// Every connected device that reports a tip-pressure range.
@@ -119,17 +121,26 @@ func detectTablets() -> [TabletInfo] {
     var found: [TabletInfo] = []
     for d in devs {
         guard let els = IOHIDDeviceCopyMatchingElements(d, nil, IOOptionBits(kIOHIDOptionsTypeNone)) as? [IOHIDElement] else { continue }
-        var best = 0
+        var spans: [Int] = []
+        var vendorDigitizer = false
         for e in els {
             let page = IOHIDElementGetUsagePage(e), usage = IOHIDElementGetUsage(e)
+            // The VENDOR digitizer page is what a Wacom falls back to over
+            // Bluetooth, where it publishes no readable pressure element at
+            // all. The standard page 0x0D deliberately does NOT count here: a
+            // MacBook trackpad advertises that one.
+            if page == 0xFF0D { vendorDigitizer = true }
             // 0x30 = Tip Pressure, on the standard or the vendor digitizer page.
             guard usage == 0x30, page == 0x0D || page == 0xFF0D else { continue }
-            let span = Int(IOHIDElementGetLogicalMax(e)) - Int(IOHIDElementGetLogicalMin(e))
-            // Ignore nonsense: some elements advertise the full 32-bit range.
-            guard span >= 255, span <= PressureCore.maxPressureCeiling else { continue }
-            best = max(best, span)
+            spans.append(Int(IOHIDElementGetLogicalMax(e)) - Int(IOHIDElementGetLogicalMin(e)))
         }
-        guard best > 0 else { continue }
+        let kind = PressureCore.classifyTablet(pressureSpans: spans, hasVendorDigitizer: vendorDigitizer)
+        let best: Int?
+        switch kind {
+        case .notATablet:            continue
+        case .rangeUnknown:          best = nil
+        case .tablet(let fullScale): best = fullScale
+        }
         let maker = (IOHIDDeviceGetProperty(d, kIOHIDManufacturerKey as CFString) as? String) ?? ""
         let prod  = (IOHIDDeviceGetProperty(d, kIOHIDProductKey as CFString) as? String) ?? "tablet"
         // "Wacom Co.,Ltd." + "Intuos BT S" reads badly; keep it short.
@@ -138,13 +149,15 @@ func detectTablets() -> [TabletInfo] {
         let name = (short.isEmpty || prod.lowercased().contains(short.lowercased())) ? prod : "\(short) \(prod)"
         found.append(TabletInfo(name: name, fullScale: best))
     }
-    return found.sorted { $0.fullScale > $1.fullScale }
+    // A tablet that states its range outranks one that doesn't, so Auto follows
+    // something it can actually read rather than a silent Bluetooth device.
+    return found.sorted { ($0.fullScale ?? -1) > ($1.fullScale ?? -1) }
 }
 
 /// The tablet we follow in Auto mode: the highest-resolution one connected.
 func detectTablet() -> TabletInfo? { detectTablets().first }
 
-func detectTabletFullScale() -> Int? { detectTablet()?.fullScale }
+func detectTabletFullScale() -> Int? { detectTablet()?.fullScale ?? nil }
 
 
 
@@ -1330,7 +1343,6 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     // "Test Tablet Pressure" widgets — a live 0–100% bar so the user can confirm
     // the pen works BEFORE launching SAI.
     var testBtn: NSButton!
-    var probeBtn: NSButton!
     var probeHint: NSTextField!
     var recvBar: PressureBar!
     var recvLabel: NSTextField!
@@ -2003,12 +2015,6 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         let hc = NSButton(title: "Health check", target: self, action: #selector(healthCheckTapped))
         hc.bezelStyle = .rounded; hc.controlSize = .small
         devTools.addArrangedSubview(hc)
-        // The far side on its own, without a pen test running: does Wine load
-        // OUR wintab32, and will it open a context? That much needs no tablet
-        // and no hand, and it is the half of #29 that nothing could answer.
-        probeBtn = NSButton(title: "Bridge check", target: self, action: #selector(probeTapped))
-        probeBtn.bezelStyle = .rounded; probeBtn.controlSize = .small
-        devTools.addArrangedSubview(probeBtn)
         devSection.addArrangedSubview(devTools)
 
         // Pen feel, precisely: the dropdown picks five presets, this exposes the
@@ -2392,15 +2398,33 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
             }
         case 1:
             let t = all[0]
+            guard let scale = t.fullScale else {
+                // Connected, working, and silent about its range — a Wacom over
+                // Bluetooth. No warning triangle: nothing is wrong, we simply
+                // cannot ask, and the number in use is very likely right.
+                pressureInfo.stringValue = auto
+                    ? "\(t.name) connected — it doesn't report its range over Bluetooth, so using \(inUse)"
+                    : "set by you: \(inUse) · \(t.name) connected (it doesn't report its range over Bluetooth)"
+                break
+            }
             pressureInfo.stringValue = auto
-                ? "\(t.name) reports \(t.fullScale + 1) levels — using that"
-                : "set by you: \(inUse) · \(t.name) reports \(t.fullScale + 1)"
+                ? "\(t.name) reports \(scale + 1) levels — using that"
+                : "set by you: \(inUse) · \(t.name) reports \(scale + 1)"
         default:
             let t = all[0]
-            let others = all.dropFirst().map { "\($0.name) \($0.fullScale + 1)" }.joined(separator: ", ")
+            func describe(_ i: TabletInfo) -> String {
+                i.fullScale.map { "\(i.name) \($0 + 1)" } ?? "\(i.name) (range unknown)"
+            }
+            let others = all.dropFirst().map(describe).joined(separator: ", ")
+            guard let scale = t.fullScale else {
+                pressureInfo.stringValue = auto
+                    ? "\(all.count) tablets connected — none reports its range, so using \(inUse). Connected: \(describe(t)), \(others)"
+                    : "set by you: \(inUse) · connected: \(describe(t)), \(others)"
+                break
+            }
             pressureInfo.stringValue = auto
-                ? "\(all.count) tablets connected — following the highest, \(t.name) (\(t.fullScale + 1)). Also: \(others)"
-                : "set by you: \(inUse) · connected: \(t.name) \(t.fullScale + 1), \(others)"
+                ? "\(all.count) tablets connected — following the highest, \(t.name) (\(scale + 1)). Also: \(others)"
+                : "set by you: \(inUse) · connected: \(t.name) \(scale + 1), \(others)"
         }
     }
 
@@ -2604,6 +2628,11 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
                     // receiving bar stays empty and only this line can say why.
                     self.probeHint.isHidden = false
                     self.probeHint.stringValue = BridgeCheck.explainProbe(v, pr)
+                    // ...and stop the receiving side reading "starting…", which
+                    // is what it said for as long as the fault lasted, implying
+                    // the test had hung rather than answered.
+                    self.recvBar.value = 0
+                    self.recvLabel.stringValue = "nothing"
                 }
             }
             probeStream.start(w)
@@ -2648,56 +2677,6 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         if sentCaption != nil { sentCaption.isHidden = true }
         if probeHint != nil { probeHint.isHidden = true }
         applyLayout()
-    }
-
-    /// Test the RECEIVING half of the bridge, with SAI closed.
-    ///
-    /// Runs wtprobe.exe — a real Windows process — under Wine. It resolves
-    /// wintab32.dll through the same registry override SAI's own load goes
-    /// through, opens a tablet context and answers the DLL's packet messages,
-    /// so it fails in exactly the ways SAI fails. Before this, the only way to
-    /// find out whether the far side worked was to launch SAI and look at a
-    /// stroke, which is why #29 took two rounds to place.
-    @objc func probeTapped() {
-        guard let wine = wineBin() else {
-            alertUser("Install Wine first — the bridge being tested lives inside the Wine prefix.")
-            return
-        }
-        guard bridgeProbePath() != nil else {
-            alertUser("This build has no bridge probe in it.\n\nIt ships in the .app; running the helper straight from a build directory leaves it out.")
-            return
-        }
-        // The probe reports what reaches Wine, so something has to be sending:
-        // without the engine running, a perfectly healthy bridge would answer
-        // "no pen data arrived" and read as a fault.
-        guard startPressureEngineOnce() else {
-            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
-            alertUser("Couldn't read the tablet yet.\n\nIn System Settings → Privacy & Security → Input Monitoring, turn ON \"SAI Pen Pressure\", then reopen this app and try again.")
-            return
-        }
-        let secs = 5
-        probeBtn.isEnabled = false
-        probeBtn.title = "Checking…"
-        subtitle.stringValue = "Checking the bridge from inside Wine — press the pen if you want packet counts…"
-        DispatchQueue.global().async {
-            let probe = runBridgeProbe(wine, seconds: secs)
-            let verdict = BridgeCheck.probeVerdict(probe)
-            DispatchQueue.main.async {
-                self.probeBtn.isEnabled = true
-                self.probeBtn.title = "Bridge check"
-                self.refresh()      // the probe may have just proved the row wrong
-                var msg = BridgeCheck.explainProbe(verdict, probe)
-                if let pr = probe {
-                    msg += "\n\nwintab32 loaded: \(pr.dllLoaded ? "yes" : "no")"
-                    msg += "\nand it is ours: \(pr.ours ? "yes" : "no — Wine's own")"
-                    if !pr.build.isEmpty { msg += "\nbuilt: \(pr.build)" }
-                    msg += "\ncontext opened: \(pr.contextOpen ? "yes" : "no")"
-                    msg += "\npackets posted / read: \(pr.msgs) / \(pr.fetched)"
-                    msg += "\nstrongest pressure seen: \(pr.pmaxSeen)"
-                }
-                alertUser(msg)
-            }
-        }
     }
 
     @objc func launchTapped() {

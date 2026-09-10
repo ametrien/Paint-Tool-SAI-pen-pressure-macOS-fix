@@ -177,8 +177,15 @@ int main(int argc, char **argv) {
         /* ~10/s: fast enough to track a stroke next to a 60fps bar, slow
          * enough that the pipe carries nothing worth worrying about. */
         if (now >= next_tick) {
-            printf("tick=1 p=%u msgs=%lu fetched=%lu pmax=%u down=%lu\n",
-                   g_last_press, g_msgs, g_fetched, g_pmax_seen, g_down);
+            /* If the app has gone, so has the reason to exist. A tick that
+             * cannot be written means the read end of the pipe is closed, and
+             * without this the process outlives the test that started it: four
+             * of them were found running at once, each holding a WinTab context
+             * and keeping wineserver alive with a stale registry. Terminating
+             * from the mac side is not enough on its own — a signal to the wine
+             * loader does not reliably take the Windows process with it. */
+            if (printf("tick=1 p=%u msgs=%lu fetched=%lu pmax=%u down=%lu\n",
+                       g_last_press, g_msgs, g_fetched, g_pmax_seen, g_down) < 0) break;
             next_tick = now + 100;
         }
         if (now >= until) break;
