@@ -1,6 +1,8 @@
 # Canvas timelapse — design plan
 
-Status: **planning / Phase 0**. Branch: `feature/canvas-timelapse`.
+Status: **shipped** — see the Recording and Videos tabs. Kept as the design record rather than
+as a live plan: it is also the account of how the memory offsets were derived independently here,
+which is what keeps the MIT / GPL-3.0 boundary with art-timelapse clear (see [Licensing](#licensing)).
 
 Goal: record a timelapse of a SAI session by reading SAI's canvas out of memory, so the
 video shows the **true flat canvas** — no UI, no zoom, no pan, no rotation — with one frame
