@@ -3,6 +3,20 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- **A setup that cannot install the bridge now says so.** Copying the DLL into the prefix was
+  checked; writing the registry setting that makes Wine load it was not — the command went out
+  with its exit status unread, the value never verified and nothing written to any log. A failed
+  write was therefore undetectable by construction, and permanent, because later launches return
+  early once SAI is in the prefix. That is the state the prefix in
+  [#29](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/29) arrived in.
+  Setup now uses the same verified path as the Repair button, and says so at the moment it fails
+  instead of finishing with a satisfied face
+  ([#34](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/34)).
+
+
 ## [0.3.3] — 2026-09-10
 
 ### Fixed
