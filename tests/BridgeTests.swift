@@ -284,6 +284,28 @@ struct BridgeTests {
         expect(BridgeCheck.parseTick("p=1234 msgs=88") == nil,
                "tick: a fragment without the tick marker is refused")
 
+        // --- the verdict has to follow the ticks, not the header --------------
+        // THE TRAP: the header is everything the probe says BEFORE its first
+        // tick. It describes the wiring and cannot describe traffic, because
+        // none has happened yet — so a verdict taken from it alone is fixed at
+        // "no pen data reached it" and stays there while the received bar fills
+        // up in front of you. That exact sentence sat under 1134 arrived
+        // packets before this was fixed.
+        let headerOnly = BridgeCheck.parseProbe(probeIdle)
+        expect(BridgeCheck.probeVerdict(headerOnly) == .noPackets,
+               "merge: before any tick, the honest answer is 'nothing yet'")
+        let flowing = BridgeCheck.merging(headerOnly,
+                        BridgeCheck.Tick(pressure: 1455, msgs: 1140, fetched: 1134, pmax: 4095, down: 900))
+        expect(flowing?.fetched == 1134, "merge: the tick's counters land in the probe")
+        expect(BridgeCheck.probeVerdict(flowing) == .working,
+               "merge: and the verdict follows them to 'working'")
+        expect(BridgeCheck.explainProbe(BridgeCheck.probeVerdict(flowing), flowing).contains("1134"),
+               "merge: the sentence quotes what actually arrived")
+        // Merging must not resurrect a probe that never ran, or a dead bridge
+        // would start reporting traffic the moment a stray tick was parsed.
+        expect(BridgeCheck.merging(nil, BridgeCheck.Tick(pressure: 1, msgs: 1, fetched: 1, pmax: 1, down: 1)) == nil,
+               "merge: nothing to merge into stays nothing")
+
         for v in [BridgeCheck.ProbeVerdict.didNotRun, .noDLL, .wineOwnDLL, .unusable,
                   .noContext, .noPackets, .notReadable, .working] {
             expect(!BridgeCheck.explainProbe(v, pIdle).isEmpty, "probe: \(v) has a sentence")
