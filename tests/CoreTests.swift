@@ -169,6 +169,32 @@ struct CoreTests {
     expect(PressureCore.setupCreep(from: 0.5, to: 0.5, elapsed: 10, expected: 5) == 0.5,
            "creep: zero-width step stays put")
 
+    // --- what counts as a tablet ---------------------------------------------
+    // Over USB a Wacom publishes its tip-pressure range and it can be read.
+    expect(PressureCore.classifyTablet(pressureSpans: [1023], hasVendorDigitizer: true)
+             == .tablet(fullScale: 1023), "tablet: a published range is used")
+    expect(PressureCore.classifyTablet(pressureSpans: [255, 4095, 1023], hasVendorDigitizer: true)
+             == .tablet(fullScale: 4095), "tablet: the widest usable range wins")
+    // An element advertising the whole 32-bit space is nonsense, not a
+    // four-billion-level tablet.
+    expect(PressureCore.classifyTablet(pressureSpans: [2147483647], hasVendorDigitizer: true)
+             == .rangeUnknown, "tablet: an absurd range is ignored, not believed")
+    expect(PressureCore.classifyTablet(pressureSpans: [7], hasVendorDigitizer: true)
+             == .rangeUnknown, "tablet: a too-small range is ignored too")
+
+    // THE BLUETOOTH CASE, measured on a real Intuos BT S: over Bluetooth it
+    // publishes NO pressure element at all, only opaque vendor blobs on page
+    // 0xFF0D. It is still a tablet, and calling it "no tablet connected" is
+    // what put a warning triangle directly above a working pressure bar.
+    expect(PressureCore.classifyTablet(pressureSpans: [], hasVendorDigitizer: true)
+             == .rangeUnknown, "tablet: a Bluetooth Wacom is a tablet of unknown range")
+
+    // THE TRAP: a MacBook trackpad advertises the STANDARD digitizer page and
+    // no pressure element. Promote that to a tablet and every Mac reports one
+    // whether or not anything is plugged in.
+    expect(PressureCore.classifyTablet(pressureSpans: [], hasVendorDigitizer: false)
+             == .notATablet, "tablet: a trackpad-shaped device is not a tablet")
+
     if failures > 0 { print("FAILED: \(failures) test(s)"); exit(1) }
         print("All PressureCore tests passed.")
     }

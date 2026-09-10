@@ -238,6 +238,9 @@ final class BridgeProbeStream {
     private var header = ""          // the key-per-line preamble, before ticks start
     private var probe: BridgeCheck.Probe?          // the header, kept up to date by ticks
     private var lastVerdict: BridgeCheck.ProbeVerdict?
+    private var wine: String?
+    private var seconds = 3600
+    private var wanted = false                     // start() called, stop() not yet
 
     /// Both are called on the main queue.
     var onTick: ((BridgeCheck.Tick) -> Void)?
@@ -245,6 +248,21 @@ final class BridgeProbeStream {
 
     func start(_ wine: String, seconds: Int = 3600) {
         stop()
+        self.wine = wine
+        self.seconds = seconds
+        wanted = true
+        launch()
+    }
+
+    /// Start one probe process. Called again by relaunchIfWanted() whenever the
+    /// last one ended, which is how a Repair reaches a test that is ALREADY
+    /// running: a probe against a broken prefix exits in under a second (there
+    /// is no context to open), so without retrying, the received bar reads
+    /// "starting…" until the whole app is restarted — which is exactly what it
+    /// did after the first successful Repair.
+    private func launch() {
+        guard let wine = wine else { return }
+        let seconds = self.seconds
         guard let exe = bridgeProbePath() else { report(.didNotRun, nil); return }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: wine)
@@ -275,6 +293,7 @@ final class BridgeProbeStream {
             // Reaching EOF without a tick is itself the answer — no context,
             // or Wine's own DLL — and it is the most important one there is.
             self?.flushVerdict()
+            self?.relaunchIfWanted()
         }
     }
 
@@ -292,6 +311,18 @@ final class BridgeProbeStream {
             } else {
                 header += line + "\n"
             }
+        }
+    }
+
+    /// Try again shortly, so long as the test is still running. Slow enough
+    /// that a permanently broken prefix is not a spin loop, quick enough that
+    /// pressing Repair feels like it worked.
+    private func relaunchIfWanted() {
+        guard wanted else { return }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self = self, self.wanted else { return }
+            self.tail = ""; self.header = ""; self.probe = nil; self.lastVerdict = nil
+            self.launch()
         }
     }
 
@@ -318,10 +349,21 @@ final class BridgeProbeStream {
     }
 
     func stop() {
+        wanted = false
         if let p = proc {
-            (p.standardOutput as? Pipe)?.fileHandleForReading.readabilityHandler = nil
             p.terminationHandler = nil
+            // Closing our end first is what actually stops it: the probe exits
+            // when a tick cannot be written. terminate() alone leaves it
+            // running, because the signal goes to the wine loader and does not
+            // reliably reach the Windows process behind it — which is how four
+            // stray probes came to be running at once.
+            try? (p.standardOutput as? Pipe)?.fileHandleForReading.close()
             if p.isRunning { p.terminate() }
+            // ...and if it is still there a moment later, insist.
+            let pid = p.processIdentifier
+            DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
+                if p.isRunning { kill(pid, SIGKILL) }
+            }
         }
         proc = nil
         tail = ""; header = ""; probe = nil; lastVerdict = nil
