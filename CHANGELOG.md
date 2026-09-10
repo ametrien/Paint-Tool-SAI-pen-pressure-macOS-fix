@@ -49,6 +49,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
   and what the bridge last reported from inside SAI.
 
 ### Changed
+- **Interface text rewritten without em dashes, and shortened.** Roughly a hundred strings across
+  every tab: each one rewritten to read the same without the dash rather than having it swapped
+  for a comma, and the longer explanations cut back to what is worth reading in a window you are
+  trying to get out of.
+- **Pressure is now easiest to test with the AirBrush tool**, whose stock settings show it most
+  clearly. Said so in the troubleshooting steps, the testing checklist, and the one row that used
+  to advise only checking Min Size.
 - **The log buttons stop saying "Nothing there yet" and leaving it there.** An empty log used to
   read like "this part isn't running", which is the wrong conclusion to hand someone who is
   already lost — it is what happened in #29. Each of the three now says what the log is *for* and

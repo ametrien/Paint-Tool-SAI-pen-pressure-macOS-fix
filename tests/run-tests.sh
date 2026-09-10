@@ -158,13 +158,13 @@ WINE REGISTRY Version 2
 REG
 out=$(bridge)
 want "bridge: builtin-first override is reported as NOT installed" "$out" "installedOK=false"
-want "bridge: and says so in words the user can act on"           "$out" "OWN wintab32"
+want "bridge: and says so in words the user can act on"           "$out" "own wintab32"
 
 sed -i '' 's/builtin,native/native,builtin/' "$BR/prefix/user.reg"
 out=$(bridge)
 want "bridge: repaired override reads as installed" "$out" "installedOK=true"
 case "$out" in
-  *saiRunning=false*) want "bridge: with nothing to report until SAI runs" "$out" "While SAI is running";;
+  *saiRunning=false*) want "bridge: with nothing to report until SAI runs" "$out" "While SAI runs";;
   *) echo "  skip bridge: 'nothing to report yet' (SAI is open on this machine)";;
 esac
 
@@ -191,7 +191,7 @@ touch -t 202001010000 "$BR/prefix/drive_c/wt_status.txt"
 out=$(bridge)
 want "bridge: a stale status file is not evidence of a live bridge" "$out" "verdict=notLoaded"
 case "$out" in
-  *saiRunning=false*) want "bridge: it falls back to what can be checked without SAI" "$out" "While SAI is running";;
+  *saiRunning=false*) want "bridge: it falls back to what can be checked without SAI" "$out" "While SAI runs";;
   *) echo "  skip bridge: 'falls back without SAI' (SAI is open on this machine)";;
 esac
 
