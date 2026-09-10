@@ -121,7 +121,7 @@ func finalizeTimelapseNow() -> Bool {
     p.arguments = ["--frames", frames, "--out", timelapseSessionBase(), "--fps", "12", "--finalize"]
     p.standardOutput = FileHandle.nullDevice
     p.standardError = FileHandle.nullDevice
-    do { try p.run() } catch { wlog("timelapse: auto-finalise could not start — \(error)"); return false }
+    do { try p.run() } catch { wlog("timelapse: auto-finalise could not start: \(error)"); return false }
     p.waitUntilExit()
     wlog("timelapse: auto-finalised on close (exit \(p.terminationStatus))")
     if p.terminationStatus == 0 {
@@ -153,7 +153,7 @@ func startLiveEncoder() {
     p.standardOutput = FileHandle.nullDevice
     p.standardError = FileHandle.nullDevice
     do { try p.run(); g_liveEncoder = p; wlog("timelapse: live encoder started") }
-    catch { wlog("timelapse: could not start the live encoder — \(error)") }
+    catch { wlog("timelapse: could not start the live encoder: \(error)") }
 }
 /// Stop it politely. SIGTERM rather than SIGKILL matters: the encoder closes
 /// its AVAssetWriters on the way out, and a video that never gets

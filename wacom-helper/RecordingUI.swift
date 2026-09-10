@@ -25,7 +25,7 @@ extension SetupController {
         recordingTab.addArrangedSubview(lbl("Recording", 18, bold: true))
         recordingTab.addArrangedSubview(
             lbl("What gets captured while you draw. Finished videos are in the Videos tab.\n"
-                + "Captures the canvas itself, not the screen — no panels, no zooming, no cursor.",
+                + "Captures the canvas itself, not the screen: no panels, no zooming, no cursor.",
                 12, color: .secondaryLabelColor))
 
         recCheck = NSButton(checkboxWithTitle: "Record a timelapse while I draw",
@@ -96,13 +96,13 @@ extension SetupController {
         recordingTab.addArrangedSubview(recPreview)
 
         recordingTab.addArrangedSubview(
-            lbl("Closing SAI makes the video by itself — this button is only for making one early.",
+            lbl("Closing SAI makes the video by itself. This button only makes one early.",
                 11, color: .tertiaryLabelColor))
         recordingTab.addArrangedSubview(
-            lbl("You can make a video while SAI is still open — recording carries on afterwards.",
+            lbl("You can make a video while SAI is open; recording carries on afterwards.",
                 11, color: .tertiaryLabelColor))
         recordingTab.addArrangedSubview(
-            lbl("Drawing on this again another day adds to the same video — see the Videos tab.",
+            lbl("Drawing on this again another day adds to the same video (see the Videos tab).",
                 11, color: .tertiaryLabelColor))
         recordingTab.addArrangedSubview(
             lbl("Undo is captured at your next stroke rather than the moment you press it.",
@@ -120,7 +120,7 @@ extension SetupController {
         let n = timelapseFrameCount()
         let segs = timelapseSegmentCount()
         recFramesLabel.stringValue = (n == 0 && segs == 0)
-            ? (timelapseOn ? "Nothing recorded yet — launch SAI and draw."
+            ? (timelapseOn ? "Nothing recorded yet. Launch SAI and draw."
                            : "Recording is off.")
             : (segs > 0
                ? "Recorded and encoded\(n > 0 ? ", \(n) frame\(n == 1 ? "" : "s") still to process" : ".")"
@@ -134,7 +134,7 @@ extension SetupController {
             var lines = ["Using \(prettyBytes(use.total)) on disk"
                          + (use.canvases.count > 1 ? " across \(use.canvases.count) canvases:" : ":")]
             for c in use.canvases.prefix(6) {
-                lines.append("   \(c.name.isEmpty ? "(unnamed)" : c.name) — "
+                lines.append("   \(c.name.isEmpty ? "(unnamed)" : c.name): "
                              + "\(c.frames) frame\(c.frames == 1 ? "" : "s"), \(prettyBytes(c.bytes))")
             }
             if use.canvases.count > 6 { lines.append("   …and \(use.canvases.count - 6) more") }

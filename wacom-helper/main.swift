@@ -1100,11 +1100,11 @@ func saiReady() -> Bool { savedSAIPath() != nil }
 if !isAppMode {
     // Dev / terminal mode: start the engine right away and run.
     if !startPressureEngine() {
-        print("ERROR: tap failed — grant this terminal Input Monitoring, then re-run.")
+        print("ERROR: tap failed. Grant this terminal Input Monitoring, then re-run.")
         exit(1)
     }
     signal(SIGINT) { _ in try? "0".write(toFile: outPath, atomically: true, encoding: .ascii); exit(0) }
-    print("wacom-pressure-helper running — writing to \(outPath). Ctrl+C to quit.")
+    print("wacom-pressure-helper running. Writing to \(outPath). Ctrl+C to quit.")
     CFRunLoopRun()
 }
 
@@ -1233,7 +1233,7 @@ final class PenScratchView: NSView {
             let a: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 11),
                 .foregroundColor: NSColor.tertiaryLabelColor]
-            let t = "Draw here with your pen — strokes taper with pressure, then fade"
+            let t = "Draw here with your pen. Strokes taper with pressure, then fade"
             let sz = t.size(withAttributes: a)
             t.draw(at: NSPoint(x: (bounds.width - sz.width) / 2,
                                y: (bounds.height - sz.height) / 2), withAttributes: a)
@@ -1436,24 +1436,24 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
             // SAI is COPIED out of the folder you pick; it then runs from the
             // Wine prefix. Showing only "Using: <your folder>" made people edit
             // that folder (e.g. drop the .slc in) and wonder why nothing changed.
-            Req(title: "PaintTool SAI folder (source)", detail: "No folder chosen yet — click Choose.", fixTitle: "Choose…",
+            Req(title: "PaintTool SAI folder (source)", detail: "No folder chosen yet. Click Choose.", fixTitle: "Choose…",
                 ok: { saiReady() }, fix: { [weak self] in self?.chooseSAI() }, required: true,
                 dynamicDetail: { savedSAIPath().map { "Copied from: \(($0 as NSString).abbreviatingWithTildeInPath)" }
-                                 ?? "No folder chosen yet — click Choose." },
+                                 ?? "No folder chosen yet. Click Choose." },
                 keepButton: true),
             Req(title: "Installed in Wine (what actually runs)", detail: "Not installed yet.", fixTitle: "Install…",
                 ok: { saiInstalledInPrefix() && !prefixIsStale() },
                 fix: { [weak self] in self?.reinstallMenu() }, required: true,
                 dynamicDetail: {
                     let where_ = (prefixSAIDir as NSString).abbreviatingWithTildeInPath
-                    if !saiInstalledInPrefix() { return "Not installed yet — will be created on Launch." }
-                    if prefixIsStale() { return "OUT OF DATE — source folder changed. Reinstall to apply." }
+                    if !saiInstalledInPrefix() { return "Not installed yet. Created on Launch." }
+                    if prefixIsStale() { return "OUT OF DATE. Source folder changed, reinstall to apply." }
                     // Read from SAI's own history.txt, so it survives renamed folders.
                     return saiBuildLabel().map { "\(where_)  ·  \($0)" } ?? where_
                 },
                 keepButton: true, keepButtonTitle: "Reinstall…",
                 enabledIf: { wineBin() != nil && saiReady() },
-                blockedHint: "Needs Wine and a SAI folder first — SAI is installed INTO the Wine prefix.",
+                blockedHint: "Needs Wine and a SAI folder first.",
                 extraTitle: "Show ▸", extraAction: { [weak self] in self?.openSAIInWine() }),
             // THE BRIDGE ITSELF — a file in the prefix and a Wine setting that
             // decides whether that file is ever loaded. Both used to be assumed
@@ -1471,21 +1471,21 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
                 dynamicDetail: { bridgeDetailLine() },
                 keepButton: true, keepButtonTitle: "Repair…",
                 enabledIf: { wineBin() != nil },
-                blockedHint: "Needs Wine first — the bridge is installed into the Wine prefix."),
+                blockedHint: "Needs Wine first."),
             // Optional (⚪️ not ❌): SAI launches without a licence, you just
             // can't save. Lives next to the INSTALLED row because that's the
             // folder it has to land in.
             // OPTIONAL, and deliberately not a blocker: SAI installs, launches and
             // draws without a licence — it just can't save. Marked ⚪️, never ❌.
-            Req(title: "SAI license (.slc) — optional", detail: "Your own license from SYSTEMAX — only needed to save.", fixTitle: "Install…",
+            Req(title: "SAI license (.slc), optional", detail: "Your own license from SYSTEMAX. Only needed to save.", fixTitle: "Install…",
                 ok: { installedLicenseName() != nil },
                 fix: { [weak self] in self?.chooseLicense() }, required: false,
                 dynamicDetail: {
-                    if let n = installedLicenseName() { return "\(n) — \(licenseLocationSummary())" }
+                    if let n = installedLicenseName() { return "\(n) · \(licenseLocationSummary())" }
                     if !slcFiles(in: licenseStashDir()).isEmpty {
                         return "Saved copy will be restored when SAI is installed."
                     }
-                    return "Not installed — SAI still runs and draws, but can't save."
+                    return "Not installed. SAI runs and draws, but can't save."
                 },
                 keepButton: true,
                 extraTitle: "Show ▸", extraAction: { [weak self] in self?.revealLicense() }),
@@ -1891,7 +1891,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         secondaryRow.addArrangedSubview(advancedBtn)
         content.addArrangedSubview(secondaryRow)
 
-        testHint = lbl("Press your pen on the tablet — the bar should move.", 10, color: .secondaryLabelColor)
+        testHint = lbl("Press your pen on the tablet. Both bars should move.", 10, color: .secondaryLabelColor)
         testHint.preferredMaxLayoutWidth = rowWidth
         testHint.isHidden = true
         barRow = NSStackView(); barRow.orientation = .horizontal; barRow.alignment = .centerY; barRow.spacing = 10
@@ -1972,7 +1972,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         // Kept to ONE line each — these wrapped to two and made the window tall.
         for s in ["Wake: menu-bar pen icon, Dock right-click, or ⌃⌥⌘Space.",
                   "SAI runs from a copy in \(( appPrefix as NSString).abbreviatingWithTildeInPath); the source folder is only needed to (re)install.",
-                  "PaintTool SAI © SYSTEMAX — unaffiliated fix, bring your own license (systemax.jp)."] {
+                  "PaintTool SAI © SYSTEMAX. Unaffiliated fix, bring your own license (systemax.jp)."] {
             let l = lbl(s, 10, color: .tertiaryLabelColor)
             l.preferredMaxLayoutWidth = rowWidth
             l.lineBreakMode = .byWordWrapping
@@ -2059,7 +2059,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         recvBar = PressureBar()
         recvBar.widthAnchor.constraint(equalToConstant: 240).isActive = true
         recvBar.heightAnchor.constraint(equalToConstant: 12).isActive = true
-        recvLabel = lbl("—", 11, bold: true)
+        recvLabel = lbl("", 11, bold: true)
         recvLabel.widthAnchor.constraint(equalToConstant: 150).isActive = true
         recvRow.addArrangedSubview(recvBar); recvRow.addArrangedSubview(recvLabel)
         recvRow.isHidden = true
@@ -2247,7 +2247,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         autoBtn.isHidden = !needsWork || autoRunning
         launchBtn.isHidden = needsWork && !autoRunning
         if !advanced && done == reqs.count {
-            allSetLabel.stringValue = "✅ Wine · SAI installed · License · Input Monitoring — all ready"
+            allSetLabel.stringValue = "✅ Wine · SAI installed · License · Input Monitoring · all ready"
             allSetLabel.isHidden = false
         } else if !advanced && done > 0 {
             allSetLabel.stringValue = "✅ \(done) of \(reqs.count) ready"
@@ -2292,7 +2292,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     /// Tail of the wake log — the one that records setup, wake and auto-wake.
     func updateConsole() {
         guard let s = try? String(contentsOfFile: "/tmp/sai-wake.log", encoding: .utf8) else {
-            console.string = "(no log yet — it appears once SAI is launched or a wake fires)"; return
+            console.string = "(no log yet. It appears once SAI is launched or a wake fires)"; return
         }
         let tail = s.split(separator: "\n").suffix(150).joined(separator: "\n")
         guard tail != console.string else { return }
@@ -2391,10 +2391,10 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
                 pressureInfo.stringValue = "set by you: \(inUse) · no tablet connected to check against"
             } else if let cached = cachedDetectedFullScale(), cached + 1 == inUse {
                 pressureInfo.stringValue =
-                    "⚠️ no tablet connected — using \(inUse), remembered from the last one"
+                    "⚠️ no tablet connected. Using \(inUse), remembered from the last one"
             } else {
                 pressureInfo.stringValue =
-                    "⚠️ no tablet connected — using the safe default \(inUse)"
+                    "⚠️ no tablet connected. Using the safe default \(inUse)"
             }
         case 1:
             let t = all[0]
@@ -2403,12 +2403,12 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
                 // Bluetooth. No warning triangle: nothing is wrong, we simply
                 // cannot ask, and the number in use is very likely right.
                 pressureInfo.stringValue = auto
-                    ? "\(t.name) connected — it doesn't report its range over Bluetooth, so using \(inUse)"
-                    : "set by you: \(inUse) · \(t.name) connected (it doesn't report its range over Bluetooth)"
+                    ? "\(t.name) connected. No range reported over Bluetooth, using \(inUse)"
+                    : "set by you: \(inUse) · \(t.name) connected, no range reported over Bluetooth"
                 break
             }
             pressureInfo.stringValue = auto
-                ? "\(t.name) reports \(scale + 1) levels — using that"
+                ? "\(t.name) reports \(scale + 1) levels. Using that"
                 : "set by you: \(inUse) · \(t.name) reports \(scale + 1)"
         default:
             let t = all[0]
@@ -2418,12 +2418,12 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
             let others = all.dropFirst().map(describe).joined(separator: ", ")
             guard let scale = t.fullScale else {
                 pressureInfo.stringValue = auto
-                    ? "\(all.count) tablets connected — none reports its range, so using \(inUse). Connected: \(describe(t)), \(others)"
+                    ? "\(all.count) tablets connected. None reports its range, using \(inUse). Connected: \(describe(t)), \(others)"
                     : "set by you: \(inUse) · connected: \(describe(t)), \(others)"
                 break
             }
             pressureInfo.stringValue = auto
-                ? "\(all.count) tablets connected — following the highest, \(t.name) (\(scale + 1)). Also: \(others)"
+                ? "\(all.count) tablets connected. Following the highest, \(t.name) (\(scale + 1)). Also: \(others)"
                 : "set by you: \(inUse) · connected: \(t.name) \(scale + 1), \(others)"
         }
     }
@@ -2439,7 +2439,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
             // same steps spread wider, so noise stops being quantised away.
             // That is exactly what produced wobbly stroke widths in testing.
             if let d = detected, v > d {
-                let c = osa("button returned of (display dialog \"Your tablet reports \(d + 1) pressure levels.\n\nSetting \(v + 1) doesn't give finer control — the same hardware steps get spread over a wider range, so sensor noise shows up as wobbly stroke width instead of being rounded away.\n\nUse it anyway?\" buttons {\"Cancel\", \"Use anyway\"} default button \"Cancel\" with icon caution)")
+                let c = osa("button returned of (display dialog \"Your tablet reports \(d + 1) pressure levels.\n\nSetting \(v + 1) doesn't give finer control. The same hardware steps spread over a wider range, so noise shows up as wobbly stroke width.\n\nUse it anyway?\" buttons {\"Cancel\", \"Use anyway\"} default button \"Cancel\" with icon caution)")
                 guard c == "Use anyway" else { refreshPressureUI(); return }
             }
             saveMaxPressure(v)
@@ -2700,7 +2700,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
                 if startPressureEngineOnce() {
                     self.running = true
                     launchSAIApp()
-                    self.subtitle.stringValue = "Running — pressure is active. Close SAI to quit."
+                    self.subtitle.stringValue = "Running. Pressure is active, close SAI to quit."
                     self.window.miniaturize(nil)
                 } else {
                     self.relaunchForPermission()

@@ -40,13 +40,13 @@ extension SetupController {
     @objc func openHelperLog() {
         openPath("\(appPrefix)/helper.log",
                  what: "The helper log is the MAC side of the bridge: what the tablet reported, and what was sent on towards SAI.",
-                 how: "Only the command-line install (install.sh) writes one — this app runs the helper inside itself instead. For the mac side here use Health check or Copy diagnostics; for what SAI actually received, use the DLL log.")
+                 how: "Only the command-line install writes one. This app runs the helper inside itself. Use Health check or the DLL log instead.")
     }
 
     @objc func openWakeLog() {
         openPath("/tmp/sai-wake.log",
                  what: "The wake log records the attempts to un-stick SAI's window when Wine leaves it ignoring input (issue #2), and the bridge repairs done at launch.",
-                 how: "It is written while this app is running SAI — launch SAI and use it for a bit, then open this again. The per-second keepalive detail only appears when the app is started with WT_WAKELOG=1.")
+                 how: "It fills up while this app is running SAI. Launch SAI, use it a little, then open this again.")
     }
     /// The DLL writes a log ONLY when SAI was launched with logging switched on
     /// — it is off by default because it flushes a line per pen packet. Saying
@@ -59,13 +59,13 @@ extension SetupController {
             NSWorkspace.shared.open(URL(fileURLWithPath: path)); return
         }
         if dllLoggingEnabled() {
-            alertUser("The DLL log is the SAI side of the bridge: a line per pen packet, as our wintab32 saw it from inside SAI's own process.\n\nThere's nothing to open yet, but logging is already ON for the next launch — start SAI, draw a little, then open this again.")
+            alertUser("The DLL log is the SAI side of the bridge: one line per pen packet.\n\nNothing to open yet. Logging is already on for the next launch, so start SAI, draw a little, then open this again.")
             return
         }
-        let c = osa("button returned of (display dialog \"There's no DLL log yet.\n\nIt is the SAI side of the bridge: a line per pen packet, as our wintab32 saw it from inside SAI's own process. It is what to read when pressure reaches this app but not the canvas.\n\nThe DLL only writes one when SAI is launched with logging switched on, and that is off by default — a line per packet is a lot of disk.\n\nTurn it on for the next launch?\" buttons {\"Not now\", \"Turn on\"} default button \"Turn on\" with icon note)")
+        let c = osa("button returned of (display dialog \"There's no DLL log yet.\n\nIt is the SAI side of the bridge: one line per pen packet, seen from inside SAI. Read it when pressure reaches this app but not the canvas.\n\nIt is only written when SAI is launched with logging on, which is off by default.\n\nTurn it on for the next launch?\" buttons {\"Not now\", \"Turn on\"} default button \"Turn on\" with icon note)")
         if c == "Turn on" {
             setDLLLogging(true)
-            alertUser("Logging is on.\n\nQuit SAI if it's running, launch it again, draw a little — then open the DLL log.")
+            alertUser("Logging is on.\n\nQuit SAI if it's running, launch it again, draw a little, then open the DLL log.")
         }
     }
 
@@ -75,7 +75,7 @@ extension SetupController {
     func bridgeDiagnosticLine() -> String {
         let (st, age) = bridgeStatus()
         guard let st = st, let age = age else {
-            return "never seen — SAI has not loaded our DLL (or hasn't run since it was installed)"
+            return "never seen. SAI has not loaded our DLL, or hasn't run since it was installed"
         }
         let v = BridgeCheck.verdict(st, ageSeconds: age)
         return "\(v) · \(Int(age))s ago · open=\(st.open) recv=\(st.recv) posted=\(st.posted) fetched=\(st.fetched) pmax=\(st.pmax) · built \(st.build)"
@@ -90,7 +90,7 @@ extension SetupController {
     /// Reveal the certificate itself, so "where did it actually go?" is one click.
     @objc func revealLicense() {
         guard let name = installedLicenseName(), let dir = licenseLocations().first else {
-            alertUser("No license installed yet.\n\nUse Install… on the SAI license row — licenses come from SYSTEMAX, this app can't provide one.")
+            alertUser("No license installed yet.\n\nUse Install… on the SAI license row. Licenses come from SYSTEMAX; this app can't provide one.")
             return
         }
         NSWorkspace.shared.selectFile("\(dir)/\(name)", inFileViewerRootedAtPath: dir)
@@ -124,19 +124,19 @@ extension SetupController {
                 self.console.scrollToEndOfDocument(nil)
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(report, forType: .string)
-                self.subtitle.stringValue = "Health check done — copied to clipboard."
+                self.subtitle.stringValue = "Health check done. Copied to clipboard."
             }
         }
     }
     func buildHealthReport() -> String {
         let fm = FileManager.default
-        var lines: [String] = ["=== SAI Pen Pressure — health check ===",
+        var lines: [String] = ["=== SAI Pen Pressure health check ===",
                                "version \(currentVersion())", ""]
         var problems = 0
         func check(_ label: String, _ ok: Bool, _ detail: String = "", fatal: Bool = true) {
             if !ok && fatal { problems += 1 }
             let mark = ok ? "OK  " : (fatal ? "FAIL" : "warn")
-            lines.append("[\(mark)] \(label)\(detail.isEmpty ? "" : "  — \(detail)")")
+            lines.append("[\(mark)] \(label)\(detail.isEmpty ? "" : "  · \(detail)")")
         }
 
         // --- Wine
@@ -170,7 +170,7 @@ extension SetupController {
             let b = fm.contents(atPath: sysDLL)
             if let a = a, let b = b {
                 check("wintab32.dll matches this build", a == b,
-                      a == b ? "" : "installed DLL differs from the one shipped in this app — Reinstall to fix", fatal: false)
+                      a == b ? "" : "installed DLL differs from the one shipped in this app. Reinstall to fix", fatal: false)
             }
         }
 
@@ -180,7 +180,7 @@ extension SetupController {
         // check can never disagree with what the app actually does.
         check("Wine loads OUR wintab32 (DllOverrides)", bridgeOverrideInstalled(),
               BridgeCheck.overrideValue(inUserReg: readUserReg() ?? "")
-                ?? "key not set — Wine loads its own wintab32, so SAI draws without pressure. Repair fixes it.")
+                ?? "key not set. Wine loads its own wintab32, so SAI draws without pressure. Repair fixes it.")
         // Not fatal: SAI is usually closed when someone runs a health check, and
         // "we have never seen the far side" is not the same as "it is broken".
         let (bst, bage) = bridgeStatus()
@@ -195,7 +195,7 @@ extension SetupController {
 
         // --- licence + runtime files
         check("license (.slc) in prefix", installedLicenseName() != nil,
-              installedLicenseName() ?? "none — SAI can draw but not save", fatal: false)
+              installedLicenseName() ?? "none (SAI can draw but not save)", fatal: false)
         check("stashed license backup", !slcFiles(in: licenseStashDir()).isEmpty,
               slcFiles(in: licenseStashDir()).joined(separator: ", "), fatal: false)
         check("pressure file", fm.fileExists(atPath: "\(appPrefix)/drive_c/wt_pressure.txt"),
@@ -251,7 +251,7 @@ extension SetupController {
             : "\(Int(g_saiWindow.width))x\(Int(g_saiWindow.height)) at (\(Int(g_saiWindow.minX)),\(Int(g_saiWindow.minY)))"
         let pct = Int((Double(recMaxPressure) / Double(PressureCore.maxPressure) * 100).rounded())
         var out = """
-        === SAI Pen Pressure — session recording ===
+        === SAI Pen Pressure session recording ===
         version   \(currentVersion())      duration  \(String(format: "%.1fs", dur))
         started   \(r.t)
 
@@ -279,15 +279,15 @@ extension SetupController {
 
         --- wake log during recording (\(newLines.count) lines) ---
         """
-        out += "\n" + (newLines.isEmpty ? "(nothing — no wake/auto-wake fired)" : newLines.joined(separator: "\n"))
+        out += "\n" + (newLines.isEmpty ? "(nothing, no wake/auto-wake fired)" : newLines.joined(separator: "\n"))
 
         // interpretation, so the numbers mean something without reading the code
         var notes: [String] = []
         if seq - r.seq == 0 { notes.append("• No pen samples reached SAI. Either the pen wasn't used, or Input Monitoring is off.") }
         if g_evPlainMouse - r.plainMouse > 0 && g_evTabletMouse - r.tabletMouse == 0 && g_penEverSeen {
-            notes.append("• Pen arrived as a PLAIN mouse — the Wacom driver demoted it. That's the app-switch freeze signature (issue #2).")
+            notes.append("• Pen arrived as a PLAIN mouse. The Wacom driver demoted it: the app-switch freeze signature (issue #2).")
         }
-        if recMaxPressure == 0 && seq - r.seq > 0 { notes.append("• Samples flowed but pressure never exceeded 0 — hover only, no contact.") }
+        if recMaxPressure == 0 && seq - r.seq > 0 { notes.append("• Samples flowed but pressure never exceeded 0: hover only, no contact.") }
         if !newLines.isEmpty { notes.append("• Wake activity fired during this window (see above).") }
         if !notes.isEmpty { out += "\n\n--- notes ---\n" + notes.joined(separator: "\n") }
 
@@ -321,8 +321,8 @@ extension SetupController {
             // "the file is there" was the ONLY thing this used to say about the
             // bridge, and #29 was a machine where the file was there, correct,
             // and never loaded. The next two lines are the ones that answer it.
-            "wintab32.dll: \(fm.fileExists(atPath: "\(appPrefix)/drive_c/windows/system32/wintab32.dll")) (\(bridgeDLLMatchesApp() ? "matches this app" : "DIFFERENT from this app — Repair"))",
-            "DLL override: \(BridgeCheck.overrideValue(inUserReg: readUserReg() ?? "") ?? "MISSING — Wine loads its own wintab32")",
+            "wintab32.dll: \(fm.fileExists(atPath: "\(appPrefix)/drive_c/windows/system32/wintab32.dll")) (\(bridgeDLLMatchesApp() ? "matches this app" : "DIFFERENT from this app, Repair"))",
+            "DLL override: \(BridgeCheck.overrideValue(inUserReg: readUserReg() ?? "") ?? "MISSING, Wine loads its own wintab32")",
             "bridge in SAI: \(bridgeDiagnosticLine())",
             "Input Monitoring: \(inputMonitoringGranted())",
             "auto-wake: \(autoWake)",

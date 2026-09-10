@@ -69,6 +69,8 @@ connection (USB/BT), SAI version.** Tick each item ✅/❌ and note anything odd
 - [ ] **Launch** builds the prefix (first time ~1 min) and opens SAI.
 
 ### Core pressure
+Use the **AirBrush** tool for these: its stock settings make pressure obvious, so a flat stroke
+means a real fault rather than a brush that was never going to taper.
 - [ ] Strokes **vary in width/opacity with pen force** (light = thin, hard = thick).
 - [ ] A slow deliberate curve is smooth (no gaps/jitter).
 - [ ] Lifting the pen ends the stroke cleanly (no trailing line to the next stroke).

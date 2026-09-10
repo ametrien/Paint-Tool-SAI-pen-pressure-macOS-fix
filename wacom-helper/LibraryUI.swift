@@ -269,7 +269,7 @@ extension SetupController {
         if !loose.isEmpty {
             footer += (footer.isEmpty ? "" : ", ") + "\(loose.count) older video(s)"
         }
-        footer += " — " + prettyFileSize(folderSize(store.videosDir))
+        footer += " · " + prettyFileSize(folderSize(store.videosDir))
         if !store.lib.pending.isEmpty {
             footer += "  ·  \(store.lib.pending.count) session(s) to confirm"
         }
@@ -566,15 +566,15 @@ extension SetupController {
         let alert = NSAlert()
         alert.messageText = "Sessions in “\(d.title)”"
         alert.informativeText = "Each is one evening's recording. Taking one out makes it a "
-            + "drawing of its own — nothing is deleted."
+            + "drawing of its own. Nothing is deleted."
         let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 280, height: 26))
-        popup.addItems(withTitles: ordered.map { "\(f.string(from: $0.startedAt)) — \($0.frames) frames" })
+        popup.addItems(withTitles: ordered.map { "\(f.string(from: $0.startedAt)) · \($0.frames) frames" })
         alert.accessoryView = popup
         alert.addButton(withTitle: "Close")
         alert.addButton(withTitle: "Take out of this drawing")
         guard alert.runModal() == .alertSecondButtonReturn else { return }
         guard ordered.count > 1 else {
-            alertUser("This drawing has only one session — taking it out would leave nothing behind.")
+            alertUser("This drawing has only one session. Taking it out would leave nothing behind.")
             return
         }
         let piece = ordered[popup.indexOfSelectedItem]
@@ -587,7 +587,7 @@ extension SetupController {
         guard let d = drawing(from: sender), let store = libStore else { return }
         let alert = NSAlert()
         alert.messageText = "Rename this drawing"
-        alert.informativeText = "This is a label only — it does not change which sessions belong together."
+        alert.informativeText = "This is a label only. It does not change which sessions belong together."
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
         field.stringValue = d.title
         alert.accessoryView = field
