@@ -882,7 +882,11 @@ func keepAlive() {
            : (CFAbsoluteTimeGetCurrent() - lastPlainMouseAt) <= 1.0 ? "quiet: mouse just used"
            : lastKeyP > 0 ? "quiet: pen is down (drawing)"
            : "keepalive active"
-    if st != g_lastKAState { g_lastKAState = st; wlog("keepalive \(st)") }
+    // Behind the flag: this "state change" flips between active and "pen is
+    // down" twice a second for as long as someone draws, so logging every
+    // change fills the Developer log with keepalive lines and buries the
+    // events worth reading. The state is still tracked, just not narrated.
+    if st != g_lastKAState { g_lastKAState = st; if wakeLogOn { wlog("keepalive \(st)") } }
     // Revive the tap if macOS ever disabled it (App Nap / timeout / user input).
     // The disable-event path only fires if our run loop is awake to receive it;
     // this poll (every 40ms) is the belt-and-suspenders that recovers the pen
@@ -1420,7 +1424,26 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         return l
     }
 
+    /// Written once per launch, so a log someone pastes into an issue identifies
+    /// itself. #29 cost two rounds of questions that this answers up front:
+    /// which build, which Wine prefix, whether our DLL is the one installed, and
+    /// what the registry override actually says.
+    func logSessionHeader() {
+        var os = ProcessInfo.processInfo.operatingSystemVersionString
+        os = os.replacingOccurrences(of: "Version ", with: "")
+        let tablets = detectTablets()
+        let tabletLine = tablets.isEmpty ? "none detected"
+            : tablets.map { t in t.fullScale.map { "\(t.name) \($0 + 1) levels" } ?? "\(t.name) (range not reported)" }
+                     .joined(separator: ", ")
+        wlog("=== session start · SAI Pen Pressure \(currentVersion()) · macOS \(os) ===")
+        wlog("prefix \(appPrefix) · sai2.exe present: \(saiInstalledInPrefix())")
+        wlog("bridge: our DLL installed: \(bridgeDLLMatchesApp()) · override: \(BridgeCheck.overrideValue(inUserReg: readUserReg() ?? "") ?? "MISSING")")
+        wlog("wine: \(wineBin() ?? "NOT FOUND")")
+        wlog("tablet: \(tabletLine)")
+    }
+
     func applicationDidFinishLaunching(_ note: Notification) {
+        logSessionHeader()
         NSApp.activate(ignoringOtherApps: true)
         reqs = [
             Req(title: "Wine (runs SAI on Mac)", detail: "Gcenx Wine Staging in /Applications", fixTitle: "Install Wine…",
@@ -1964,6 +1987,12 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         let uninstallBtn = NSButton(title: "Uninstall…", target: self, action: #selector(uninstallEverything))
         uninstallBtn.bezelStyle = .rounded; uninstallBtn.controlSize = .small
         scratchRow.addArrangedSubview(uninstallBtn)
+        // Outside Developer mode on purpose: the person who needs it is the one
+        // reporting a fault, and in #29 everything worth pasting was behind a
+        // switch they had no reason to find.
+        let reportBtn = NSButton(title: "Copy problem report", target: self, action: #selector(copyProblemReport))
+        reportBtn.bezelStyle = .rounded; reportBtn.controlSize = .small
+        scratchRow.addArrangedSubview(reportBtn)
         let scratchHint = lbl("Your SAI folder and license are kept.", 10, color: .tertiaryLabelColor)
         scratchRow.addArrangedSubview(scratchHint)
         // NOT appended to rowViews — that array is index-locked to `reqs` and an
@@ -2657,9 +2686,15 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
             // RAW is what the tablet reported; distinct-raw is the empirical read
             // of its true resolution. If distinct stops climbing well below the
             // configured levels, the extra range is upsampling, not detail.
+            // The instantaneous raw float used to be printed here too, and it
+            // read 0.000000 nearly always: hover samples carry no pressure and
+            // zero it between the ones that do, so it looked like the tablet
+            // was reporting nothing while the bar beside it moved. The distinct
+            // count is the number worth having anyway, being an empirical read
+            // of the tablet's real resolution.
             self.testHint.stringValue = String(
-                format: "sending %d levels · peak %d · raw from tablet %.6f · %d distinct raw values seen",
-                maxP + 1, self.testPeakSeen, g_lastRawPressure, g_rawSeen.count)
+                format: "sending %d levels · peak %d · %d distinct raw values seen",
+                maxP + 1, self.testPeakSeen, g_rawSeen.count)
         }
         RunLoop.main.add(t, forMode: .common)
         testTimer = t
