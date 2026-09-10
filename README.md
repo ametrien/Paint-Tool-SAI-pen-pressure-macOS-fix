@@ -23,22 +23,27 @@ The result: pressure-sensitive strokes that taper with how hard you press.
 
 ## What it looks like
 
-Four tabs, one window.
+Five tabs, one window.
 
 <p align="center">
-  <img src="docs/assets/screenshots/setup.png" alt="Setup tab: status of Wine, SAI, licence and Input Monitoring, with a Launch button" width="49%">
+  <img src="docs/assets/screenshots/setup.png" alt="Setup tab: Wine, SAI, licence and Input Monitoring all ready, with Launch and Copy problem report" width="49%">
   <img src="docs/assets/screenshots/pen.png" alt="Pen tab: pressure levels, pen feel, and a live test showing what is being sent and what is arriving inside Wine" width="49%">
 </p>
 <p align="center">
   <img src="docs/assets/screenshots/recording.png" alt="Recording tab: canvas timelapse settings" width="49%">
-  <img src="docs/assets/screenshots/developer.png" alt="Developer tab: logs, diagnostics and a health check" width="49%">
+  <img src="docs/assets/screenshots/videos.png" alt="Videos tab: one video per drawing, with play, export, rebuild and rename" width="49%">
+</p>
+<p align="center">
+  <img src="docs/assets/screenshots/developer.png" alt="Developer tab: logs, diagnostics, a health check and Copy problem report" width="49%">
 </p>
 
 **Setup** gets SAI running and tells you which of the four prerequisites are missing.
 **Update SAI…** swaps in a newer SAI build without touching your licence, brushes or preferences —
 useful because Ver.2 is a rolling preview.
-**Pen** is pressure levels, pen feel and the response curve.
+**Pen** is pressure levels, pen feel and the response curve, and a live test that shows what is
+being sent alongside what is actually arriving on SAI's side of the bridge.
 **Recording** is the canvas timelapse.
+**Videos** lists one video per drawing, and keeps adding to it when you come back to that drawing.
 **Developer** holds the logs, a diagnostics dump and a health check.
 
 ---
@@ -48,7 +53,7 @@ useful because Ver.2 is a rolling preview.
 > multi-monitor and Mac-style Cmd shortcuts. See [Limitations](#limitations).
 >
 > **Tested configuration:**
-> - Mac: **Apple M3 Pro**, **macOS Tahoe 26.3 (25D125)**
+> - Mac: **Apple M3 Pro**, **macOS Tahoe 26.6.2 (25G83)**
 > - SAI: **PaintTool SAI Ver.2 (64-bit)**
 > - Tablet: **Wacom Intuos BT S (CTL-4100WL)**, over USB and Bluetooth
 > - Displays: **single screen**, and **two screens in mirroring mode**
