@@ -21,8 +21,18 @@ hardware I don't have**.
 
 ## Reporting a bug / requesting a feature
 
-Open an **Issue**. For bugs, include: what you did, what happened, tablet + macOS + Mac model,
-and — if drawing-related — turn on logging and attach the log:
+Open an **Issue**. For a bug, the single most useful thing you can do is press **Copy problem
+report** on the app's **Setup** tab and paste the result in. It collects your Mac and chip, macOS
+and Wine versions, your tablet and how it is connected, whether Wine is loading the pressure
+bridge or ignoring it, what SAI last received, and the tail of the log. That is almost everything
+anyone would otherwise have to ask you for.
+
+If pressure specifically is the problem, **Pen → Test pen** shows two bars: what the app sends,
+and what actually arrives inside Wine. Telling us which of the two moved says which half of the
+bridge to look at, and that distinction is what made [#29](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/29)
+take two rounds to place.
+
+Running from source rather than the app? The command-line logs still exist:
 ```bash
 # helper console:
 WT_VERBOSE=1 ./wacom-helper/wacom-pressure-helper
