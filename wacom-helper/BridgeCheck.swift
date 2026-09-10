@@ -304,6 +304,24 @@ enum BridgeCheck {
         return isTick ? t : nil
     }
 
+    /// Fold a live tick's counters into what the header said.
+    ///
+    /// THE TRAP: the header — everything the probe prints before its first
+    /// tick — describes the WIRING (which DLL, whether a context opened) and
+    /// can say nothing about traffic, because at that moment none has happened.
+    /// Judging the far side from the header alone therefore fixes the answer at
+    /// "no pen data reached it" for ever, and it stays on screen contradicting
+    /// a received-side bar that is visibly moving. The counters have to come
+    /// from the ticks, and the verdict has to be recomputed as they arrive.
+    static func merging(_ probe: Probe?, _ tick: Tick) -> Probe? {
+        guard var p = probe else { return nil }
+        p.msgs = tick.msgs
+        p.fetched = tick.fetched
+        p.pmaxSeen = tick.pmax
+        p.down = tick.down
+        return p
+    }
+
     enum ProbeVerdict: Equatable {
         case didNotRun      // wine couldn't run it, or it isn't the probe's output
         case noDLL          // nothing called wintab32 loaded at all

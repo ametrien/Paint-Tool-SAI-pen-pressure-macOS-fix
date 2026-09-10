@@ -2041,11 +2041,11 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         // follows the first, and only one stroke seen in both places answers
         // it. In #29 the top bar moved perfectly and the bottom one would have
         // sat at zero, which is the entire report in one glance.
-        sentCaption = lbl("sent by this app", 9, color: .tertiaryLabelColor)
+        sentCaption = lbl("sending", 9, color: .tertiaryLabelColor)
         sentCaption.isHidden = true
         settingsTab.addArrangedSubview(sentCaption)
         settingsTab.addArrangedSubview(barRow)
-        recvCaption = lbl("arriving inside Wine — what SAI would receive", 9, color: .tertiaryLabelColor)
+        recvCaption = lbl("receiving", 9, color: .tertiaryLabelColor)
         recvCaption.isHidden = true
         settingsTab.addArrangedSubview(recvCaption)
         recvRow = NSStackView(); recvRow.orientation = .horizontal
@@ -2580,8 +2580,12 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         recvRow.isHidden = false; recvCaption.isHidden = false
         recvBar.value = 0
         recvLabel.stringValue = "starting…"
-        probeHint.isHidden = false
-        probeHint.stringValue = "Checking what reaches Wine…"
+        // No sentence unless something is WRONG. Working, or simply waiting for
+        // the pen, is already what the two bars say; a line of prose that has
+        // to be kept in step with them is one more thing that can be out of
+        // date — and was, sitting under 1134 arrived packets insisting none
+        // had arrived.
+        probeHint.isHidden = true
         if let w = wineBin() {
             probeStream.onTick = { [weak self] t in
                 guard let self = self else { return }
@@ -2590,10 +2594,21 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
                 self.recvLabel.stringValue = "\(t.fetched) pkt · peak \(t.pmax)"
             }
             probeStream.onVerdict = { [weak self] v, pr in
-                self?.probeHint.stringValue = BridgeCheck.explainProbe(v, pr)
+                guard let self = self else { return }
+                switch v {
+                case .working, .noPackets:
+                    // The bars are the report. Nothing to add.
+                    self.probeHint.isHidden = true
+                default:
+                    // A fault the bars CANNOT show — above all #29, where the
+                    // receiving bar stays empty and only this line can say why.
+                    self.probeHint.isHidden = false
+                    self.probeHint.stringValue = BridgeCheck.explainProbe(v, pr)
+                }
             }
             probeStream.start(w)
         } else {
+            probeHint.isHidden = false
             probeHint.stringValue = "Install Wine to see what SAI would receive."
         }
         settingsScratch?.clear()

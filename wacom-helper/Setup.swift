@@ -236,7 +236,8 @@ final class BridgeProbeStream {
     private var proc: Process?
     private var tail = ""            // partial line left over from the last read
     private var header = ""          // the key-per-line preamble, before ticks start
-    private var toldVerdict = false
+    private var probe: BridgeCheck.Probe?          // the header, kept up to date by ticks
+    private var lastVerdict: BridgeCheck.ProbeVerdict?
 
     /// Both are called on the main queue.
     var onTick: ((BridgeCheck.Tick) -> Void)?
@@ -281,9 +282,12 @@ final class BridgeProbeStream {
         tail += chunk
         for line in BridgeCheck.takeLines(&tail) {
             if let t = BridgeCheck.parseTick(line) {
-                // The first tick means the preamble is complete: everything
-                // needed to judge the far side has arrived.
-                flushVerdict()
+                // The first tick ends the preamble; every tick after it keeps
+                // the counters current, so the sentence tracks the bars instead
+                // of freezing at what was true before the pen was touched.
+                sealHeader()
+                probe = BridgeCheck.merging(probe, t)
+                publishVerdict()
                 DispatchQueue.main.async { self.onTick?(t) }
             } else {
                 header += line + "\n"
@@ -291,11 +295,22 @@ final class BridgeProbeStream {
         }
     }
 
+    private func sealHeader() {
+        guard probe == nil else { return }
+        probe = BridgeCheck.parseProbe(header)
+    }
+
+    /// Only on a CHANGE: this is reached ten times a second.
+    private func publishVerdict() {
+        let v = BridgeCheck.probeVerdict(probe)
+        guard v != lastVerdict else { return }
+        lastVerdict = v
+        report(v, probe)
+    }
+
     private func flushVerdict() {
-        guard !toldVerdict else { return }
-        toldVerdict = true
-        let pr = BridgeCheck.parseProbe(header)
-        report(BridgeCheck.probeVerdict(pr), pr)
+        sealHeader()
+        publishVerdict()
     }
 
     private func report(_ v: BridgeCheck.ProbeVerdict, _ p: BridgeCheck.Probe?) {
@@ -309,7 +324,7 @@ final class BridgeProbeStream {
             if p.isRunning { p.terminate() }
         }
         proc = nil
-        tail = ""; header = ""; toldVerdict = false
+        tail = ""; header = ""; probe = nil; lastVerdict = nil
     }
 }
 
