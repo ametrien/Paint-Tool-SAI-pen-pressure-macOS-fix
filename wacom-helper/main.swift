@@ -325,6 +325,39 @@ if let mode = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_BRIDGE"] {
         print("afterFile=\(BridgeCheck.overrideValue(inUserReg: readUserReg() ?? "") ?? "-")")
         exit(bridgeOverrideInstalled() ? 0 : 1)
     }
+    // "probe" runs the far-side test headlessly: the same wtprobe.exe the Pen
+    // tab's button runs, so the wiring can be checked without a hand on the
+    // tablet. Press the pen while it runs to get past noPackets.
+    if mode == "probe" {
+        guard let w = wineBin() else { print("probe=nowine"); exit(1) }
+        let pr = runBridgeProbe(w, seconds: 5)
+        print("parsed=\(pr != nil)")
+        print("ours=\(pr?.ours ?? false)")
+        print("ctxOpen=\(pr?.contextOpen ?? false)")
+        print("msgs=\(pr?.msgs ?? 0) fetched=\(pr?.fetched ?? 0) pmax=\(pr?.pmaxSeen ?? 0)")
+        let v = BridgeCheck.probeVerdict(pr)
+        print("verdict=\(v)")
+        print("detail=\(BridgeCheck.explainProbe(v, pr))")
+        exit(v == .working || v == .noPackets ? 0 : 1)
+    }
+    // "stream" exercises BridgeProbeStream — the class behind the second bar in
+    // the Pen tab — outside the GUI, where a stall is visible instead of just
+    // being a bar that never moves.
+    if mode == "stream" {
+        guard let w = wineBin() else { print("stream=nowine"); exit(1) }
+        let st = BridgeProbeStream()
+        var ticks = 0
+        st.onVerdict = { v, _ in print("verdict=\(v)") }
+        st.onTick = { t in
+            ticks += 1
+            if ticks <= 3 || ticks % 20 == 0 { print("tick #\(ticks) p=\(t.pressure) fetched=\(t.fetched)") }
+        }
+        st.start(w, seconds: 20)
+        RunLoop.main.run(until: Date().addingTimeInterval(8))
+        st.stop()
+        print("ticks=\(ticks)")
+        exit(ticks > 0 ? 0 : 1)
+    }
     let (st, age) = bridgeStatus()
     // Printed so the tests can skip the cases that assume SAI is closed rather
     // than fail on a machine where it happens to be open.
@@ -1297,6 +1330,14 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     // "Test Tablet Pressure" widgets — a live 0–100% bar so the user can confirm
     // the pen works BEFORE launching SAI.
     var testBtn: NSButton!
+    var probeBtn: NSButton!
+    var probeHint: NSTextField!
+    var recvBar: PressureBar!
+    var recvLabel: NSTextField!
+    var recvRow: NSStackView!
+    var sentCaption: NSTextField!
+    var recvCaption: NSTextField!
+    let probeStream = BridgeProbeStream()
     var testHint: NSTextField!
     var barRow: NSStackView!
     var pressureBar: PressureBar!
@@ -1962,6 +2003,12 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         let hc = NSButton(title: "Health check", target: self, action: #selector(healthCheckTapped))
         hc.bezelStyle = .rounded; hc.controlSize = .small
         devTools.addArrangedSubview(hc)
+        // The far side on its own, without a pen test running: does Wine load
+        // OUR wintab32, and will it open a context? That much needs no tablet
+        // and no hand, and it is the half of #29 that nothing could answer.
+        probeBtn = NSButton(title: "Bridge check", target: self, action: #selector(probeTapped))
+        probeBtn.bezelStyle = .rounded; probeBtn.controlSize = .small
+        devTools.addArrangedSubview(probeBtn)
         devSection.addArrangedSubview(devTools)
 
         // Pen feel, precisely: the dropdown picks five presets, this exposes the
@@ -1989,8 +2036,33 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         testBtn = NSButton(title: "Test pen", target: self, action: #selector(testTapped))
         testBtn.bezelStyle = .rounded; testBtn.controlSize = .small
         settingsTab.addArrangedSubview(testBtn)
+        // TWO bars, one button. The question is never "what is being sent" or
+        // "what is being received" on its own — it is whether the second bar
+        // follows the first, and only one stroke seen in both places answers
+        // it. In #29 the top bar moved perfectly and the bottom one would have
+        // sat at zero, which is the entire report in one glance.
+        sentCaption = lbl("sent by this app", 9, color: .tertiaryLabelColor)
+        sentCaption.isHidden = true
+        settingsTab.addArrangedSubview(sentCaption)
         settingsTab.addArrangedSubview(barRow)
+        recvCaption = lbl("arriving inside Wine — what SAI would receive", 9, color: .tertiaryLabelColor)
+        recvCaption.isHidden = true
+        settingsTab.addArrangedSubview(recvCaption)
+        recvRow = NSStackView(); recvRow.orientation = .horizontal
+        recvRow.alignment = .centerY; recvRow.spacing = 10
+        recvBar = PressureBar()
+        recvBar.widthAnchor.constraint(equalToConstant: 240).isActive = true
+        recvBar.heightAnchor.constraint(equalToConstant: 12).isActive = true
+        recvLabel = lbl("—", 11, bold: true)
+        recvLabel.widthAnchor.constraint(equalToConstant: 150).isActive = true
+        recvRow.addArrangedSubview(recvBar); recvRow.addArrangedSubview(recvLabel)
+        recvRow.isHidden = true
+        settingsTab.addArrangedSubview(recvRow)
         settingsTab.addArrangedSubview(testHint)
+        probeHint = lbl("", 10, color: .secondaryLabelColor)
+        probeHint.preferredMaxLayoutWidth = rowWidth
+        probeHint.isHidden = true
+        settingsTab.addArrangedSubview(probeHint)
 
         // The scratch pad is NOT here on purpose. It repeatedly cost the pen
         // settings their place on this tab — most recently by absorbing the
@@ -2501,6 +2573,29 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         g_rawSeen.removeAll()          // fresh census per test run
         testBtn.title = "Stop Test"
         testHint.isHidden = false; barRow.isHidden = false
+        sentCaption.isHidden = false
+        // The far side, running for as long as the test does. Best effort: no
+        // Wine, or a prefix never set up, leaves the second bar empty with a
+        // sentence saying why rather than blocking the pen test that works.
+        recvRow.isHidden = false; recvCaption.isHidden = false
+        recvBar.value = 0
+        recvLabel.stringValue = "starting…"
+        probeHint.isHidden = false
+        probeHint.stringValue = "Checking what reaches Wine…"
+        if let w = wineBin() {
+            probeStream.onTick = { [weak self] t in
+                guard let self = self else { return }
+                let maxP = PressureCore.maxPressure
+                self.recvBar.value = CGFloat(t.pressure) / CGFloat(maxP)
+                self.recvLabel.stringValue = "\(t.fetched) pkt · peak \(t.pmax)"
+            }
+            probeStream.onVerdict = { [weak self] v, pr in
+                self?.probeHint.stringValue = BridgeCheck.explainProbe(v, pr)
+            }
+            probeStream.start(w)
+        } else {
+            probeHint.stringValue = "Install Wine to see what SAI would receive."
+        }
         settingsScratch?.clear()
         applyLayout()
         // fast (~60fps), .common-mode timer so the bar tracks the pen instantly and
@@ -2529,10 +2624,65 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     func stopTest() {
         testing = false
         testTimer?.invalidate(); testTimer = nil
+        probeStream.stop()
         if testBtn != nil { testBtn.title = "Test pen" }
         if testHint != nil { testHint.isHidden = true }
         if barRow != nil { barRow.isHidden = true }
+        if recvRow != nil { recvRow.isHidden = true }
+        if recvCaption != nil { recvCaption.isHidden = true }
+        if sentCaption != nil { sentCaption.isHidden = true }
+        if probeHint != nil { probeHint.isHidden = true }
         applyLayout()
+    }
+
+    /// Test the RECEIVING half of the bridge, with SAI closed.
+    ///
+    /// Runs wtprobe.exe — a real Windows process — under Wine. It resolves
+    /// wintab32.dll through the same registry override SAI's own load goes
+    /// through, opens a tablet context and answers the DLL's packet messages,
+    /// so it fails in exactly the ways SAI fails. Before this, the only way to
+    /// find out whether the far side worked was to launch SAI and look at a
+    /// stroke, which is why #29 took two rounds to place.
+    @objc func probeTapped() {
+        guard let wine = wineBin() else {
+            alertUser("Install Wine first — the bridge being tested lives inside the Wine prefix.")
+            return
+        }
+        guard bridgeProbePath() != nil else {
+            alertUser("This build has no bridge probe in it.\n\nIt ships in the .app; running the helper straight from a build directory leaves it out.")
+            return
+        }
+        // The probe reports what reaches Wine, so something has to be sending:
+        // without the engine running, a perfectly healthy bridge would answer
+        // "no pen data arrived" and read as a fault.
+        guard startPressureEngineOnce() else {
+            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
+            alertUser("Couldn't read the tablet yet.\n\nIn System Settings → Privacy & Security → Input Monitoring, turn ON \"SAI Pen Pressure\", then reopen this app and try again.")
+            return
+        }
+        let secs = 5
+        probeBtn.isEnabled = false
+        probeBtn.title = "Checking…"
+        subtitle.stringValue = "Checking the bridge from inside Wine — press the pen if you want packet counts…"
+        DispatchQueue.global().async {
+            let probe = runBridgeProbe(wine, seconds: secs)
+            let verdict = BridgeCheck.probeVerdict(probe)
+            DispatchQueue.main.async {
+                self.probeBtn.isEnabled = true
+                self.probeBtn.title = "Bridge check"
+                self.refresh()      // the probe may have just proved the row wrong
+                var msg = BridgeCheck.explainProbe(verdict, probe)
+                if let pr = probe {
+                    msg += "\n\nwintab32 loaded: \(pr.dllLoaded ? "yes" : "no")"
+                    msg += "\nand it is ours: \(pr.ours ? "yes" : "no — Wine's own")"
+                    if !pr.build.isEmpty { msg += "\nbuilt: \(pr.build)" }
+                    msg += "\ncontext opened: \(pr.contextOpen ? "yes" : "no")"
+                    msg += "\npackets posted / read: \(pr.msgs) / \(pr.fetched)"
+                    msg += "\nstrongest pressure seen: \(pr.pmaxSeen)"
+                }
+                alertUser(msg)
+            }
+        }
     }
 
     @objc func launchTapped() {
