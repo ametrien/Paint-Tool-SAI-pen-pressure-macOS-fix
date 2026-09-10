@@ -304,7 +304,42 @@ extension SetupController {
         try? out.write(toFile: path, atomically: true, encoding: .utf8)
         subtitle.stringValue = "Recording saved + copied to clipboard."
     }
+    /// One button for someone with a problem, and deliberately NOT behind
+    /// Developer mode.
+    ///
+    /// Every fact an issue needs, in a single paste: what this build is, what is
+    /// installed where, whether Wine loads OUR wintab32 or its own, what the
+    /// bridge last reported from inside SAI, and the tail of the log. #29 took
+    /// two rounds of questions to establish things that are all in here, and the
+    /// person reporting it could not have found them: they were behind a switch
+    /// marked Developer.
+    @objc func copyProblemReport() {
+        subtitle.stringValue = "Collecting the report…"
+        DispatchQueue.global().async {
+            var out = self.diagnosticsText()
+            out += "\n\n" + self.buildHealthReport()
+            if let log = try? String(contentsOfFile: "/tmp/sai-wake.log", encoding: .utf8) {
+                let tail = log.components(separatedBy: .newlines).suffix(60)
+                    .joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+                if !tail.isEmpty { out += "\n\n=== recent log ===\n" + tail }
+            }
+            DispatchQueue.main.async {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(out, forType: .string)
+                self.subtitle.stringValue = "Report copied to the clipboard."
+                alertUser("Copied.\n\nPaste it into your bug report. It says what this build is, what is installed, whether Wine loads our pressure bridge, and what SAI last received.")
+            }
+        }
+    }
+
     @objc func copyDiagnostics() {
+        let text = diagnosticsText()
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        alertUser("Diagnostics copied to the clipboard:\n\n\(text)")
+    }
+
+    func diagnosticsText() -> String {
         let fm = FileManager.default
         var os = ProcessInfo.processInfo.operatingSystemVersionString
         os = os.replacingOccurrences(of: "Version ", with: "")
@@ -327,9 +362,6 @@ extension SetupController {
             "Input Monitoring: \(inputMonitoringGranted())",
             "auto-wake: \(autoWake)",
         ]
-        let text = lines.joined(separator: "\n")
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-        alertUser("Diagnostics copied to the clipboard:\n\n\(text)")
+        return lines.joined(separator: "\n")
     }
 }
