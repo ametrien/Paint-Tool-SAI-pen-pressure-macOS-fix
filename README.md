@@ -17,13 +17,17 @@ macOS + Wine already run SAI and move the cursor fine, but Wine's Mac driver thr
 
 The result: pressure-sensitive strokes that taper with how hard you press.
 
+<p align="center">
+  <img src="docs/assets/screenshots/pressure-in-sai.png" alt="A stroke drawn in PaintTool SAI with the AirBrush tool, thick where the pen was pressed hard and tapering to nothing at both ends" width="88%">
+</p>
+
 ## What it looks like
 
 Four tabs, one window.
 
 <p align="center">
   <img src="docs/assets/screenshots/setup.png" alt="Setup tab: status of Wine, SAI, licence and Input Monitoring, with a Launch button" width="49%">
-  <img src="docs/assets/screenshots/pen.png" alt="Pen tab: pressure levels, pen feel, and the pen feel curve" width="49%">
+  <img src="docs/assets/screenshots/pen.png" alt="Pen tab: pressure levels, pen feel, and a live test showing what is being sent and what is arriving inside Wine" width="49%">
 </p>
 <p align="center">
   <img src="docs/assets/screenshots/recording.png" alt="Recording tab: canvas timelapse settings" width="49%">
