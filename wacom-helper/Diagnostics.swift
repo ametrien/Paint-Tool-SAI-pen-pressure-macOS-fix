@@ -333,10 +333,67 @@ extension SetupController {
     }
 
     @objc func copyDiagnostics() {
-        let text = diagnosticsText()
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-        alertUser("Diagnostics copied to the clipboard:\n\n\(text)")
+        // Asks wine its version and lipo the binary's architectures, so it does
+        // not belong on the main thread.
+        DispatchQueue.global().async {
+            let text = self.diagnosticsText()
+            DispatchQueue.main.async {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+                alertUser("Diagnostics copied to the clipboard:\n\n\(text)")
+            }
+        }
+    }
+
+    /// Read a sysctl string, e.g. "hw.model" -> "Mac14,10".
+    func sysctlString(_ name: String) -> String? {
+        var size = 0
+        guard sysctlbyname(name, nil, &size, nil, 0) == 0, size > 0 else { return nil }
+        var buf = [CChar](repeating: 0, count: size)
+        guard sysctlbyname(name, &buf, &size, nil, 0) == 0 else { return nil }
+        return String(cString: buf).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    func sysctlInt(_ name: String) -> Int? {
+        var v: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        guard sysctlbyname(name, &v, &size, nil, 0) == 0 else { return nil }
+        return Int(v)
+    }
+
+    /// The machine, in the terms that decide what can go wrong here.
+    ///
+    /// Apple Silicon vs Intel is not idle curiosity: Wine Staging for macOS is
+    /// an x86_64 build, so on Apple Silicon it runs under Rosetta, and Apple has
+    /// said Rosetta will be cut back. A report that says which one it is, and
+    /// what architectures the wine binary actually contains, answers that
+    /// without a round of questions.
+    func machineLines() -> [String] {
+        var out: [String] = []
+        let model = sysctlString("hw.model") ?? "?"
+        let cpu = sysctlString("machdep.cpu.brand_string") ?? "?"
+        #if arch(arm64)
+        let appArch = "arm64"
+        #elseif arch(x86_64)
+        let appArch = "x86_64"
+        #else
+        let appArch = "?"
+        #endif
+        let translated = (sysctlInt("sysctl.proc_translated") ?? 0) == 1
+        out.append("Mac: \(model) · \(cpu)")
+        out.append("this app: \(appArch)\(translated ? " (running under Rosetta)" : "")")
+        if let w = wineBin() {
+            let ver = runCapture(w, ["--version"]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let archs = runCapture("/usr/bin/lipo", ["-archs", w]).trimmingCharacters(in: .whitespacesAndNewlines)
+            out.append("Wine: \(ver.isEmpty ? "version unknown" : ver)\(archs.isEmpty ? "" : " [\(archs)]")")
+        }
+        let tablets = detectTablets()
+        out.append("tablets: " + (tablets.isEmpty ? "none detected"
+            : tablets.map { t in
+                let range = t.fullScale.map { "\($0 + 1) levels" } ?? "range not reported"
+                return "\(t.name) [\(t.transport)] \(range)"
+              }.joined(separator: ", ")))
+        out.append("pressure levels in use: \(PressureCore.maxPressure + 1)")
+        return out
     }
 
     func diagnosticsText() -> String {
@@ -346,7 +403,8 @@ extension SetupController {
         let lines = [
             "SAI Pen Pressure \(currentVersion())",
             "macOS: \(os)",
-            "Wine: \(wineBin() ?? "NOT FOUND")",
+        ] + machineLines() + [
+            "Wine path: \(wineBin() ?? "NOT FOUND")",
             "Prefix: \(appPrefix)  (exists: \(fm.fileExists(atPath: appPrefix)))",
             "SAI source: \(savedSAIPath() ?? "none")",
             "SAI installed from: \(installedSrcPath() ?? "unknown")",
