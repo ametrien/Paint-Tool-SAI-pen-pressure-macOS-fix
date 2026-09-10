@@ -195,6 +195,17 @@ case "$out" in
   *) echo "  skip bridge: 'falls back without SAI' (SAI is open on this machine)";;
 esac
 
+# An install that CANNOT write the override has to say so (#34). Before the fix
+# installBridge returned nothing and verified nothing, so a prefix could come out
+# of setup with our DLL in place, no override, and no trace anywhere — which is
+# what #29 turned out to be. Pointing it at something that isn't wine is the
+# cheapest way to make the write fail on purpose.
+BR2="$WORK/bridge-install"; mkdir -p "$BR2/prefix/drive_c"
+out=$(SAI_PREFIX="$BR2/prefix" SAIPP_CONFIG_DIR="$BR2/cfg" \
+      SAIPP_SELFTEST_BRIDGE=install SAIPP_SELFTEST_WINE="$WORK/not-wine" "$WORK/helper-upd")
+want "bridge: an install that can't write the override reports failure" "$out" "installBridge=false"
+want "bridge: and leaves no override behind to be mistaken for one"     "$out" "override=-"
+
 [ "$bfail" = 0 ] || exit 1
 echo "All bridge check tests passed."
 
