@@ -609,6 +609,11 @@ extension SetupController {
         }
     }
 
+    @objc func autoUpdateToggled() {
+        setAutoUpdate(autoUpdateCheck.state == .on)
+        wlog("update: automatic = \(autoUpdateEnabled())")
+    }
+
     func doReinstall(mode: SetupMode) {
         guard let wine = wineBin(), let src = savedSAIPath() else { refresh(); return }
         let wasRunning = running

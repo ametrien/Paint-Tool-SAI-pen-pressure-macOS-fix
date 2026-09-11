@@ -25,6 +25,20 @@ func timelapseOffMarker() -> String { appSupport() + "/timelapse-off.txt" }
 func timelapseRecordingEnabled() -> Bool {
     !FileManager.default.fileExists(atPath: timelapseOffMarker())
 }
+/// Advanced tab: install updates without being asked?
+///
+/// Off by default, and not because of the download. Every build is signed
+/// differently, so macOS drops the Input Monitoring grant on ANY update — an
+/// app that updated itself quietly would stop reading the pen and give no
+/// reason. With this on, the update still happens on its own, but the app says
+/// what it cost the moment it comes back.
+func autoUpdateMarker() -> String { appSupport() + "/auto-update.txt" }
+func autoUpdateEnabled() -> Bool { FileManager.default.fileExists(atPath: autoUpdateMarker()) }
+func setAutoUpdate(_ on: Bool) {
+    if on { try? "1".write(toFile: autoUpdateMarker(), atomically: true, encoding: .utf8) }
+    else { try? FileManager.default.removeItem(atPath: autoUpdateMarker()) }
+}
+
 /// Developer tab: should our DLL write C:\wtlog.txt on the next SAI launch?
 ///
 /// Off by default — it flushes a line per pen packet, so it is a debugging tool

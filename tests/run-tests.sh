@@ -123,6 +123,76 @@ else echo "  ok   update: a file removed upstream is gone"; fi
 echo "All SAI update tests passed."
 
 echo ""
+echo "== An update we would install, and three we wouldn't (real filesystem) =="
+# The app can now replace itself. That makes "which bundle do we accept?" a
+# security question, not a convenience one: whatever comes down the wire gets to
+# become the app holding the Input Monitoring grant. Everything except the
+# download runs here against real bundles on a real disk.
+UPDW="$WORK/update"; mkdir -p "$UPDW"
+mkapp() {  # dir version bundleid -> prints the zip path
+  local d="$1" app
+  app="$d/SAI Pen Pressure.app"
+  mkdir -p "$app/Contents/MacOS"
+  cat > "$app/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleExecutable</key><string>stub</string>
+  <key>CFBundleIdentifier</key><string>$3</string>
+  <key>CFBundleShortVersionString</key><string>$2</string>
+</dict></plist>
+PLIST
+  printf '#!/bin/bash\necho stub\n' > "$app/Contents/MacOS/stub"
+  chmod +x "$app/Contents/MacOS/stub"
+  codesign -s - --force "$app" >/dev/null 2>&1
+  ( cd "$d" && ditto -c -k --sequesterRsrc --keepParent "SAI Pen Pressure.app" "app.zip" )
+  echo "$d/app.zip"
+}
+ufail=0
+uwant() { case "$2" in *"$3"*) echo "  ok   $1";; *) echo "  FAIL $1"; echo "$2" | sed 's/^/        /'; ufail=1;; esac; }
+
+mkdir -p "$UPDW/good"
+GOODZIP=$(mkapp "$UPDW/good" "9.9.9" "com.runasharp.saipenpressure")
+DEST="$UPDW/installed/SAI Pen Pressure.app"; mkdir -p "$UPDW/installed"
+out=$(SAIPP_CONFIG_DIR="$UPDW/cfg" SAIPP_SELFTEST_UPDATE_ZIP="$GOODZIP" \
+      SAIPP_SELFTEST_UPDATE_FROM="0.3.3" SAIPP_SELFTEST_UPDATE_DEST="$DEST" "$WORK/helper-upd")
+uwant "update: a newer build of ours unpacks"        "$out" "unpack=ok version=9.9.9"
+uwant "update: and is accepted"                      "$out" "verify=ok"
+uwant "update: with its signature intact"            "$out" "signature=ok"
+uwant "update: the swap is handed off"               "$out" "swapStarted=true"
+# The swap waits for the app to quit, so it lands a moment after we do.
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  [ -f "$DEST/Contents/Info.plist" ] && break
+  osascript -e 'delay 0.5' >/dev/null 2>&1 || true
+done
+got=$(defaults read "$DEST/Contents/Info.plist" CFBundleShortVersionString 2>/dev/null)
+if [ "$got" = "9.9.9" ]; then echo "  ok   update: the app on disk is the new one"
+else echo "  FAIL update: the app on disk is '$got', wanted 9.9.9"; ufail=1; fi
+
+# Someone else's app, correctly signed and genuinely newer, must still be refused:
+# this is the one that would hand our permission to a stranger.
+mkdir -p "$UPDW/other"
+OTHERZIP=$(mkapp "$UPDW/other" "9.9.9" "com.example.something")
+out=$(SAIPP_CONFIG_DIR="$UPDW/cfg" SAIPP_SELFTEST_UPDATE_ZIP="$OTHERZIP" SAIPP_SELFTEST_UPDATE_FROM="0.3.3" "$WORK/helper-upd")
+uwant "update: a different application is refused" "$out" "different application"
+
+mkdir -p "$UPDW/older"
+OLDZIP=$(mkapp "$UPDW/older" "0.1.0" "com.runasharp.saipenpressure")
+out=$(SAIPP_CONFIG_DIR="$UPDW/cfg" SAIPP_SELFTEST_UPDATE_ZIP="$OLDZIP" SAIPP_SELFTEST_UPDATE_FROM="0.3.3" "$WORK/helper-upd")
+uwant "update: an older build is refused" "$out" "not newer"
+
+# A bundle that arrived damaged must be caught BEFORE it replaces a working app.
+mkdir -p "$UPDW/broken"
+BROKENZIP=$(mkapp "$UPDW/broken" "9.9.9" "com.runasharp.saipenpressure")
+rm -f "$BROKENZIP"
+printf 'tampered\n' >> "$UPDW/broken/SAI Pen Pressure.app/Contents/MacOS/stub"
+( cd "$UPDW/broken" && ditto -c -k --sequesterRsrc --keepParent "SAI Pen Pressure.app" "app.zip" )
+out=$(SAIPP_CONFIG_DIR="$UPDW/cfg" SAIPP_SELFTEST_UPDATE_ZIP="$UPDW/broken/app.zip" SAIPP_SELFTEST_UPDATE_FROM="0.3.3" "$WORK/helper-upd")
+uwant "update: a tampered bundle is reported as damaged" "$out" "signature=damaged"
+
+[ "$ufail" = 0 ] || exit 1
+echo "All update tests passed."
+
 echo "== The bridge check tells the truth about a prefix (real filesystem) =="
 # The check that #29 was missing. Wine loads its OWN wintab32 unless the prefix
 # says otherwise, so "our DLL is in place" and "SAI will use our DLL" are two

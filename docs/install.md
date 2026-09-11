@@ -81,11 +81,17 @@ or reinstall — and the *SAI license* row will say so.
 
 ## Updating to a new build
 
-The app notices a new release and says so at the bottom of the setup window, with a button to the
-notes — but it does not update itself. An app that replaces its own binary loses the Input
-Monitoring grant it was holding, silently, which is a worse first impression than a manual swap.
+When a new release is out, the bottom of the setup window says so and offers **Update now**. That
+downloads it, checks it really is a newer build of this app and that it arrived whole, replaces
+itself and comes back running. **Advanced → Install updates automatically** does the same without
+asking, once per launch.
 
-The swap is short:
+Either way macOS drops the **Input Monitoring** permission, because every build is signed
+differently and it sees a new app. The update says so as soon as it comes back and offers the
+Grant button; nothing else is affected. Turning updates off changes nothing about that — a manual
+swap costs the same permission, it just doesn't warn you.
+
+**Doing it by hand** instead — and the same steps if the in-app update ever fails:
 
 1. **Quit the app** — and SAI, if it's running.
 2. Download the new `SAI-Pen-Pressure-….dmg` from the

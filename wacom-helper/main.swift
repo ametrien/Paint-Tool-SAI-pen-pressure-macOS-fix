@@ -324,6 +324,35 @@ if let src = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_UPDATE"] {
 /// driver while the actual fault sits in one registry line — so the answer is
 /// asserted against a real throwaway prefix rather than reasoned about. Inert
 /// without the environment variable.
+/// Self-test hook for the in-app update: unpack a local zip, check whether we
+/// would accept it, and (optionally) perform the swap into a throwaway folder.
+///
+/// The download is the only part not covered here, and it is the part that
+/// cannot quietly do the wrong thing — it either arrives or it doesn't. What can
+/// go quietly wrong is accepting a bundle we shouldn't, or swapping a broken one
+/// over a working app, so those run against real files on a real disk.
+if let zip = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_UPDATE_ZIP"] {
+    let c = SetupController()
+    let work = NSTemporaryDirectory() + "saipp-selftest-\(UUID().uuidString)"
+    switch unpackUpdate(zip: zip, into: "\(work)/x") {
+    case .failure(let problem):
+        print("unpack=failed reason=\(problem.reason)")
+        exit(1)
+    case .success(let pkg):
+        print("unpack=ok version=\(pkg.version) id=\(pkg.bundleID)")
+        let cur = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_UPDATE_FROM"] ?? "0.0.1"
+        let id = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_UPDATE_ID"] ?? "com.runasharp.saipenpressure"
+        let why = verifyUpdate(pkg, currentVersion: cur, currentBundleID: id, isNewer: { c.isNewer($0, than: $1) })
+        print("verify=\(why ?? "ok")")
+        print("signature=\(c.signatureIsIntact(pkg.appPath) ? "ok" : "damaged")")
+        if let dest = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_UPDATE_DEST"], why == nil {
+            let started = c.swapAndRelaunch(newApp: pkg.appPath, dest: dest, scriptDir: work, relaunch: false)
+            print("swapStarted=\(started)")
+        }
+        exit(0)
+    }
+}
+
 if let mode = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_BRIDGE"] {
     // "repair" exercises the healing path itself against a real prefix — the
     // half that unit tests cannot reach, because putting the key back needs
@@ -1428,6 +1457,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     var recPreviewLabel: NSTextField!
     var recHidePreviewBtn: NSButton!
     var devCheck: NSButton!
+    var devUpdateRows: [NSView] = []      // shown even without developer mode
     var console: NSTextView!
     var consoleScroll: NSScrollView!
     let rowWidth: CGFloat = 500
@@ -1536,6 +1566,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         ]
         buildWindow()
         refresh()
+        announceUpdateIfJustUpdated()
         // On launch, actively ask for Input Monitoring — the ONLY permission this
         // app needs — via the native prompt (with an "Open System Settings"
         // button), so the user doesn't add the app manually. No-op if already
@@ -1796,8 +1827,12 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     var versionLabel: NSTextField!
     var updateLabel: NSTextField!
     var updateBtn: NSButton!
+    var notesBtn: NSButton!
+    var autoUpdateCheck: NSButton!
     var latestTag: String?
     var latestNotes: String = ""
+    var latestZipURL: String?        // the asset the in-app update installs
+    var autoUpdateTried = false      // once per launch, whatever the answer
     let repoSlug = "ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix"
 
 
@@ -2033,6 +2068,18 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         devSection.alignment = .leading; devSection.spacing = 6
         devCheck = NSButton(checkboxWithTitle: "Developer mode", target: self, action: #selector(toggleDevCheck))
         devSection.addArrangedSubview(devCheck)
+        // Updates live here rather than behind developer mode: this is a setting
+        // people actually want, and the tab is called Advanced for that reason.
+        autoUpdateCheck = NSButton(checkboxWithTitle: "Install updates automatically",
+                                   target: self, action: #selector(autoUpdateToggled))
+        autoUpdateCheck.state = autoUpdateEnabled() ? .on : .off
+        let autoUpdateNote = lbl("Off by default: every build is signed differently, so macOS drops the Input Monitoring permission on any update, by hand or not. The app asks you to grant it again straight after.", 10, color: .secondaryLabelColor)
+        autoUpdateNote.lineBreakMode = .byWordWrapping
+        autoUpdateNote.maximumNumberOfLines = 3
+        autoUpdateNote.preferredMaxLayoutWidth = rowWidth
+        devSection.addArrangedSubview(autoUpdateCheck)
+        devSection.addArrangedSubview(autoUpdateNote)
+        devUpdateRows = [autoUpdateCheck, autoUpdateNote]
         // Folders first — "where did my SAI actually go?" is the question the
         // whole copy-into-the-prefix model raises, so answer it with a button.
         let devFolders = NSStackView(); devFolders.orientation = .horizontal; devFolders.spacing = 6
@@ -2154,12 +2201,18 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         // stretching the row / squeezing the button off the window
         updateLabel.lineBreakMode = .byTruncatingTail
         updateLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        updateBtn = NSButton(title: "What's new / Update…", target: self, action: #selector(openReleasePage))
+        // Two buttons, because they answer different questions: "install it"
+        // and "what is it". One button that did both meant the only way to
+        // update was to go and read a web page first.
+        notesBtn = NSButton(title: "What's new", target: self, action: #selector(openReleasePage))
+        notesBtn.bezelStyle = .rounded; notesBtn.controlSize = .small; notesBtn.isHidden = true
+        updateBtn = NSButton(title: "Update now", target: self, action: #selector(updateNowTapped))
         updateBtn.bezelStyle = .rounded
         updateBtn.controlSize = .small
         updateBtn.isHidden = true
         verRow.addArrangedSubview(versionLabel)
         verRow.addArrangedSubview(updateLabel)
+        verRow.addArrangedSubview(notesBtn)
         verRow.addArrangedSubview(updateBtn)
         content.addArrangedSubview(verRow)
 
@@ -2202,7 +2255,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
                               ("Pen", settingsTab!),
                               ("Recording", recordingTab!),
                               ("Videos", buildLibraryTab()),
-                              ("Developer", devSection!)] {
+                              ("Advanced", devSection!)] {
             // NSTabViewItem positions its view with the autoresizing mask, not
             // constraints. Leaving translatesAutoresizingMaskIntoConstraints
             // false gave every tab a zero-sized stack: the controls were all
@@ -2264,7 +2317,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         if item?.identifier as? String == "Videos" { refreshLibraryTab() }
         // The console only refreshed while the old "Settings" disclosure was
         // open, so in the tabbed layout it showed as an empty black box.
-        if item?.identifier as? String == "Developer" { updateConsole() }
+        if item?.identifier as? String == "Advanced" { updateConsole() }
         applyLayout()
     }
 
@@ -2311,7 +2364,9 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         // devSection lives in its own tab now; never hide it wholesale.
         devCheck.state = devMode ? .on : .off
         consoleScroll.isHidden = !devMode
-        devSection.arrangedSubviews.forEach { if $0 !== devCheck { $0.isHidden = !devMode } }
+        devSection.arrangedSubviews.forEach {
+            if $0 !== devCheck && !devUpdateRows.contains($0) { $0.isHidden = !devMode }
+        }
         autoWakeCheck?.state = autoWake ? .on : .off
         advancedBtn.title = advanced ? "Show all steps ⌃" : "Show all steps ⌄"
         if devMode && advanced { updateConsole() }
