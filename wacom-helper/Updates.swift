@@ -178,29 +178,67 @@ extension String {
 
 extension SetupController {
 
+    /// A dialog that belongs to US.
+    ///
+    /// alertUser() goes through osascript, and an osascript dialog belongs to
+    /// osascript: it can open BEHIND the window you just clicked in, which reads
+    /// as the button doing nothing at all. For a button whose entire job is to
+    /// report back, that is the one failure mode worth spending an NSAlert on.
+    func updateAlert(_ text: String) {
+        NSApp.activate(ignoringOtherApps: true)
+        let a = NSAlert()
+        a.messageText = "Update"
+        a.informativeText = text
+        a.alertStyle = .informational
+        a.runModal()
+    }
+
     /// The whole update: download, check, swap, come back.
-    @objc func updateNowTapped() { installUpdate(auto: false) }
+    @objc func updateNowTapped() {
+        wlog("update: Update now pressed")
+        subtitle.stringValue = "Checking the update…"
+        installUpdate(auto: false)
+    }
 
     func installUpdate(auto: Bool) {
         guard let tag = latestTag, isNewer(tag, than: currentVersion()) else {
-            if !auto { alertUser("You're on the newest version (\(currentVersion()))." ) }
+            wlog("update: refused — nothing newer than \(currentVersion())")
+            if !auto {
+                subtitle.stringValue = "You're on the newest version."
+                updateAlert("You're on the newest version (\(currentVersion()).")
+            }
             return
         }
         guard let zip = latestZipURL, let url = URL(string: zip) else {
+            wlog("update: no installable asset in \(tag), opening the release page")
             if !auto { openReleasePage() }      // no asset we can install: hand over the page
             return
         }
         // Quitting is part of updating, and quitting takes the pressure stream
         // with it. Never do that underneath someone who is drawing.
-        if saiWindowIsOpen() {
-            if !auto { alertUser("Close SAI first.\n\nUpdating restarts this app, and the pen stops being read while it's gone.") }
+        //
+        // saiRunningInWine(), not saiWindowIsOpen(): the latter counts any window
+        // whose owner name contains "sai", which includes OTHER COPIES OF THIS
+        // APP. With a second copy open, the button silently refused to do
+        // anything, having decided SAI was in use.
+        if saiRunningInWine() {
+            wlog("update: refused — SAI is on screen")
+            if !auto {
+                subtitle.stringValue = "Close SAI, then press Update now again."
+                updateAlert("Close SAI first, then press Update now again.\n\nUpdating restarts this app, and while it is gone nothing is reading your pen. Closing SAI first means that never happens mid-stroke.")
+            }
             return
         }
         let dest = Bundle.main.bundlePath
         guard FileManager.default.isWritableFile(atPath: (dest as NSString).deletingLastPathComponent) else {
-            if !auto { alertUser("Can't replace the app where it is:\n\n\(dest)\n\nMove it to /Applications and try again.") }
+            wlog("update: refused — cannot write next to \(dest)")
+            if !auto {
+                subtitle.stringValue = "Can't update from this folder."
+                updateAlert("Can't replace the app where it is:\n\n\(dest)\n\nMove it to /Applications and try again.")
+            }
             return
         }
+        wlog("update: downloading \(tag)")
         updateBtn.isEnabled = false
         subtitle.stringValue = "Downloading \(tag)…"
         DispatchQueue.global().async { [weak self] in
@@ -260,10 +298,11 @@ extension SetupController {
     }
 
     func updateFailed(_ why: String, auto: Bool) {
-        wlog("update: \(why)")
+        wlog("update: failed — \(why)")
         updateBtn.isEnabled = true
         subtitle.stringValue = "Update failed: \(why)"
         guard !auto else { return }
+        NSApp.activate(ignoringOtherApps: true)
         let c = osa("button returned of (display dialog \"Update failed: \(why).\n\nYou can always download it by hand from the releases page — nothing of yours is involved either way.\" buttons {\"OK\", \"Open releases page\"} default button \"Open releases page\" with icon caution)")
         if c == "Open releases page" { openReleasePage() }
     }
