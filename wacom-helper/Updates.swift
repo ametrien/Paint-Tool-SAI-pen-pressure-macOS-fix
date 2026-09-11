@@ -7,6 +7,32 @@
 import AppKit
 import Foundation
 
+/// Expand a downloaded release zip and find the app inside it.
+///
+/// Not in UpdateCore with the rest: this one shells out and touches the disk.
+/// It stays here so the pure half can be tested without either.
+func unpackUpdate(zip: String, into dir: String) -> Result<UpdatePackage, UpdateProblem> {
+    let fm = FileManager.default
+    try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    // ditto, not unzip: it keeps the bundle's symlinks, extended attributes and
+    // — the part that matters — the code signature intact. `unzip` mangles all
+    // three, and a mangled signature fails verification, which would look like a
+    // tampered download rather than the wrong tool.
+    let p = runProc("/usr/bin/ditto", ["-x", "-k", zip, dir])
+    guard p.terminationStatus == 0 else { return .failure(UpdateProblem(reason: "couldn't expand the download")) }
+    guard let entries = try? fm.contentsOfDirectory(atPath: dir),
+          let app = entries.first(where: { $0.hasSuffix(".app") }) else {
+        return .failure(UpdateProblem(reason: "no app inside the download"))
+    }
+    let appPath = "\(dir)/\(app)"
+    guard let plist = NSDictionary(contentsOfFile: "\(appPath)/Contents/Info.plist"),
+          let v = plist["CFBundleShortVersionString"] as? String,
+          let id = plist["CFBundleIdentifier"] as? String else {
+        return .failure(UpdateProblem(reason: "the app inside the download has no version"))
+    }
+    return .success(UpdatePackage(appPath: appPath, version: v, bundleID: id))
+}
+
 extension SetupController {
 
     func currentVersion() -> String {
