@@ -341,7 +341,7 @@ if let zip = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_UPDATE_ZIP"] {
     case .success(let pkg):
         print("unpack=ok version=\(pkg.version) id=\(pkg.bundleID)")
         let cur = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_UPDATE_FROM"] ?? "0.0.1"
-        let id = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_UPDATE_ID"] ?? "com.runasharp.saipenpressure"
+        let id = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_UPDATE_ID"] ?? (Bundle.main.bundleIdentifier ?? "")
         let why = verifyUpdate(pkg, currentVersion: cur, currentBundleID: id, isNewer: { c.isNewer($0, than: $1) })
         print("verify=\(why ?? "ok")")
         print("signature=\(c.signatureIsIntact(pkg.appPath) ? "ok" : "damaged")")
