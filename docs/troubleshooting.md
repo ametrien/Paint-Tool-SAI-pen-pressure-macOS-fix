@@ -143,7 +143,7 @@ Cosmetic — drawing is unaffected. Moving the pen usually clears it.
 
 ## Something else — collect diagnostics
 
-Press **Copy problem report** on the **Setup** tab and paste it into an issue. No Developer mode
+Press **Copy problem report** on the **Setup** tab and paste it into an issue. No developer mode
 needed. It reports the build, your Mac and chip, the macOS and Wine versions, your tablet and how
 it is connected, what is installed where, whether Wine is loading the pressure bridge or ignoring
 it, what SAI last received, and the tail of the log. That is almost everything anyone would

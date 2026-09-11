@@ -26,7 +26,7 @@ The result: pressure-sensitive strokes that taper with how hard you press.
 Five tabs, one window.
 
 <p align="center">
-  <img src="docs/assets/screenshots/setup.png" alt="Setup tab: Wine, SAI, licence and Input Monitoring all ready, with Launch and Copy problem report" width="49%">
+  <img src="docs/assets/screenshots/setup.png" alt="Setup tab: Wine, SAI, licence and Input Monitoring all ready on one line, with Launch, Copy problem report, and the version with its update check" width="49%">
   <img src="docs/assets/screenshots/pen.png" alt="Pen tab: pressure levels, pen feel, and a live test showing what is being sent and what is arriving inside Wine" width="49%">
 </p>
 <p align="center">
@@ -34,7 +34,7 @@ Five tabs, one window.
   <img src="docs/assets/screenshots/videos.png" alt="Videos tab: one video per drawing, with play, export, rebuild and rename" width="49%">
 </p>
 <p align="center">
-  <img src="docs/assets/screenshots/developer.png" alt="Developer tab: logs, diagnostics, a health check and Copy problem report" width="49%">
+  <img src="docs/assets/screenshots/advanced.png" alt="Advanced tab: developer mode, automatic updates, the logs, a health check and Copy problem report" width="49%">
 </p>
 
 **Setup** gets SAI running and tells you which of the four prerequisites are missing.
@@ -44,7 +44,7 @@ useful because Ver.2 is a rolling preview.
 being sent alongside what is actually arriving on SAI's side of the bridge.
 **Recording** is the canvas timelapse.
 **Videos** lists one video per drawing, and keeps adding to it when you come back to that drawing.
-**Developer** holds the logs, a diagnostics dump and a health check.
+**Advanced** is where updates install themselves if you want them to, and where the logs, a diagnostics dump and a health check live.
 
 ---
 
