@@ -134,20 +134,38 @@ func unpackUpdate(zip: String, into dir: String) -> Result<UpdatePackage, Update
     return .success(UpdatePackage(appPath: appPath, version: v, bundleID: id))
 }
 
-/// Everything that must be true before we overwrite ourselves with this.
-/// Returns nil when it is safe, or the reason it isn't.
+/// Is this download coming from OUR releases, rather than somewhere that merely
+/// answered the phone?
 ///
-/// The identity check is the load-bearing one: a zip fetched over the network
-/// gets to replace the app that is asking for Input Monitoring, so it has to be
-/// OUR app, not merely an app.
-func verifyUpdate(_ pkg: UpdatePackage, currentVersion: String, currentBundleID: String,
+/// This is the check that carries the weight, and it took a wrong turn first.
+/// The original guard compared the bundle identifier inside the downloaded app
+/// against our own — which defends against nothing, because the identifier
+/// travels INSIDE the file: anyone able to hand us a different archive is able
+/// to write any identifier they like into it. What it did do was refuse a
+/// legitimate update the first time the identifier legitimately changed, which
+/// is how it was caught.
+///
+/// The real anchor is where the file comes from: the URL is handed to us by the
+/// GitHub API for one fixed repository, over TLS. So require exactly that shape
+/// — https, github.com itself, and a path under this repository's releases.
+/// Matching on "contains the slug" would be no check at all (an attacker owns
+/// their own path), hence the prefix and the explicit host.
+func isOurReleaseURL(_ raw: String, slug: String) -> Bool {
+    guard let u = URLComponents(string: raw),
+          u.scheme?.lowercased() == "https",
+          let host = u.host?.lowercased(),
+          host == "github.com" || host == "objects.githubusercontent.com" else { return false }
+    // github.com serves the asset itself; objects.githubusercontent.com is where
+    // it redirects, and URLSession follows that on its own — both are allowed so
+    // a hand-tested URL behaves the same as the API's.
+    if host == "github.com" { return u.path.hasPrefix("/\(slug)/releases/download/") }
+    return true
+}
+
+/// Everything else that must be true before we overwrite ourselves with this.
+/// Returns nil when it is safe, or the reason it isn't.
+func verifyUpdate(_ pkg: UpdatePackage, currentVersion: String,
                   isNewer: (String, String) -> Bool) -> String? {
-    guard pkg.bundleID == currentBundleID else {
-        // Deliberately without naming either identifier. This message lands in a
-        // dialog on someone else's screen, and a bundle id is the kind of
-        // detail that is nobody's business and helps nobody read the sentence.
-        return "that download is a different application"
-    }
     guard isNewer(pkg.version, currentVersion) else {
         return "that download is \(pkg.version), which is not newer than \(currentVersion)"
     }
@@ -236,6 +254,10 @@ extension SetupController {
             let work = NSTemporaryDirectory() + "saipp-update-\(UUID().uuidString)"
             try? FileManager.default.createDirectory(atPath: work, withIntermediateDirectories: true)
             let zipPath = "\(work)/update.zip"
+            guard isOurReleaseURL(zip, slug: self.repoSlug) else {
+                DispatchQueue.main.async { self.updateFailed("that download isn't coming from this project's releases", auto: auto) }
+                return
+            }
             guard let data = try? Data(contentsOf: url), (try? data.write(to: URL(fileURLWithPath: zipPath))) != nil else {
                 DispatchQueue.main.async { self.updateFailed("the download didn't finish", auto: auto) }
                 return
@@ -245,8 +267,14 @@ extension SetupController {
             case .failure(let problem):
                 DispatchQueue.main.async { self.updateFailed(problem.reason, auto: auto) }
             case .success(let pkg):
-                let myID = (Bundle.main.bundleIdentifier ?? "")
-                if let why = verifyUpdate(pkg, currentVersion: self.currentVersion(), currentBundleID: myID,
+                // An identifier that differs is worth knowing about — it means a
+                // release changed identity, which costs everyone their Input
+                // Monitoring grant — but it is not a reason to refuse an update
+                // that came from our own releases.
+                if pkg.bundleID != (Bundle.main.bundleIdentifier ?? "") {
+                    wlog("update: the new build has a different bundle identifier")
+                }
+                if let why = verifyUpdate(pkg, currentVersion: self.currentVersion(),
                                           isNewer: { self.isNewer($0, than: $1) }) {
                     DispatchQueue.main.async { self.updateFailed(why, auto: auto) }
                     return
