@@ -217,6 +217,15 @@ echo "Installing wintab32.dll + override..."
 mkdir -p "$PREFIX/drive_c/windows/system32"
 cp "$DLL" "$PREFIX/drive_c/windows/system32/wintab32.dll"
 "$WINE" reg add "HKCU\\Software\\Wine\\DllOverrides" /v wintab32 /t REG_SZ /d "native,builtin" /f >/dev/null 2>&1
+# Ask Wine whether that took, rather than assuming. Writing the key into the dark
+# is what #29 turned out to be: no exit status read, no value checked, and a
+# prefix that then looked perfect while Wine loaded its own wintab32 forever.
+# Wine is asked, not user.reg: the file only catches up when wineserver exits.
+if ! "$WINE" reg query "HKCU\\Software\\Wine\\DllOverrides" /v wintab32 2>/dev/null | grep -qi "native"; then
+  echo "WARNING: could not set the DllOverrides key for wintab32."
+  echo "         Wine will load its own wintab32 and SAI will draw without pressure."
+  echo "         Re-run this installer, or use the app, which repairs it on every launch."
+fi
 # Mac-friendly shortcuts: let Wine map Command -> Control inside Wine apps
 # (undo/redo/save/etc.). Driver-level, no Accessibility permission needed.
 "$WINE" reg add "HKCU\\Software\\Wine\\Mac Driver" /v LeftCommandIsCtrl  /t REG_SZ /d Y /f >/dev/null 2>&1
@@ -259,6 +268,12 @@ echo 0 > "\$WT_PRESSURE_FILE"
 HP=\$!
 trap 'echo 0 > "\$WT_PRESSURE_FILE" 2>/dev/null; kill \$HP 2>/dev/null' EXIT INT TERM
 rm -f "$PREFIX/drive_c/wtlog.txt"
+# Re-assert the setting that makes Wine load OUR wintab32 rather than its own.
+# Written once at install time it was a one-shot, and a one-shot is exactly what
+# #29 was: a prefix that lost the key had nothing to put it back, while every
+# other check still looked fine. BEFORE launching, never after — wineserver
+# rewrites user.reg when it exits, so a repair made while SAI is up is lost.
+"\$WINE" reg add "HKCU\\Software\\Wine\\DllOverrides" /v wintab32 /t REG_SZ /d "native,builtin" /f >/dev/null 2>&1
 echo "Pen pressure active. Close SAI to stop."
 cd "$PREFIX_SAI"
 "\$WINE" sai2.exe

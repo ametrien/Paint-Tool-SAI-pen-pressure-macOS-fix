@@ -36,6 +36,13 @@ swiftc -o "$WORK/bridge-tests" "$REPO/wacom-helper/BridgeCheck.swift" "$REPO/tes
 "$WORK/bridge-tests"
 
 echo ""
+echo "== Swift core (UpdateCore.swift) =="
+# The app replaces itself with a file from the internet. What makes that safe is
+# three deterministic answers, and each of them has been wrong once already.
+swiftc -o "$WORK/update-tests" "$REPO/wacom-helper/UpdateCore.swift" "$REPO/tests/UpdateTests.swift"
+"$WORK/update-tests"
+
+echo ""
 echo "== Swift core (EncoderCore.swift) =="
 swiftc -o "$WORK/encoder-tests" "$REPO/timelapse-encoder/EncoderCore.swift" "$REPO/tests/EncoderTests.swift"
 "$WORK/encoder-tests"
@@ -169,34 +176,6 @@ got=$(defaults read "$DEST/Contents/Info.plist" CFBundleShortVersionString 2>/de
 if [ "$got" = "9.9.9" ]; then echo "  ok   update: the app on disk is the new one"
 else echo "  FAIL update: the app on disk is '$got', wanted 9.9.9"; ufail=1; fi
 
-# WHERE the download came from is the check that carries the weight. Comparing
-# the bundle identifier inside the archive was the first attempt, and it defended
-# against nothing — the identifier travels inside the file, so anyone able to
-# hand us an archive is able to write whatever they like into it — while
-# refusing a legitimate update the first time the identifier legitimately
-# changed. That is what these cases are now about.
-src() {  # url -> ours | refused
-  SAIPP_CONFIG_DIR="$UPDW/cfg" SAIPP_SELFTEST_UPDATE_ZIP="$GOODZIP" \
-  SAIPP_SELFTEST_UPDATE_FROM="0.3.3" SAIPP_SELFTEST_UPDATE_URL="$1" "$WORK/helper-upd" \
-    | sed -n 's/^source=//p'
-}
-# NOT named REPO: that is the repository root everywhere else in this file.
-SLUG="ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix"
-chk() { got=$(src "$2"); if [ "$got" = "$3" ]; then echo "  ok   $1"; else echo "  FAIL $1 (got '$got', wanted '$3')"; ufail=1; fi; }
-chk "source: our own release asset is accepted" \
-    "https://github.com/$SLUG/releases/download/v0.3.3/SAI-Pen-Pressure-v0.3.3.zip" "ours"
-chk "source: the redirect GitHub sends it to is accepted" \
-    "https://objects.githubusercontent.com/github-production-release-asset/123/abc" "ours"
-chk "source: plain http is refused" \
-    "http://github.com/$SLUG/releases/download/v0.3.3/x.zip" "refused"
-chk "source: another host is refused" \
-    "https://example.com/$SLUG/releases/download/v0.3.3/x.zip" "refused"
-chk "source: a lookalike host is refused" \
-    "https://github.com.example.com/$SLUG/releases/download/v0.3.3/x.zip" "refused"
-chk "source: another repository's release is refused" \
-    "https://github.com/someone/else/releases/download/v1.0/x.zip" "refused"
-chk "source: our name inside someone else's path is refused" \
-    "https://github.com/evil/repo/releases/download/v1/$SLUG.zip" "refused"
 
 mkdir -p "$UPDW/older"
 OLDZIP=$(mkapp "$UPDW/older" "0.1.0" "app.saipenpressure.mac")
@@ -214,6 +193,62 @@ uwant "update: a tampered bundle is reported as damaged" "$out" "signature=damag
 
 [ "$ufail" = 0 ] || exit 1
 echo "All update tests passed."
+
+echo "== The command-line launcher restores the bridge too =="
+# install.sh wrote the DllOverrides key once, at install time, and the launcher
+# it generates started SAI without ever looking at it again. That one-shot is
+# precisely what #29 was: a prefix that lost the key had nothing to put it back
+# while every other check stayed green. Both are text, so both are checked as
+# text — and the ORDER matters, because wineserver rewrites user.reg when it
+# exits, so a repair made after SAI starts is thrown away.
+TMPL="$WORK/launcher.tmpl"
+awk '/^cat > "\$LAUNCHER"/,/^EOF$/' "$REPO/install.sh" > "$TMPL"
+lfail=0
+regln=$(grep -n 'reg add' "$TMPL" | head -1 | cut -d: -f1)
+sailn=$(grep -n 'sai2.exe' "$TMPL" | head -1 | cut -d: -f1)
+if [ -n "$regln" ]; then echo "  ok   launcher: re-asserts the wintab32 override"
+else echo "  FAIL launcher: never touches the wintab32 override"; lfail=1; fi
+if [ -n "$regln" ] && [ -n "$sailn" ] && [ "$regln" -lt "$sailn" ]; then
+  echo "  ok   launcher: does it BEFORE starting SAI"
+else echo "  FAIL launcher: the override is not restored before SAI starts"; lfail=1; fi
+if grep -q 'reg query' "$REPO/install.sh"; then echo "  ok   install.sh: checks that its own write took"
+else echo "  FAIL install.sh: writes the override without checking"; lfail=1; fi
+
+# Reading the template is not the same as running it. Generate the launcher the
+# way install.sh does, hand it a `wine` that only records what it was asked to
+# do, and watch the order it actually happens in — escaping inside the heredoc
+# is easy to get wrong in a way no amount of reading catches.
+GEN="$WORK/gen"; mkdir -p "$GEN/prefix/drive_c/SAI2"
+export GEN_LOG="$GEN/wine-calls.txt"; : > "$GEN_LOG"
+cat > "$GEN/wine" <<'WINESTUB'
+#!/bin/bash
+echo "$@" >> "$GEN_LOG"
+WINESTUB
+printf '#!/bin/bash\nexit 0\n' > "$GEN/helper"
+chmod +x "$GEN/wine" "$GEN/helper"
+(
+  PREFIX="$GEN/prefix"
+  PREFIX_SAI="$PREFIX/drive_c/SAI2"
+  PRESSURE_FILE="$PREFIX/drive_c/wt_pressure.txt"
+  HELPER="$GEN/helper"
+  WINE="$GEN/wine"
+  LAUNCHER="$GEN/launch.command"
+  eval "$(cat "$TMPL")"
+)
+chmod +x "$GEN/launch.command"
+GEN_LOG="$GEN_LOG" bash "$GEN/launch.command" >/dev/null 2>&1
+reg_line=$(grep -n "reg add" "$GEN_LOG" | head -1 | cut -d: -f1)
+sai_line=$(grep -n "sai2.exe" "$GEN_LOG" | head -1 | cut -d: -f1)
+if grep -q 'reg add HKCU\\Software\\Wine\\DllOverrides /v wintab32 /t REG_SZ /d native,builtin /f' "$GEN_LOG"
+then echo "  ok   launcher: asks wine for exactly the override we mean"
+else echo "  FAIL launcher: the reg add came out wrong"; sed 's/^/        /' "$GEN_LOG"; lfail=1; fi
+if [ -n "$reg_line" ] && [ -n "$sai_line" ] && [ "$reg_line" -lt "$sai_line" ]; then
+  echo "  ok   launcher: and does it before SAI is started, when it still counts"
+else echo "  FAIL launcher: wrong order at runtime"; sed 's/^/        /' "$GEN_LOG"; lfail=1; fi
+if [ -f "$GEN/prefix/helper.log" ]; then echo "  ok   launcher: still starts the pressure helper"
+else echo "  FAIL launcher: the helper never ran"; lfail=1; fi
+[ "$lfail" = 0 ] || exit 1
+echo "All launcher tests passed."
 
 echo "== The bridge check tells the truth about a prefix (real filesystem) =="
 # The check that #29 was missing. Wine loads its OWN wintab32 unless the prefix

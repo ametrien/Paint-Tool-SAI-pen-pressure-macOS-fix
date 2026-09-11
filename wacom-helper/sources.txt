@@ -17,6 +17,7 @@ wacom-helper/Licence.swift
 wacom-helper/SetupUI.swift
 wacom-helper/Diagnostics.swift
 wacom-helper/MenuBar.swift
+wacom-helper/UpdateCore.swift
 wacom-helper/Updates.swift
 wacom-helper/RecordingUI.swift
 wacom-helper/RecordingActions.swift
