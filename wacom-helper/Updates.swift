@@ -178,21 +178,6 @@ extension String {
 
 extension SetupController {
 
-    /// A dialog that belongs to US.
-    ///
-    /// alertUser() goes through osascript, and an osascript dialog belongs to
-    /// osascript: it can open BEHIND the window you just clicked in, which reads
-    /// as the button doing nothing at all. For a button whose entire job is to
-    /// report back, that is the one failure mode worth spending an NSAlert on.
-    func updateAlert(_ text: String) {
-        NSApp.activate(ignoringOtherApps: true)
-        let a = NSAlert()
-        a.messageText = "Update"
-        a.informativeText = text
-        a.alertStyle = .informational
-        a.runModal()
-    }
-
     /// The whole update: download, check, swap, come back.
     @objc func updateNowTapped() {
         wlog("update: Update now pressed")
@@ -205,7 +190,7 @@ extension SetupController {
             wlog("update: refused — nothing newer than \(currentVersion())")
             if !auto {
                 subtitle.stringValue = "You're on the newest version."
-                updateAlert("You're on the newest version (\(currentVersion()).")
+                appAlert("You're on the newest version (\(currentVersion()).")
             }
             return
         }
@@ -225,7 +210,7 @@ extension SetupController {
             wlog("update: refused — SAI is on screen")
             if !auto {
                 subtitle.stringValue = "Close SAI, then press Update now again."
-                updateAlert("Close SAI first, then press Update now again.")
+                appAlert("Close SAI first, then press Update now again.")
             }
             return
         }
@@ -234,7 +219,7 @@ extension SetupController {
             wlog("update: refused — cannot write next to \(dest)")
             if !auto {
                 subtitle.stringValue = "Can't update from this folder."
-                updateAlert("Can't replace the app where it is:\n\n\(dest)\n\nMove it to /Applications and try again.")
+                appAlert("Can't replace the app where it is:\n\n\(dest)\n\nMove it to /Applications and try again.")
             }
             return
         }
