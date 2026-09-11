@@ -123,7 +123,7 @@ else echo "  ok   update: a file removed upstream is gone"; fi
 echo "All SAI update tests passed."
 
 echo ""
-echo "== An update we would install, and three we wouldn't (real filesystem) =="
+echo "== An update we would install, and the ones we would not (real filesystem) =="
 # The app can now replace itself. That makes "which bundle do we accept?" a
 # security question, not a convenience one: whatever comes down the wire gets to
 # become the app holding the Input Monitoring grant. Everything except the
@@ -155,7 +155,7 @@ mkdir -p "$UPDW/good"
 GOODZIP=$(mkapp "$UPDW/good" "9.9.9" "app.saipenpressure.mac")
 DEST="$UPDW/installed/SAI Pen Pressure.app"; mkdir -p "$UPDW/installed"
 out=$(SAIPP_CONFIG_DIR="$UPDW/cfg" SAIPP_SELFTEST_UPDATE_ZIP="$GOODZIP" \
-      SAIPP_SELFTEST_UPDATE_ID="app.saipenpressure.mac" SAIPP_SELFTEST_UPDATE_FROM="0.3.3" SAIPP_SELFTEST_UPDATE_DEST="$DEST" "$WORK/helper-upd")
+      SAIPP_SELFTEST_UPDATE_FROM="0.3.3" SAIPP_SELFTEST_UPDATE_DEST="$DEST" "$WORK/helper-upd")
 uwant "update: a newer build of ours unpacks"        "$out" "unpack=ok version=9.9.9"
 uwant "update: and is accepted"                      "$out" "verify=ok"
 uwant "update: with its signature intact"            "$out" "signature=ok"
@@ -169,16 +169,38 @@ got=$(defaults read "$DEST/Contents/Info.plist" CFBundleShortVersionString 2>/de
 if [ "$got" = "9.9.9" ]; then echo "  ok   update: the app on disk is the new one"
 else echo "  FAIL update: the app on disk is '$got', wanted 9.9.9"; ufail=1; fi
 
-# Someone else's app, correctly signed and genuinely newer, must still be refused:
-# this is the one that would hand our permission to a stranger.
-mkdir -p "$UPDW/other"
-OTHERZIP=$(mkapp "$UPDW/other" "9.9.9" "com.example.something")
-out=$(SAIPP_CONFIG_DIR="$UPDW/cfg" SAIPP_SELFTEST_UPDATE_ZIP="$OTHERZIP" SAIPP_SELFTEST_UPDATE_ID="app.saipenpressure.mac" SAIPP_SELFTEST_UPDATE_FROM="0.3.3" "$WORK/helper-upd")
-uwant "update: a different application is refused" "$out" "different application"
+# WHERE the download came from is the check that carries the weight. Comparing
+# the bundle identifier inside the archive was the first attempt, and it defended
+# against nothing — the identifier travels inside the file, so anyone able to
+# hand us an archive is able to write whatever they like into it — while
+# refusing a legitimate update the first time the identifier legitimately
+# changed. That is what these cases are now about.
+src() {  # url -> ours | refused
+  SAIPP_CONFIG_DIR="$UPDW/cfg" SAIPP_SELFTEST_UPDATE_ZIP="$GOODZIP" \
+  SAIPP_SELFTEST_UPDATE_FROM="0.3.3" SAIPP_SELFTEST_UPDATE_URL="$1" "$WORK/helper-upd" \
+    | sed -n 's/^source=//p'
+}
+# NOT named REPO: that is the repository root everywhere else in this file.
+SLUG="ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix"
+chk() { got=$(src "$2"); if [ "$got" = "$3" ]; then echo "  ok   $1"; else echo "  FAIL $1 (got '$got', wanted '$3')"; ufail=1; fi; }
+chk "source: our own release asset is accepted" \
+    "https://github.com/$SLUG/releases/download/v0.3.3/SAI-Pen-Pressure-v0.3.3.zip" "ours"
+chk "source: the redirect GitHub sends it to is accepted" \
+    "https://objects.githubusercontent.com/github-production-release-asset/123/abc" "ours"
+chk "source: plain http is refused" \
+    "http://github.com/$SLUG/releases/download/v0.3.3/x.zip" "refused"
+chk "source: another host is refused" \
+    "https://example.com/$SLUG/releases/download/v0.3.3/x.zip" "refused"
+chk "source: a lookalike host is refused" \
+    "https://github.com.example.com/$SLUG/releases/download/v0.3.3/x.zip" "refused"
+chk "source: another repository's release is refused" \
+    "https://github.com/someone/else/releases/download/v1.0/x.zip" "refused"
+chk "source: our name inside someone else's path is refused" \
+    "https://github.com/evil/repo/releases/download/v1/$SLUG.zip" "refused"
 
 mkdir -p "$UPDW/older"
 OLDZIP=$(mkapp "$UPDW/older" "0.1.0" "app.saipenpressure.mac")
-out=$(SAIPP_CONFIG_DIR="$UPDW/cfg" SAIPP_SELFTEST_UPDATE_ZIP="$OLDZIP" SAIPP_SELFTEST_UPDATE_ID="app.saipenpressure.mac" SAIPP_SELFTEST_UPDATE_FROM="0.3.3" "$WORK/helper-upd")
+out=$(SAIPP_CONFIG_DIR="$UPDW/cfg" SAIPP_SELFTEST_UPDATE_ZIP="$OLDZIP" SAIPP_SELFTEST_UPDATE_FROM="0.3.3" "$WORK/helper-upd")
 uwant "update: an older build is refused" "$out" "not newer"
 
 # A bundle that arrived damaged must be caught BEFORE it replaces a working app.
