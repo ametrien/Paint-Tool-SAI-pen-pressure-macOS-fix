@@ -152,10 +152,10 @@ ufail=0
 uwant() { case "$2" in *"$3"*) echo "  ok   $1";; *) echo "  FAIL $1"; echo "$2" | sed 's/^/        /'; ufail=1;; esac; }
 
 mkdir -p "$UPDW/good"
-GOODZIP=$(mkapp "$UPDW/good" "9.9.9" "com.runasharp.saipenpressure")
+GOODZIP=$(mkapp "$UPDW/good" "9.9.9" "app.saipenpressure.mac")
 DEST="$UPDW/installed/SAI Pen Pressure.app"; mkdir -p "$UPDW/installed"
 out=$(SAIPP_CONFIG_DIR="$UPDW/cfg" SAIPP_SELFTEST_UPDATE_ZIP="$GOODZIP" \
-      SAIPP_SELFTEST_UPDATE_FROM="0.3.3" SAIPP_SELFTEST_UPDATE_DEST="$DEST" "$WORK/helper-upd")
+      SAIPP_SELFTEST_UPDATE_ID="app.saipenpressure.mac" SAIPP_SELFTEST_UPDATE_FROM="0.3.3" SAIPP_SELFTEST_UPDATE_DEST="$DEST" "$WORK/helper-upd")
 uwant "update: a newer build of ours unpacks"        "$out" "unpack=ok version=9.9.9"
 uwant "update: and is accepted"                      "$out" "verify=ok"
 uwant "update: with its signature intact"            "$out" "signature=ok"
@@ -173,17 +173,17 @@ else echo "  FAIL update: the app on disk is '$got', wanted 9.9.9"; ufail=1; fi
 # this is the one that would hand our permission to a stranger.
 mkdir -p "$UPDW/other"
 OTHERZIP=$(mkapp "$UPDW/other" "9.9.9" "com.example.something")
-out=$(SAIPP_CONFIG_DIR="$UPDW/cfg" SAIPP_SELFTEST_UPDATE_ZIP="$OTHERZIP" SAIPP_SELFTEST_UPDATE_FROM="0.3.3" "$WORK/helper-upd")
+out=$(SAIPP_CONFIG_DIR="$UPDW/cfg" SAIPP_SELFTEST_UPDATE_ZIP="$OTHERZIP" SAIPP_SELFTEST_UPDATE_ID="app.saipenpressure.mac" SAIPP_SELFTEST_UPDATE_FROM="0.3.3" "$WORK/helper-upd")
 uwant "update: a different application is refused" "$out" "different application"
 
 mkdir -p "$UPDW/older"
-OLDZIP=$(mkapp "$UPDW/older" "0.1.0" "com.runasharp.saipenpressure")
-out=$(SAIPP_CONFIG_DIR="$UPDW/cfg" SAIPP_SELFTEST_UPDATE_ZIP="$OLDZIP" SAIPP_SELFTEST_UPDATE_FROM="0.3.3" "$WORK/helper-upd")
+OLDZIP=$(mkapp "$UPDW/older" "0.1.0" "app.saipenpressure.mac")
+out=$(SAIPP_CONFIG_DIR="$UPDW/cfg" SAIPP_SELFTEST_UPDATE_ZIP="$OLDZIP" SAIPP_SELFTEST_UPDATE_ID="app.saipenpressure.mac" SAIPP_SELFTEST_UPDATE_FROM="0.3.3" "$WORK/helper-upd")
 uwant "update: an older build is refused" "$out" "not newer"
 
 # A bundle that arrived damaged must be caught BEFORE it replaces a working app.
 mkdir -p "$UPDW/broken"
-BROKENZIP=$(mkapp "$UPDW/broken" "9.9.9" "com.runasharp.saipenpressure")
+BROKENZIP=$(mkapp "$UPDW/broken" "9.9.9" "app.saipenpressure.mac")
 rm -f "$BROKENZIP"
 printf 'tampered\n' >> "$UPDW/broken/SAI Pen Pressure.app/Contents/MacOS/stub"
 ( cd "$UPDW/broken" && ditto -c -k --sequesterRsrc --keepParent "SAI Pen Pressure.app" "app.zip" )

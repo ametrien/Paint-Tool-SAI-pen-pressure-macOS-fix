@@ -143,7 +143,10 @@ func unpackUpdate(zip: String, into dir: String) -> Result<UpdatePackage, Update
 func verifyUpdate(_ pkg: UpdatePackage, currentVersion: String, currentBundleID: String,
                   isNewer: (String, String) -> Bool) -> String? {
     guard pkg.bundleID == currentBundleID else {
-        return "that download is a different application (\(pkg.bundleID))"
+        // Deliberately without naming either identifier. This message lands in a
+        // dialog on someone else's screen, and a bundle id is the kind of
+        // detail that is nobody's business and helps nobody read the sentence.
+        return "that download is a different application"
     }
     guard isNewer(pkg.version, currentVersion) else {
         return "that download is \(pkg.version), which is not newer than \(currentVersion)"

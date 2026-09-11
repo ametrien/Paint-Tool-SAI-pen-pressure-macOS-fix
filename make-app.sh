@@ -6,7 +6,7 @@ set -e
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
 APP="$REPO/dist/SAI Pen Pressure.app"
-BUNDLE_ID="com.redacted.saipenpressure"
+BUNDLE_ID="app.saipenpressure.mac"
 # One source of truth for the version: the latest git tag (v0.1.0 -> 0.1.0).
 # Override with SAIPP_VERSION; falls back to 0.0.0-dev outside a tagged repo.
 VERSION="${SAIPP_VERSION:-$(git -C "$REPO" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')}"
