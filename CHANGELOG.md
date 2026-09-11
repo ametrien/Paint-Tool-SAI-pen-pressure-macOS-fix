@@ -3,7 +3,15 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.3.4] — 2026-09-11
+
+### Changed
+- **The app has a new identifier.** It used to carry a personal handle, which is not a private
+  string: it sits in `Info.plist` inside every build, in the code signature, and in the Input
+  Monitoring list on every machine that runs this. It is neutral now, and it will not change
+  again — changing it costs everyone their permission. Concretely: macOS sees this build as a new
+  app, so Input Monitoring has to be granted once more (it would have anyway, since every build is
+  signed differently), and the old entry in that list can be removed.
 
 ### Added
 - **The app can update itself.** *Update now* on the setup window downloads the new release,
