@@ -149,8 +149,12 @@ extension SetupController {
     /// bundle id only (never a blanket reset), it can only REMOVE a grant —
     /// never add one, you still approve in System Settings — and it asks first.
     @objc func resetOwnPermission() {
-        let bid = Bundle.main.bundleIdentifier ?? "com.redacted.saipenpressure"
-        let c = osa("button returned of (display dialog \"Make macOS ask for Input Monitoring again?\n\nThis clears only this app's own permission entry (\(bid)) so the system prompt reappears.\n\nYou still approve it in System Settings. The app will relaunch.\" buttons {\"Cancel\", \"Reset & ask again\"} default button \"Reset & ask again\" with icon caution)")
+        // No fallback identifier: tccutil with a guessed one would clear the
+        // wrong entry, or nothing, and say neither.
+        guard let bid = Bundle.main.bundleIdentifier else {
+            alertUser("Couldn't work out which permission entry to clear."); return
+        }
+        let c = osa("button returned of (display dialog \"Make macOS ask for Input Monitoring again?\n\nThis clears only this app's own permission entry, so the system prompt reappears.\n\nYou still approve it in System Settings. The app will relaunch.\" buttons {\"Cancel\", \"Reset & ask again\"} default button \"Reset & ask again\" with icon caution)")
         guard c == "Reset & ask again" else { return }
         _ = runCapture("/usr/bin/tccutil", ["reset", "ListenEvent", bid])
         // The prompt only fires on a fresh launch, so bounce ourselves.
@@ -164,6 +168,22 @@ extension SetupController {
     /// is the fiddliest step in the whole setup. Do the finding FOR the user:
     /// open the right Settings pane, reveal the app in Finder so it can be
     /// dragged straight in, and put its path on the clipboard to paste.
+    /// A dialog that belongs to THIS app.
+    ///
+    /// alertUser() goes through osascript, and an osascript dialog belongs to
+    /// osascript: it can open behind the window you just clicked in. Fine for an
+    /// afterthought, useless for instructions someone is waiting on — Grant and
+    /// Update now both looked like buttons that did nothing, while their
+    /// explanation sat behind the window.
+    func appAlert(_ text: String, title: String = "SAI Pen Pressure") {
+        NSApp.activate(ignoringOtherApps: true)
+        let a = NSAlert()
+        a.messageText = title
+        a.informativeText = text
+        a.alertStyle = .informational
+        a.runModal()
+    }
+
     @objc func grantInputMonitoring() {
         // Keep this DUMB and linear: request, open the right Settings pane, help
         // the user find the app. An earlier version branched into "reset and
@@ -176,9 +196,12 @@ extension SetupController {
         let appPath = Bundle.main.bundlePath
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(appPath, forType: .string)
-        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
+        // Finder first, Settings second: whichever opens last is the one in front,
+        // and the list is where the work happens. Our own dialog comes after
+        // both, because it is the only one that explains what to do with them.
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: appPath)])
-        alertUser("""
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
+        appAlert("""
         Turn ON "SAI Pen Pressure" in the list that just opened.
 
         If it isn't listed, click + and either:
