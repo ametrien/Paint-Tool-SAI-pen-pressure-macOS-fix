@@ -192,8 +192,24 @@ extension SetupController {
         // Opening Settings is the step that actually works; never skip it.
         // ("Ask again" still exists as its own button for the genuinely stuck
         // case, but it is not on the path of the normal Grant flow.)
-        _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)      // no-op if already answered
         let appPath = Bundle.main.bundlePath
+        // Already granted: the same two windows are still useful — this is where
+        // the leftovers from older builds are turned off — but the instructions
+        // for granting would be nonsense, so it says the other thing instead.
+        if inputMonitoringGranted() {
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: appPath)])
+            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
+            appAlert("""
+            This app already has Input Monitoring, and the pen is being read.
+
+            The list that just opened is where every build of this app appears separately. If you see older "SAI Pen Pressure" entries, they are dead and can be turned off or removed with −.
+
+            The live one is at:
+            \(appPath)
+            """)
+            return
+        }
+        _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)      // no-op if already answered
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(appPath, forType: .string)
         // Finder first, Settings second: whichever opens last is the one in front,

@@ -1564,6 +1564,11 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
                 extraTitle: "Show ▸", extraAction: { [weak self] in self?.revealLicense() }),
             Req(title: "Input Monitoring permission", detail: "lets the app read your tablet's pressure", fixTitle: "Grant…",
                 ok: { inputMonitoringGranted() }, fix: { [weak self] in self?.grantInputMonitoring() }, required: true,
+                // The button stays after the permission is granted, because the
+                // list is still worth visiting: every build of this app is a
+                // separate entry in it, so old ones pile up and sit there dead.
+                // With no button at all, a green row was a dead end.
+                keepButton: true, keepButtonTitle: "Show…",
                 extraTitle: "Ask again", extraAction: { [weak self] in self?.resetOwnPermission() },
                 extraWhenSatisfied: false),
         ]
