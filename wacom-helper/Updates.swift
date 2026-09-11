@@ -225,7 +225,7 @@ extension SetupController {
             wlog("update: refused — SAI is on screen")
             if !auto {
                 subtitle.stringValue = "Close SAI, then press Update now again."
-                updateAlert("Close SAI first, then press Update now again.\n\nUpdating restarts this app, and while it is gone nothing is reading your pen. Closing SAI first means that never happens mid-stroke.")
+                updateAlert("Close SAI first, then press Update now again.")
             }
             return
         }
