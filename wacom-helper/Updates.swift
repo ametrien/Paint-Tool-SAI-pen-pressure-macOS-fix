@@ -100,78 +100,6 @@ extension SetupController {
 // and the swap can be pointed at a throwaway directory.
 // ============================================================================
 
-/// Why an update was refused. A type of its own rather than a bare string,
-/// because Swift's Result wants an Error and because every one of these ends up
-/// in front of a person.
-struct UpdateProblem: Error { let reason: String }
-
-struct UpdatePackage {
-    let appPath: String     // the .app we just unpacked
-    let version: String
-    let bundleID: String
-}
-
-/// Expand a downloaded release zip and find the app inside it.
-func unpackUpdate(zip: String, into dir: String) -> Result<UpdatePackage, UpdateProblem> {
-    let fm = FileManager.default
-    try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
-    // ditto, not unzip: it keeps the bundle's symlinks, extended attributes and
-    // — the part that matters — the code signature intact. `unzip` mangles all
-    // three, and a mangled signature fails verification below, which would look
-    // like a tampered download rather than the wrong tool.
-    let p = runProc("/usr/bin/ditto", ["-x", "-k", zip, dir])
-    guard p.terminationStatus == 0 else { return .failure(UpdateProblem(reason: "couldn't expand the download")) }
-    guard let entries = try? fm.contentsOfDirectory(atPath: dir),
-          let app = entries.first(where: { $0.hasSuffix(".app") }) else {
-        return .failure(UpdateProblem(reason: "no app inside the download"))
-    }
-    let appPath = "\(dir)/\(app)"
-    guard let plist = NSDictionary(contentsOfFile: "\(appPath)/Contents/Info.plist"),
-          let v = plist["CFBundleShortVersionString"] as? String,
-          let id = plist["CFBundleIdentifier"] as? String else {
-        return .failure(UpdateProblem(reason: "the app inside the download has no version"))
-    }
-    return .success(UpdatePackage(appPath: appPath, version: v, bundleID: id))
-}
-
-/// Is this download coming from OUR releases, rather than somewhere that merely
-/// answered the phone?
-///
-/// This is the check that carries the weight, and it took a wrong turn first.
-/// The original guard compared the bundle identifier inside the downloaded app
-/// against our own — which defends against nothing, because the identifier
-/// travels INSIDE the file: anyone able to hand us a different archive is able
-/// to write any identifier they like into it. What it did do was refuse a
-/// legitimate update the first time the identifier legitimately changed, which
-/// is how it was caught.
-///
-/// The real anchor is where the file comes from: the URL is handed to us by the
-/// GitHub API for one fixed repository, over TLS. So require exactly that shape
-/// — https, github.com itself, and a path under this repository's releases.
-/// Matching on "contains the slug" would be no check at all (an attacker owns
-/// their own path), hence the prefix and the explicit host.
-func isOurReleaseURL(_ raw: String, slug: String) -> Bool {
-    guard let u = URLComponents(string: raw),
-          u.scheme?.lowercased() == "https",
-          let host = u.host?.lowercased(),
-          host == "github.com" || host == "objects.githubusercontent.com" else { return false }
-    // github.com serves the asset itself; objects.githubusercontent.com is where
-    // it redirects, and URLSession follows that on its own — both are allowed so
-    // a hand-tested URL behaves the same as the API's.
-    if host == "github.com" { return u.path.hasPrefix("/\(slug)/releases/download/") }
-    return true
-}
-
-/// Everything else that must be true before we overwrite ourselves with this.
-/// Returns nil when it is safe, or the reason it isn't.
-func verifyUpdate(_ pkg: UpdatePackage, currentVersion: String,
-                  isNewer: (String, String) -> Bool) -> String? {
-    guard isNewer(pkg.version, currentVersion) else {
-        return "that download is \(pkg.version), which is not newer than \(currentVersion)"
-    }
-    return nil
-}
-
 extension SetupController {
 
     /// The signature has to verify — not to prove who built it (ad-hoc proves
@@ -287,8 +215,13 @@ extension SetupController {
                     // Written BEFORE we go: the next launch is a different
                     // binary and has no other way to know it is the result of an
                     // update rather than an ordinary start.
-                    try? "\(self.currentVersion())".write(toFile: appSupport() + "/just-updated.txt",
-                                                          atomically: true, encoding: .utf8)
+                    // The marker carries WHO is updating, not just from what.
+                    // Application Support is shared by every copy of this app on
+                    // the machine, so a marker left by one of them was picked up
+                    // by whichever started next — a second copy announced an
+                    // update it had never performed, permission warning and all.
+                    try? "\(self.currentVersion())\n\(dest)".write(toFile: appSupport() + "/just-updated.txt",
+                                                                   atomically: true, encoding: .utf8)
                     wlog("update: swapping \(self.currentVersion()) -> \(pkg.version)")
                     guard self.swapAndRelaunch(newApp: pkg.appPath, dest: dest, scriptDir: work) else {
                         self.updateFailed("couldn't start the swap", auto: auto); return
@@ -314,9 +247,18 @@ extension SetupController {
     /// later by a stranger's issue is how this project learned that lesson.
     func announceUpdateIfJustUpdated() {
         let marker = appSupport() + "/just-updated.txt"
-        guard let from = try? String(contentsOfFile: marker, encoding: .utf8) else { return }
-        try? FileManager.default.removeItem(atPath: marker)
-        let old = from.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = try? String(contentsOfFile: marker, encoding: .utf8)
+        let age = (try? FileManager.default.attributesOfItem(atPath: marker)[.modificationDate] as? Date)
+            .flatMap { $0 }.map { Date().timeIntervalSince($0) } ?? 0
+        let old: String
+        switch readUpdateMarker(text, ourPath: Bundle.main.bundlePath, ageSeconds: age) {
+        case .none:      return
+        case .theirs:    return                                             // not ours to announce
+        case .abandoned: try? FileManager.default.removeItem(atPath: marker); return
+        case .ours(let from):
+            old = from
+            try? FileManager.default.removeItem(atPath: marker)
+        }
         wlog("update: now running \(currentVersion()), came from \(old), input monitoring = \(inputMonitoringGranted())")
         guard !inputMonitoringGranted() else {
             subtitle.stringValue = "Updated to \(currentVersion()). Everything else was kept."

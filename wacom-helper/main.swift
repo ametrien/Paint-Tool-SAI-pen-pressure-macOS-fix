@@ -1570,6 +1570,13 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         buildWindow()
         refresh()
         announceUpdateIfJustUpdated()
+        // The bridge is asserted when Launch is pressed — but SAI can be started
+        // without ever pressing it (a .command launcher, Wine directly), and a
+        // repair that only happens on one path is the one-shot that #29 was made
+        // of. Checking costs a file read; wine is only spawned when something is
+        // actually wrong, and doing it here means simply opening this window is
+        // enough to heal the prefix for whatever starts SAI next (#31).
+        DispatchQueue.global().async { ensureBridgeOverride(wineBin()) }
         // On launch, actively ask for Input Monitoring — the ONLY permission this
         // app needs — via the native prompt (with an "Open System Settings"
         // button), so the user doesn't add the app manually. No-op if already
@@ -2076,13 +2083,8 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         autoUpdateCheck = NSButton(checkboxWithTitle: "Install updates automatically",
                                    target: self, action: #selector(autoUpdateToggled))
         autoUpdateCheck.state = autoUpdateEnabled() ? .on : .off
-        let autoUpdateNote = lbl("Off by default: every build is signed differently, so macOS drops the Input Monitoring permission on any update, by hand or not. The app asks you to grant it again straight after.", 10, color: .secondaryLabelColor)
-        autoUpdateNote.lineBreakMode = .byWordWrapping
-        autoUpdateNote.maximumNumberOfLines = 3
-        autoUpdateNote.preferredMaxLayoutWidth = rowWidth
         devSection.addArrangedSubview(autoUpdateCheck)
-        devSection.addArrangedSubview(autoUpdateNote)
-        devUpdateRows = [autoUpdateCheck, autoUpdateNote]
+        devUpdateRows = [autoUpdateCheck]
         // Folders first — "where did my SAI actually go?" is the question the
         // whole copy-into-the-prefix model raises, so answer it with a button.
         let devFolders = NSStackView(); devFolders.orientation = .horizontal; devFolders.spacing = 6
