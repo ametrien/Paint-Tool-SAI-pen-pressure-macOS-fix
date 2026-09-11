@@ -5,6 +5,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
 
 ## [Unreleased]
 
+### Added
+- **The app can update itself.** *Update now* on the setup window downloads the new release,
+  checks that it really is a newer build of this app and that it arrived whole, swaps itself and
+  comes back running — no dragging, and no right-click → Open, since the app you already trusted
+  is the one doing the replacing. **Advanced → Install updates automatically** does it without
+  asking. What it cannot avoid is macOS dropping the Input Monitoring permission, because every
+  build is signed differently and macOS sees a new app: so the update says exactly that the moment
+  it returns, and offers the Grant button, instead of leaving pressure mysteriously dead. A manual
+  swap always cost the same permission; it simply never mentioned it.
+- The **Developer** tab is now **Advanced**, and the update setting lives there in plain sight
+  rather than behind developer mode.
+
 ### Fixed
 - **A setup that cannot install the bridge now says so.** Copying the DLL into the prefix was
   checked; writing the registry setting that makes Wine load it was not — the command went out
