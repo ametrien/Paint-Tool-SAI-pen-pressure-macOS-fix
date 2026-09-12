@@ -54,6 +54,33 @@ jobs:
           /usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP/Contents/Info.plist" | grep -qx "SAIPenPressure"
           /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist"
 
+      # The self-update replaces this app with a download, and the only thing
+      # standing between "arrived whole" and "arrived tampered with" is
+      # signatureIsIntact(), which runs `codesign --verify --strict`. That is
+      # enough ONLY because the bundle seals its resources, so a swapped
+      # wtprobe.exe or encoder breaks the seal. Assert that rather than assume
+      # it: if the signing flags or the bundle layout ever change so that
+      # resources stop being sealed, the update check would silently start
+      # accepting modified downloads and nothing else would notice.
+      - name: The update signature check actually catches tampering
+        run: |
+          APP="dist/SAI Pen Pressure.app"
+          TAMPER="$RUNNER_TEMP/tamper"
+          rm -rf "$TAMPER"; mkdir -p "$TAMPER"
+          cp -R "$APP" "$TAMPER/"
+          T="$TAMPER/SAI Pen Pressure.app"
+          # 1. untouched, it must verify, or the test below proves nothing
+          codesign --verify --strict "$T"
+          echo "ok   signature verifies before tampering"
+          # 2. modify a sealed resource, exactly what a swapped payload would do
+          printf 'TAMPERED' >> "$T/Contents/Resources/wtprobe.exe"
+          if codesign --verify --strict "$T" 2>/dev/null; then
+            echo "FAIL the signature still verifies after a resource was modified"
+            echo "     signatureIsIntact() would accept a tampered update"
+            exit 1
+          fi
+          echo "ok   a modified resource breaks the seal, as the updater relies on"
+
       - name: Lint shell scripts (shellcheck)
         run: shellcheck -S error install.sh install-wine.sh make-app.sh tests/run-tests.sh
 
