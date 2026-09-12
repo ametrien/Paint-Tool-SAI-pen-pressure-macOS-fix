@@ -59,6 +59,59 @@ struct CoreTests {
         expect(!PressureCore.isDuplicate(p: 5, xf: 3, yf: 2, lastP: 5, lastX: 1, lastY: 2),
                "dedup: position change passes")
 
+        // --- shouldSkip --------------------------------------------------------------
+        // The deadband filter on the drawing path. It exists to swallow pressure
+        // wobble while the pen rests still, and it has three escape hatches that
+        // each protect something visible on the canvas. Every one of them is a
+        // trap below, because removing any single guard still passes the other
+        // cases and breaks only one behaviour, which is the hardest kind of
+        // regression to notice by drawing a test squiggle.
+        let db = 8
+
+        // 1. A duplicate goes regardless of the deadband, same as isDuplicate.
+        expect(PressureCore.shouldSkip(p: 5, xf: 1, yf: 2, lastP: 5, lastX: 1, lastY: 2, deadband: db),
+               "skip: an exact duplicate is skipped")
+        expect(PressureCore.shouldSkip(p: 5, xf: 1, yf: 2, lastP: 5, lastX: 1, lastY: 2, deadband: 1),
+               "skip: and is skipped even with the deadband off")
+
+        // 2. THE TRAP: movement must always pass. Position is what draws the
+        // line, so filtering a moved sample because the pressure happened to be
+        // steady would stall the stroke wherever someone drew at constant force.
+        expect(!PressureCore.shouldSkip(p: 100, xf: 9, yf: 2, lastP: 100 + db - 1, lastX: 1, lastY: 2, deadband: db),
+               "skip: a MOVED sample always passes, however small the pressure change")
+        expect(!PressureCore.shouldSkip(p: 100, xf: 1, yf: 9, lastP: 100, lastX: 1, lastY: 2, deadband: db),
+               "skip: movement in y alone passes too")
+
+        // 3. THE TRAP: a tip transition must always pass. A sample where either
+        // side is zero is a pen-down or a pen-up, i.e. a stroke boundary, and
+        // swallowing one merges two strokes into one or never ends the last.
+        expect(!PressureCore.shouldSkip(p: 0, xf: 1, yf: 2, lastP: db - 1, lastX: 1, lastY: 2, deadband: db),
+               "skip: pen-up is never swallowed, even inside the deadband")
+        expect(!PressureCore.shouldSkip(p: db - 1, xf: 1, yf: 2, lastP: 0, lastX: 1, lastY: 2, deadband: db),
+               "skip: nor is pen-down")
+
+        // 4. What the filter is actually for: stationary wobble under the band.
+        expect(PressureCore.shouldSkip(p: 100, xf: 1, yf: 2, lastP: 100 + db - 1, lastX: 1, lastY: 2, deadband: db),
+               "skip: stationary wobble smaller than the deadband is filtered")
+        expect(!PressureCore.shouldSkip(p: 100, xf: 1, yf: 2, lastP: 100 + db, lastX: 1, lastY: 2, deadband: db),
+               "skip: a change OF exactly the deadband passes (the boundary is <, not <=)")
+
+        // 5. The contract for a disabled deadband: 1 or 0 filters nothing beyond
+        // duplicates. NOTE, established by mutation: the `guard deadband > 1`
+        // in shouldSkip is unreachable, because `abs(diff) < 1` is only true
+        // when diff is 0, and that case is already caught as a duplicate one
+        // line above. Deleting the guard changes no behaviour and reddens
+        // nothing here. These two cases therefore assert the contract, not that
+        // guard; keep them, since the contract is what callers rely on.
+        expect(!PressureCore.shouldSkip(p: 100, xf: 1, yf: 2, lastP: 101, lastX: 1, lastY: 2, deadband: 1),
+               "skip: deadband 1 filters nothing beyond duplicates")
+        expect(!PressureCore.shouldSkip(p: 100, xf: 1, yf: 2, lastP: 101, lastX: 1, lastY: 2, deadband: 0),
+               "skip: deadband 0 likewise")
+
+        // Direction must not matter: wobble up and wobble down are the same noise.
+        expect(PressureCore.shouldSkip(p: 100 + db - 1, xf: 1, yf: 2, lastP: 100, lastX: 1, lastY: 2, deadband: db),
+               "skip: filtering is symmetric, rising or falling")
+
         // --- keepAliveShouldResend ---------------------------------------------------
         // The rule that fixed the double-click bug: resend ONLY hover (pressure 0).
         expect(PressureCore.keepAliveShouldResend(penInRange: true, lastPressure: 0,
