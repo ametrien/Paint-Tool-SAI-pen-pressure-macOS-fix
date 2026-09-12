@@ -36,6 +36,11 @@ swiftc -o "$WORK/bridge-tests" "$REPO/wacom-helper/BridgeCheck.swift" "$REPO/tes
 "$WORK/bridge-tests"
 
 echo ""
+echo "== Swift core (ReportCore.swift) =="
+swiftc -o "$WORK/report-tests" "$REPO/wacom-helper/ReportCore.swift" "$REPO/tests/ReportTests.swift"
+"$WORK/report-tests"
+
+echo ""
 echo "== Swift core (UpdateCore.swift) =="
 # The app replaces itself with a file from the internet. What makes that safe is
 # three deterministic answers, and each of them has been wrong once already.
