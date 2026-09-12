@@ -163,6 +163,10 @@ enum PressureCore {
                            lastP: Int, lastX: Int, lastY: Int,
                            deadband: Int) -> Bool {
         if isDuplicate(p: p, xf: xf, yf: yf, lastP: lastP, lastX: lastX, lastY: lastY) { return true }
+        // Redundant with the arithmetic below (abs(diff) < 1 only holds for a
+        // duplicate, already returned above), kept because it states the intent
+        // of a disabled deadband where a reader looks for it. Verified dead by
+        // mutation: removing it reddens nothing.
         guard deadband > 1 else { return false }
         guard xf == lastX, yf == lastY else { return false }   // moved: always send
         guard p > 0, lastP > 0 else { return false }           // tip transition: always send
