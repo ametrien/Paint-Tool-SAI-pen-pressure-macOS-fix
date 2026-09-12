@@ -21,6 +21,7 @@
 #include <winsock2.h>
 #include <windows.h>
 #include <stdio.h>
+#include <stddef.h>   /* offsetof, for the wire-format assertions */
 
 #include "wintab_core.h"   /* the pure logic (parse/map/conflate) — unit-tested natively */
 
@@ -96,6 +97,23 @@ typedef struct {
     UINT pressure;
     int  orAzimuth, orAltitude, orTwist;
 } OURPKT;
+
+/* The wire format, asserted at compile time in BOTH files that define it.
+ * SAI reads these 36 bytes positionally, by the field order OUR_PKTDATA
+ * advertises (0x15e2): status, cursor, buttons, x, y, pressure, orientation.
+ * Reorder a field, change a type, or let padding creep in, and pressure lands
+ * in whatever slot moved into its place — strokes keep drawing, at the wrong
+ * width, with nothing failing anywhere. wtprobe.c carries its own copy of this
+ * struct so it can stand in for SAI, so the two must agree; these assertions
+ * are what makes that "must" mean something. */
+_Static_assert(sizeof(OURPKT) == 36, "OURPKT must stay 36 bytes: SAI reads it positionally");
+_Static_assert(offsetof(OURPKT, status)   ==  0, "OURPKT.status moved");
+_Static_assert(offsetof(OURPKT, cursor)   ==  4, "OURPKT.cursor moved");
+_Static_assert(offsetof(OURPKT, buttons)  ==  8, "OURPKT.buttons moved");
+_Static_assert(offsetof(OURPKT, x)        == 12, "OURPKT.x moved");
+_Static_assert(offsetof(OURPKT, y)        == 16, "OURPKT.y moved");
+_Static_assert(offsetof(OURPKT, pressure) == 20, "OURPKT.pressure moved: SAI would read the wrong field");
+_Static_assert(offsetof(OURPKT, orAzimuth) == 24, "OURPKT.orAzimuth moved");
 
 /* WinTab categories */
 #define WTI_INTERFACE 1
