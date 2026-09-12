@@ -323,9 +323,12 @@ extension SetupController {
                     .joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
                 if !tail.isEmpty { out += "\n\n=== recent log ===\n" + tail }
             }
+            // The account name goes no further than this machine: everything
+            // below is written to be pasted into a public issue.
+            let safe = ReportCore.redactHome(out, home: NSHomeDirectory())
             DispatchQueue.main.async {
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(out, forType: .string)
+                NSPasteboard.general.setString(safe, forType: .string)
                 self.subtitle.stringValue = "Report copied to the clipboard."
                 alertUser("Copied.\n\nPaste it into your bug report. It says what this build is, what is installed, whether Wine loads our pressure bridge, and what SAI last received.")
             }
@@ -336,7 +339,7 @@ extension SetupController {
         // Asks wine its version and lipo the binary's architectures, so it does
         // not belong on the main thread.
         DispatchQueue.global().async {
-            let text = self.diagnosticsText()
+            let text = ReportCore.redactHome(self.diagnosticsText(), home: NSHomeDirectory())
             DispatchQueue.main.async {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(text, forType: .string)
