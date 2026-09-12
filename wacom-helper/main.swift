@@ -349,7 +349,15 @@ if let zip = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_UPDATE_ZIP"] {
             print("source=\(isOurReleaseURL(u, slug: c.repoSlug) ? "ours" : "refused")")
         }
         if let dest = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_UPDATE_DEST"], why == nil {
-            let started = c.swapAndRelaunch(newApp: pkg.appPath, dest: dest, scriptDir: work, relaunch: false)
+            // SAIPP_SELFTEST_UPDATE_BREAK makes the copy step fail, by handing
+            // the swap a source that isn't there. The installed app must
+            // survive that: the swap deletes nothing until the copy has
+            // succeeded, and an interrupted update that leaves someone with no
+            // app at all is the worst outcome this feature has.
+            let source = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_UPDATE_BREAK"] != nil
+                ? pkg.appPath + ".does-not-exist"
+                : pkg.appPath
+            let started = c.swapAndRelaunch(newApp: source, dest: dest, scriptDir: work, relaunch: false)
             print("swapStarted=\(started)")
         }
         exit(0)

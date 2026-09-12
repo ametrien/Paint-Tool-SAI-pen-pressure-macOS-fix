@@ -191,6 +191,37 @@ printf 'tampered\n' >> "$UPDW/broken/SAI Pen Pressure.app/Contents/MacOS/stub"
 out=$(SAIPP_CONFIG_DIR="$UPDW/cfg" SAIPP_SELFTEST_UPDATE_ZIP="$UPDW/broken/app.zip" SAIPP_SELFTEST_UPDATE_FROM="0.3.3" "$WORK/helper-upd")
 uwant "update: a tampered bundle is reported as damaged" "$out" "signature=damaged"
 
+# A failed swap must not cost someone their working app. The copy used to
+# happen AFTER the installed bundle was deleted, so a ditto that failed for any
+# reason left the machine with no app and the updater already exited. Here the
+# copy is pointed at a source that does not exist, which is the cheapest way to
+# make that step fail on demand.
+mkdir -p "$UPDW/survive"
+SURVZIP=$(mkapp "$UPDW/survive" "9.9.9" "app.saipenpressure.mac")
+SDEST="$UPDW/survive-installed/SAI Pen Pressure.app"
+mkdir -p "$SDEST/Contents"
+printf 'ORIGINAL' > "$SDEST/Contents/marker.txt"
+out=$(SAIPP_CONFIG_DIR="$UPDW/cfg" SAIPP_SELFTEST_UPDATE_ZIP="$SURVZIP" \
+      SAIPP_SELFTEST_UPDATE_FROM="0.3.3" SAIPP_SELFTEST_UPDATE_DEST="$SDEST" \
+      SAIPP_SELFTEST_UPDATE_BREAK=1 "$WORK/helper-upd")
+uwant "update: a swap that cannot copy still starts" "$out" "swapStarted=true"
+# The swap waits for the helper to quit, so give it a moment to do its worst.
+for _ in 1 2 3 4 5 6; do
+  [ -e "$SDEST/Contents/marker.txt" ] || break
+  osascript -e 'delay 0.5' >/dev/null 2>&1 || true
+done
+if [ "$(cat "$SDEST/Contents/marker.txt" 2>/dev/null)" = "ORIGINAL" ]; then
+  echo "  ok   update: a failed swap leaves the installed app untouched"
+else
+  echo "  FAIL update: a failed swap destroyed the installed app"; ufail=1
+fi
+# And it must not leave its scratch bundles lying beside the app.
+if [ -e "$SDEST.update-staged" ] || [ -e "$SDEST.update-previous" ]; then
+  echo "  FAIL update: a failed swap left staging bundles behind"; ufail=1
+else
+  echo "  ok   update: and cleans up after itself"
+fi
+
 [ "$ufail" = 0 ] || exit 1
 echo "All update tests passed."
 

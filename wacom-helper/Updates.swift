@@ -151,12 +151,33 @@ extension SetupController {
     /// user already opened once — making them right-click → Open again for an
     /// update they asked for is a punishment for updating), and opens it.
     func swapAndRelaunch(newApp: String, dest: String, scriptDir: String, relaunch: Bool = true) -> Bool {
+        // Order matters more than it looks. This used to delete the installed
+        // app and THEN copy the new one in, so a ditto that failed for any
+        // reason — a full disk, a permission, a temp directory swept from under
+        // us — left the machine with no app at all and the updater already
+        // gone. The copy now happens first, to a sibling path so the final move
+        // is a rename on the same filesystem, and the old bundle is moved aside
+        // rather than destroyed until the new one is in place.
+        let staged = (dest + ".update-staged").shellQuoted
+        let backup = (dest + ".update-previous").shellQuoted
         let script = """
         #!/bin/bash
         while kill -0 \(ProcessInfo.processInfo.processIdentifier) 2>/dev/null; do sleep 0.2; done
-        rm -rf \(dest.shellQuoted)
-        /usr/bin/ditto \(newApp.shellQuoted) \(dest.shellQuoted) || exit 1
-        /usr/bin/xattr -dr com.apple.quarantine \(dest.shellQuoted) 2>/dev/null
+        rm -rf \(staged) \(backup)
+        # Nothing is destroyed until this has succeeded.
+        /usr/bin/ditto \(newApp.shellQuoted) \(staged) || exit 1
+        /usr/bin/xattr -dr com.apple.quarantine \(staged) 2>/dev/null
+        # Move the old one aside rather than delete it, so it can come back.
+        if [ -e \(dest.shellQuoted) ] && ! mv \(dest.shellQuoted) \(backup); then
+            rm -rf \(staged)
+            exit 1
+        fi
+        if ! mv \(staged) \(dest.shellQuoted); then
+            # Put the working app back exactly where it was.
+            [ -e \(backup) ] && mv \(backup) \(dest.shellQuoted)
+            exit 1
+        fi
+        rm -rf \(backup)
         \(relaunch ? "/usr/bin/open \(dest.shellQuoted)" : "")
         """
         let path = "\(scriptDir)/swap.sh"
