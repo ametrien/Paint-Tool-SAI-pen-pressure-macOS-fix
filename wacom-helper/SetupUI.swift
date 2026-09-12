@@ -653,6 +653,11 @@ extension SetupController {
         wlog("update: automatic = \(autoUpdateEnabled())")
     }
 
+    @objc func redactToggled() {
+        setReportRedact(redactCheck.state == .on)
+        wlog("report: hide user name = \(reportRedactEnabled())")
+    }
+
     func doReinstall(mode: SetupMode) {
         guard let wine = wineBin(), let src = savedSAIPath() else { refresh(); return }
         let wasRunning = running
