@@ -21,6 +21,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
   old bundle is moved aside rather than deleted, and it is put straight back if the swap cannot
   finish.
 
+- **Two copies of the app no longer accuse each other of a broken bridge.** The setup row compares
+  the `wintab32.dll` in the Wine prefix with the one inside the running app, and said "A different
+  wintab32.dll than this app's. Press Repair." for any difference at all. The everyday cause is not
+  damage: a second copy of the app — a fresh build next to the one in Applications — was opened
+  once and left its own, newer DLL in the prefix, so whichever copy you open next reports the
+  other's file as a fault. Worse, Repair then quietly puts the OLDER DLL back. A prefix holding a
+  newer DLL is now named for what it is, and the row says which way Repair would move it. An older
+  or unrelated file still reads exactly as before.
+
 ### Internal
 - The packet SAI reads is asserted at compile time, in both files that define it. SAI reads those
   36 bytes positionally, so a reordered field sends pressure to whatever slot took its place:
@@ -29,7 +38,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
   by a comment.
 - CI checks that the update's tamper detection can detect tampering: it copies the built app,
   confirms it verifies, modifies a sealed resource and fails the build if it still verifies.
-- 475 → 508 automated checks. `shouldSkip`, the deadband filter on the drawing path, had no test
+- 475 → 514 automated checks. `shouldSkip`, the deadband filter on the drawing path, had no test
   at all; the redaction, the failed swap and the report default each have one whose trap was
   proved by reintroducing the bug.
 

@@ -221,6 +221,23 @@ struct BridgeTests {
         expect(BridgeCheck.explainProbe(.working, pLive).contains("409"),
                "probe: and says how many actually arrived")
 
+        // --- which kind of DLL difference (two copies of the app installed) --
+        let older = Date(timeIntervalSince1970: 1_000_000)
+        let newer = Date(timeIntervalSince1970: 2_000_000)
+        expect(BridgeCheck.dllSkew(identical: true, prefixDate: older, shippedDate: newer) == .matches,
+               "skew: identical bytes are never a complaint, whatever the dates")
+        expect(BridgeCheck.dllSkew(identical: false, prefixDate: newer, shippedDate: older) == .prefixNewer,
+               "skew: a newer DLL in the prefix is another build of this app")
+        expect(BridgeCheck.dllSkew(identical: false, prefixDate: older, shippedDate: newer) == .differs,
+               "skew: an older DLL in the prefix is the plain Repair case")
+        expect(BridgeCheck.dllSkew(identical: false, prefixDate: nil, shippedDate: newer) == .differs,
+               "skew: no date to compare falls back to the general answer")
+        expect(!BridgeCheck.explainSkew(.prefixNewer).contains("different"),
+               "skew: version skew is not reported as a broken bridge")
+        expect(BridgeCheck.explainSkew(.prefixNewer).count <= 60
+               && BridgeCheck.explainSkew(.differs).count <= 60,
+               "skew: both lines fit the row without truncating")
+
         // The trap that #29 IS: "a wintab32 loaded" must never outrank "whose".
         // A build that checked dllLoaded first, or that only looked at whether
         // packets arrived, would call this healthy — it is the exact shape of

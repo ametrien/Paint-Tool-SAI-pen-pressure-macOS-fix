@@ -198,6 +198,23 @@ func bridgeDLLMatchesApp() -> Bool {
     return FileManager.default.contents(atPath: bridgeDLLPath()) == shipped
 }
 
+/// Which of the two kinds of DLL difference the prefix has: an older/foreign
+/// file, or a newer one left by another build of this app. Reported, never
+/// acted on — Repair does the same thing either way, the row just stops
+/// calling a two-copies-installed setup a broken bridge.
+func bridgeDLLSkew() -> BridgeCheck.DLLSkew {
+    guard let res = Bundle.main.resourcePath else { return .matches }   // dev mode
+    let shipped = "\(res)/wintab32.dll"
+    let fm = FileManager.default
+    guard fm.contents(atPath: shipped) != nil else { return .matches }
+    func mtime(_ path: String) -> Date? {
+        (try? fm.attributesOfItem(atPath: path)[.modificationDate]) as? Date
+    }
+    return BridgeCheck.dllSkew(identical: bridgeDLLMatchesApp(),
+                               prefixDate: mtime(bridgeDLLPath()),
+                               shippedDate: mtime(shipped))
+}
+
 /// What the DLL reports from inside SAI, and how many seconds ago it said so.
 /// (nil, nil) means the file has never appeared — SAI has not loaded us.
 func bridgeStatus() -> (BridgeCheck.Status?, Double?) {
@@ -442,7 +459,7 @@ func bridgeDetailLine() -> String {
         return "Our wintab32.dll isn't in the prefix. Press Repair."
     }
     if !bridgeDLLMatchesApp() {
-        return "A different wintab32.dll than this app's. Press Repair."
+        return BridgeCheck.explainSkew(bridgeDLLSkew())
     }
     if !bridgeOverrideInstalled() {
         return "Wine loads its own wintab32, not ours. Press Repair."
