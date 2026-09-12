@@ -182,6 +182,45 @@ enum BridgeCheck {
         }
     }
 
+    // ---- 2b. the DLL file in the prefix -------------------------------------
+    // The prefix DLL and this app's helper are a matched pair (#21), so any
+    // difference is worth a row. But "different" covers two very unlike
+    // situations, and the row used to say the alarming one for both.
+    //
+    // The common one, by far, is version skew: a second copy of this app —
+    // a fresh build in dist/ next to the one in /Applications — was launched
+    // once and left its own, newer DLL behind. Nothing is broken; the two
+    // copies are simply not the same build, and whichever one you open next
+    // complains about the other's file. Calling that a broken bridge sends
+    // people to Repair, which quietly DOWNGRADES the prefix to the older
+    // copy's DLL. So it is named for what it is, and says which way it goes.
+
+    enum DLLSkew: Equatable {
+        case matches        // byte-identical: nothing to say
+        case prefixNewer    // another, newer build of this app installed it
+        case differs        // older or unrelated: the honest "press Repair"
+    }
+
+    /// Classify the DLL in the prefix against the one shipped in this app.
+    ///
+    /// Dates decide the direction only; `identical` decides whether there is
+    /// anything to report at all. A missing date means we cannot tell newer
+    /// from older, and the cautious answer is the general one.
+    static func dllSkew(identical: Bool, prefixDate: Date?, shippedDate: Date?) -> DLLSkew {
+        if identical { return .matches }
+        guard let p = prefixDate, let s = shippedDate, p > s else { return .differs }
+        return .prefixNewer
+    }
+
+    /// The row's sentence for a skew. Under sixty characters, like the rest.
+    static func explainSkew(_ skew: DLLSkew) -> String {
+        switch skew {
+        case .matches:     return ""
+        case .prefixNewer: return "A newer build set this up. Repair goes back to this one."
+        case .differs:     return "A different wintab32.dll than this app's. Press Repair."
+        }
+    }
+
     // ---- 3. the probe: the far side, tested with SAI closed ------------------
     // Everything above answers "what is happening right now inside SAI", which
     // needs SAI to be running and being drawn in. That is a lot to ask of
