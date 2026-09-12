@@ -324,8 +324,11 @@ extension SetupController {
                 if !tail.isEmpty { out += "\n\n=== recent log ===\n" + tail }
             }
             // The account name goes no further than this machine: everything
-            // below is written to be pasted into a public issue.
-            let safe = ReportCore.redactHome(out, home: NSHomeDirectory())
+            // below is written to be pasted into a public issue. Advanced has a
+            // switch for the case where a full path is the thing being
+            // diagnosed, and it is on unless someone turned it off.
+            let safe = reportRedactEnabled()
+                ? ReportCore.redactHome(out, home: NSHomeDirectory()) : out
             DispatchQueue.main.async {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(safe, forType: .string)
@@ -339,7 +342,9 @@ extension SetupController {
         // Asks wine its version and lipo the binary's architectures, so it does
         // not belong on the main thread.
         DispatchQueue.global().async {
-            let text = ReportCore.redactHome(self.diagnosticsText(), home: NSHomeDirectory())
+            let raw = self.diagnosticsText()
+            let text = reportRedactEnabled()
+                ? ReportCore.redactHome(raw, home: NSHomeDirectory()) : raw
             DispatchQueue.main.async {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(text, forType: .string)

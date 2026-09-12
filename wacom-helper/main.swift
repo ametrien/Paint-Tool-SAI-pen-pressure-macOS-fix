@@ -364,6 +364,21 @@ if let zip = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_UPDATE_ZIP"] {
     }
 }
 
+// The report redaction is only a safeguard if it is on for someone who never
+// went looking for it, so the DEFAULT is the thing worth asserting.
+if ProcessInfo.processInfo.environment["SAIPP_SELFTEST_REPORT"] != nil {
+    print("redactDefault=\(reportRedactEnabled())")
+    let sample = "Prefix: \(NSHomeDirectory())/SAI2-pressure"
+    let shown = reportRedactEnabled()
+        ? ReportCore.redactHome(sample, home: NSHomeDirectory()) : sample
+    print("sample=\(shown)")
+    setReportRedact(false)
+    print("afterOff=\(reportRedactEnabled())")
+    setReportRedact(true)
+    print("afterOn=\(reportRedactEnabled())")
+    exit(0)
+}
+
 if let mode = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_BRIDGE"] {
     // "repair" exercises the healing path itself against a real prefix — the
     // half that unit tests cannot reach, because putting the key back needs
@@ -1852,6 +1867,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     var updateBtn: NSButton!
     var notesBtn: NSButton!
     var autoUpdateCheck: NSButton!
+    var redactCheck: NSButton!
     var latestTag: String?
     var latestNotes: String = ""
     var latestZipURL: String?        // the asset the in-app update installs
@@ -2097,6 +2113,14 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
                                    target: self, action: #selector(autoUpdateToggled))
         autoUpdateCheck.state = autoUpdateEnabled() ? .on : .off
         devSection.addArrangedSubview(autoUpdateCheck)
+        // Next to it because both are things a person chooses, not diagnostics.
+        redactCheck = NSButton(checkboxWithTitle: "Hide my user name in copied reports",
+                               target: self, action: #selector(redactToggled))
+        redactCheck.state = reportRedactEnabled() ? .on : .off
+        devSection.addArrangedSubview(redactCheck)
+        devSection.addArrangedSubview(
+            lbl("Paths become ~/… instead of /Users/you/… . Turn it off only if a full path is the problem.",
+                10, color: .tertiaryLabelColor))
         devUpdateRows = [autoUpdateCheck]
         // Folders first — "where did my SAI actually go?" is the question the
         // whole copy-into-the-prefix model raises, so answer it with a button.

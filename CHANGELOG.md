@@ -3,6 +3,37 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Copied reports hide your user name.** *Copy problem report* is written to be pasted into a
+  public issue, and it carried raw paths: `/Users/<you>/SAI2-pressure`, and wherever your SAI
+  folder lives. Paths now read `~/…` instead. Nothing diagnostic is lost, since what matters
+  about a SAI folder is where it sits relative to home, not who is logged in. **Advanced → Hide my
+  user name in copied reports** turns it off for the case where a full path is the thing being
+  diagnosed; it is on unless you turn it off.
+
+### Fixed
+- **A failed update no longer takes the installed app with it.** The swap deleted the installed
+  bundle and then copied the new one in, so anything that made that copy fail — a full disk, a
+  permission, a temporary directory swept out from under it — left the machine with no app at all,
+  and the updater had already exited. Nothing is destroyed now until the copy has succeeded, the
+  old bundle is moved aside rather than deleted, and it is put straight back if the swap cannot
+  finish.
+
+### Internal
+- The packet SAI reads is asserted at compile time, in both files that define it. SAI reads those
+  36 bytes positionally, so a reordered field sends pressure to whatever slot took its place:
+  strokes keep drawing, at the wrong width, with nothing failing anywhere. `wtprobe.c` carries its
+  own copy so it can stand in for SAI, and the two are now held together by the build rather than
+  by a comment.
+- CI checks that the update's tamper detection can detect tampering: it copies the built app,
+  confirms it verifies, modifies a sealed resource and fails the build if it still verifies.
+- 475 → 508 automated checks. `shouldSkip`, the deadband filter on the drawing path, had no test
+  at all; the redaction, the failed swap and the report default each have one whose trap was
+  proved by reintroducing the bug.
+
+
 ## [0.3.4] — 2026-09-11
 
 ### Changed

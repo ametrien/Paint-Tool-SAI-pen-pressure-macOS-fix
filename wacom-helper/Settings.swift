@@ -45,6 +45,21 @@ func setAutoUpdate(_ on: Bool) {
 /// rather than a feature. A marker file, like the flags above, so that
 /// launchSAIApp() (a top-level function) can read it without going through the
 /// app delegate.
+/// Advanced tab: strip the account name out of a copied report?
+///
+/// ON by default, and stored as an OFF marker for that reason: the report is
+/// written to be pasted into a public issue, so the safe state has to be the
+/// one someone gets without finding a setting. Turning it off is for the case
+/// where a full path is genuinely the thing being diagnosed.
+func reportRedactOffMarker() -> String { appSupport() + "/report-redact-off.txt" }
+func reportRedactEnabled() -> Bool {
+    !FileManager.default.fileExists(atPath: reportRedactOffMarker())
+}
+func setReportRedact(_ on: Bool) {
+    if on { try? FileManager.default.removeItem(atPath: reportRedactOffMarker()) }
+    else { try? "".write(toFile: reportRedactOffMarker(), atomically: true, encoding: .utf8) }
+}
+
 func dllLogMarker() -> String { appSupport() + "/dlllog-on.txt" }
 func dllLoggingEnabled() -> Bool { FileManager.default.fileExists(atPath: dllLogMarker()) }
 func setDLLLogging(_ on: Bool) {

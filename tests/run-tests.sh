@@ -286,6 +286,27 @@ else echo "  FAIL launcher: the helper never ran"; lfail=1; fi
 [ "$lfail" = 0 ] || exit 1
 echo "All launcher tests passed."
 
+echo "== A copied report hides the account name by default (real filesystem) =="
+# The redaction is only a safeguard if it is ON for someone who never went
+# looking for the setting, so the DEFAULT is what matters here. A regression
+# that flipped it would publish login names into public issues and break
+# nothing else.
+RPTW="$WORK/report"; mkdir -p "$RPTW"
+rfail=0
+rwant() { case "$2" in *"$3"*) echo "  ok   $1";; *) echo "  FAIL $1"; echo "$2" | sed 's/^/        /'; rfail=1;; esac; }
+out=$(SAIPP_CONFIG_DIR="$RPTW/cfg" SAIPP_SELFTEST_REPORT=1 "$WORK/helper-upd")
+rwant "report: hiding the user name is ON out of the box" "$out" "redactDefault=true"
+rwant "report: and a path in the report reads as ~"       "$out" "sample=Prefix: ~/SAI2-pressure"
+rwant "report: the switch can be turned off"              "$out" "afterOff=false"
+rwant "report: and back on"                               "$out" "afterOn=true"
+case "$out" in
+  *"$HOME"*) echo "  FAIL report: the sample still contains the real home path"; rfail=1;;
+  *) echo "  ok   report: the real home path appears nowhere in the output";;
+esac
+[ "$rfail" = 0 ] || exit 1
+echo "All report tests passed."
+
+echo ""
 echo "== The bridge check tells the truth about a prefix (real filesystem) =="
 # The check that #29 was missing. Wine loads its OWN wintab32 unless the prefix
 # says otherwise, so "our DLL is in place" and "SAI will use our DLL" are two
