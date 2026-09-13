@@ -230,6 +230,12 @@ struct BridgeTests {
                "skew: a newer DLL in the prefix is another build of this app")
         expect(BridgeCheck.dllSkew(identical: false, prefixDate: older, shippedDate: newer) == .differs,
                "skew: an older DLL in the prefix is the plain Repair case")
+        // Equal dates are not "newer". Only a strictly newer prefix DLL earns the
+        // gentler sentence, because that sentence tells someone Repair would
+        // take them backwards; when the dates cannot tell the builds apart,
+        // Repair is the safe advice and the row must say so.
+        expect(BridgeCheck.dllSkew(identical: false, prefixDate: older, shippedDate: older) == .differs,
+               "skew: equal dates are not treated as a newer build")
         expect(BridgeCheck.dllSkew(identical: false, prefixDate: nil, shippedDate: newer) == .differs,
                "skew: no date to compare falls back to the general answer")
         expect(!BridgeCheck.explainSkew(.prefixNewer).contains("different"),
