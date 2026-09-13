@@ -3,7 +3,7 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.3.5] — 2026-09-13
 
 ### Added
 - **Copied reports hide your user name.** *Copy problem report* is written to be pasted into a
@@ -19,8 +19,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
   permission, a temporary directory swept out from under it — left the machine with no app at all,
   and the updater had already exited. Nothing is destroyed now until the copy has succeeded, the
   old bundle is moved aside rather than deleted, and it is put straight back if the swap cannot
-  finish.
-
+  finish. This protects updates made *from* 0.3.5 onward: the running app performs the swap, so
+  the step from 0.3.4 to 0.3.5 still goes through 0.3.4's own script.
 - **Two copies of the app no longer accuse each other of a broken bridge.** The setup row compares
   the `wintab32.dll` in the Wine prefix with the one inside the running app, and said "A different
   wintab32.dll than this app's. Press Repair." for any difference at all. The everyday cause is not
@@ -38,7 +38,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
   by a comment.
 - CI checks that the update's tamper detection can detect tampering: it copies the built app,
   confirms it verifies, modifies a sealed resource and fails the build if it still verifies.
-- 475 → 514 automated checks. `shouldSkip`, the deadband filter on the drawing path, had no test
+- 475 → 515 automated checks. `shouldSkip`, the deadband filter on the drawing path, had no test
   at all; the redaction, the failed swap and the report default each have one whose trap was
   proved by reintroducing the bug.
 
@@ -75,6 +75,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
   Setup now uses the same verified path as the Repair button, and says so at the moment it fails
   instead of finishing with a satisfied face
   ([#34](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/34)).
+- **The bridge is restored wherever SAI is started from**, including the command-line install's own
+  launcher, not only when SAI is launched from this app. That launcher ran SAI without ever
+  checking the registry setting, so a prefix used through it could sit in the state
+  [#29](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/29) describes
+  with nothing to heal it ([#31](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/31)).
 
 
 ## [0.3.3] — 2026-09-10
