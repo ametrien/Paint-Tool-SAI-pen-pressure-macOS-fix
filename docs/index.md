@@ -1,9 +1,10 @@
 ---
-title: SAI Pen Pressure & Timelapse Recorder for macOS
+title: Paint Tool SAI on macOS — Pen Pressure & Timelapse
 ---
 
-PaintTool SAI Ver.2 runs on macOS under Wine. It launches, it draws, it looks right — and every
-stroke comes out the same width, because the pressure never arrives.
+PaintTool SAI Ver.2 — also written **Paint Tool SAI**, and usually just called **SAI 2** — runs on
+macOS under Wine. It launches, it draws, it looks right — and every stroke comes out the same
+width, because the pressure never arrives.
 
 The reason is narrower than it sounds. SAI asks Windows for pen data through **WinTab**, an API
 from 1991 that expects a tablet driver to be present. Under Wine there is no such driver: your
@@ -29,6 +30,7 @@ rather than by its name.
 
 | | |
 |---|---|
+| A Mac running macOS 12 or later | **Native on Apple Silicon** (M1, M2, M3 and later) and on Intel — the app ships as a universal binary, so there is nothing to choose at download time |
 | A tablet, with its macOS driver installed | Wacom, Huion, XP-Pen — anything macOS itself recognises |
 | [Wine Staging](https://github.com/Gcenx/macOS_Wine_builds/releases) | the app will install it for you, with a progress bar |
 | [PaintTool SAI Ver.2](https://www.systemax.jp/en/sai/devdept.html) | the free technical preview |

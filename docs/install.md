@@ -1,10 +1,13 @@
 ---
-title: Install
+title: Install Paint Tool SAI with pen pressure on macOS
 ---
 
 [← back](index.md)
 
 About 15 minutes, most of it downloading.
+
+Works on **Apple Silicon Macs** (M1, M2, M3 and later) and on Intel Macs, macOS 12 or later. The
+release is a universal binary, so there is only one download and nothing to pick between.
 
 ## 1. Your tablet's driver
 
