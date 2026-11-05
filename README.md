@@ -6,8 +6,8 @@
 [![license](https://img.shields.io/github/license/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix)](LICENSE)
 
 Run **PaintTool SAI Ver.2** on a Mac (via Wine) **with real Wacom pen pressure** — the one
-thing that normally doesn't survive the trip through Wine — and **record a timelapse of your
-canvas** while you draw.
+thing that normally doesn't survive the trip through Wine — and **[record a timelapse of your
+canvas](#credit)** while you draw.
 
 macOS + Wine already run SAI and move the cursor fine, but Wine's Mac driver throws away pen
 **pressure**. This project adds it back with a tiny two-part bridge:
