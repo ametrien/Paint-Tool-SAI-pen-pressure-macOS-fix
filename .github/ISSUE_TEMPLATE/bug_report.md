@@ -4,6 +4,9 @@ about: Something doesn't work (no pressure, wrong cursor, crash, ...)
 labels: bug
 ---
 
+<!-- Please write in English — a machine translation is fine.
+     请用英文填写（机器翻译即可）。 英語でお願いします（機械翻訳で大丈夫です）。 -->
+
 <!-- The hardware details below are ESSENTIAL — tablet behaviour differs per
      model, connection, and display setup. Reports without them are usually
      impossible to act on. -->
