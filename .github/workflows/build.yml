@@ -1,9 +1,22 @@
 name: build
 
+# A push that only touches docs, screenshots or Markdown changes nothing this
+# job builds or tests, and a macOS runner is 3-5 minutes for each one. Any
+# code, script or workflow change still runs the whole thing.
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'LICENSE'
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'LICENSE'
 
 jobs:
   build:
