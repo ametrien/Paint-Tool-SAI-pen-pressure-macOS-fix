@@ -81,7 +81,7 @@ being sent alongside what is actually arriving on SAI's side of the bridge.
 - **Pinch to zoom** and **two-finger scroll to pan** on the trackpad
 - **⌃⌥⌘Space** brings back a SAI window that has gone missing, and it can do that automatically when you switch back to SAI
 
-**Canvas timelapse** *(v0.2.0+)*
+**Canvas timelapse** *(v0.2.0+)*, heavily inspired by [art-timelapse](https://github.com/cromachina/art-timelapse) ([credit](#credit))
 
 - **One frame per brush stroke** — hours of drawing become a couple of minutes
 - Records the **canvas, not the screen**: no panels, no cursor, and no camera lurching when you zoom or pan
