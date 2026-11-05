@@ -182,6 +182,17 @@ func saiWindowIsOpen() -> Bool {
     }
     return false
 }
+/// Is SAI running at all — minimised, on another Space, or behind a dialog
+/// included? saiWindowIsOpen() only sees on-screen windows, which is right for
+/// recording and wrong for "SAI is still using the old settings".
+func saiProcessRunning() -> Bool {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+    p.arguments = ["-qif", "sai2\\.exe"]
+    do { try p.run() } catch { return saiWindowIsOpen() }
+    p.waitUntilExit()
+    return p.terminationStatus == 0
+}
 func pollUntilSAICloses() {
     let t = Timer(timeInterval: 2.0, repeats: true) { timer in
         if !saiWindowIsOpen() { timer.invalidate(); exit(0) }
@@ -243,7 +254,7 @@ func launchSAIApp() {
         PressureCore.maxPressure = live
     }
     writeMaxPressureForDLL()      // must land before the DLL loads
-    applyWineShortcutRemap(g_wine)          // Cmd->Ctrl via Wine (every launch; idempotent)
+    applyWineShortcutRemap(g_wine)          // Keys tab -> Wine (every launch; idempotent)
     // Last session's status file must not be read as this session's. The app
     // also treats an old timestamp as "not running", but a wrong "the bridge is
     // live" is the single answer this must never give, so it gets two guards.

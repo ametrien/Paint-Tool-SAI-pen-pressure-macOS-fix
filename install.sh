@@ -230,6 +230,11 @@ fi
 # (undo/redo/save/etc.). Driver-level, no Accessibility permission needed.
 "$WINE" reg add "HKCU\\Software\\Wine\\Mac Driver" /v LeftCommandIsCtrl  /t REG_SZ /d Y /f >/dev/null 2>&1
 "$WINE" reg add "HKCU\\Software\\Wine\\Mac Driver" /v RightCommandIsCtrl /t REG_SZ /d Y /f >/dev/null 2>&1
+# Option -> Alt on both sides (SAI's eyedropper). With Command mapped to Ctrl
+# nothing else sends Alt (issue #36). The app's Keys tab can give one back to
+# typing @, € etc.
+"$WINE" reg add "HKCU\\Software\\Wine\\Mac Driver" /v LeftOptionIsAlt    /t REG_SZ /d Y /f >/dev/null 2>&1
+"$WINE" reg add "HKCU\\Software\\Wine\\Mac Driver" /v RightOptionIsAlt   /t REG_SZ /d Y /f >/dev/null 2>&1
 echo 0 > "$PRESSURE_FILE"
 
 restore_licenses
