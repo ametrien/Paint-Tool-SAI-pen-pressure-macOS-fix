@@ -3,6 +3,35 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](https://semver.org/).
 
+## [0.3.6] — 2026-11-05
+
+### Added
+- **A Keys tab.** It sets what each ⌘ and ⌥ key sends to SAI (Ctrl, Alt, or Option for typing
+  characters), with a box to try keys in. The problem report and the health check include the
+  setting and say when Wine has not picked it up yet.
+
+### Fixed
+- **Alt works: ⌥ Option is now Alt** ([#36](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/36)).
+  No Mac key sent Alt at all. ⌘ was mapped to Ctrl for ⌘Z and ⌘S, and ⌘ is the only key Wine
+  sends as Alt by default, so the change that gave you the shortcuts quietly took away SAI's
+  eyedropper. Both Option keys are Alt now. On layouts that type characters with ⌥ (@ is ⌥L on a
+  German Mac), set one of them back to *types special characters* on the Keys tab. Takes effect
+  the next time SAI is launched.
+- **A key changed while SAI is open says so.** Wine reads the keys only when SAI starts, so a
+  change seemed to do nothing until SAI was restarted. The change is now written to Wine at once,
+  and while SAI is still open the Keys tab says, in orange, to save, quit and reopen it. The
+  Recording tab does the same for its on/off switch.
+- **Less small print.** The Recording tab's four grey footnotes became one line and tooltips; its
+  Make video and Discard buttons appear only when there is a recording to act on, and *Show in
+  Finder* sits next to the folder it opens. The Setup tab had three rows of identical grey
+  buttons, with Uninstall looking as ordinary as Wake. Now Wake and Auto-wake sit under Launch,
+  and one quiet row below holds *Show all steps*, *Copy problem report* and a **More** menu with
+  *Update SAI…* and, under a separator, *Reset everything & reinstall…* and *Uninstall…*.
+- **The Videos tab starts at the top.** A short list sat at the bottom of its box with empty space
+  above it. The list is now as tall as what it holds, counts read "1 session" rather than
+  "1 session(s)", and Rename, Sessions, Rebuild and Delete are under a **More** menu next to Play
+  and Export.
+
 ## [0.3.5] — 2026-09-13
 
 ### Added

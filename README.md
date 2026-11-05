@@ -23,25 +23,27 @@ The result: pressure-sensitive strokes that taper with how hard you press.
 
 ## What it looks like
 
-Five tabs, one window.
+Six tabs, one window.
 
 <p align="center">
-  <img src="docs/assets/screenshots/setup.png" alt="Setup tab: Wine, SAI, licence and Input Monitoring all ready on one line, with Launch, Copy problem report, and the version with its update check" width="49%">
+  <img src="docs/assets/screenshots/setup.png" alt="Setup tab: everything ready on one line, Launch, Wake SAI, and a quiet row with Copy problem report and a More menu" width="49%">
   <img src="docs/assets/screenshots/pen.png" alt="Pen tab: pressure levels, pen feel, and a live test showing what is being sent and what is arriving inside Wine" width="49%">
 </p>
 <p align="center">
-  <img src="docs/assets/screenshots/recording.png" alt="Recording tab: canvas timelapse settings" width="49%">
-  <img src="docs/assets/screenshots/videos.png" alt="Videos tab: one video per drawing, with play, export, rebuild and rename" width="49%">
+  <img src="docs/assets/screenshots/keys.png" alt="Keys tab: what each Option and Command key sends to SAI, with a box to try keys in" width="49%">
+  <img src="docs/assets/screenshots/recording.png" alt="Recording tab: canvas timelapse on or off and where videos are saved" width="49%">
 </p>
 <p align="center">
+  <img src="docs/assets/screenshots/videos.png" alt="Videos tab: one video per drawing, with Play, Export and a More menu" width="49%">
   <img src="docs/assets/screenshots/advanced.png" alt="Advanced tab: developer mode, automatic updates, the logs, a health check and Copy problem report" width="49%">
 </p>
 
 **Setup** gets SAI running and tells you which of the four prerequisites are missing.
-**Update SAI…** swaps in a newer SAI build without touching your licence, brushes or preferences —
+**More → Update SAI…** swaps in a newer SAI build without touching your licence, brushes or preferences —
 useful because Ver.2 is a rolling preview.
 **Pen** is pressure levels, pen feel and the response curve, and a live test that shows what is
 being sent alongside what is actually arriving on SAI's side of the bridge.
+**Keys** sets what each ⌘ and ⌥ key sends to SAI (⌥ is Alt, for the eyedropper), with a box to try keys in.
 **Recording** is the canvas timelapse.
 **Videos** lists one video per drawing, and keeps adding to it when you come back to that drawing.
 **Advanced** is where updates install themselves if you want them to, and where the logs, a diagnostics dump and a health check live.
@@ -77,6 +79,7 @@ being sent alongside what is actually arriving on SAI's side of the bridge.
 **It behaves like a Mac app, not Windows in a box**
 
 - **⌘Z / ⌘Y / ⌘S** and the rest, rather than Ctrl — remapped inside Wine, so SAI simply sees the right keys
+- **⌥ is Alt** (hold it for the eyedropper). Each key can be changed on the **Keys** tab, for example to keep one ⌥ for typing @ or €
 - **Pinch to zoom** and **two-finger scroll to pan** on the trackpad
 - **⌃⌥⌘Space** brings back a SAI window that has gone missing, and it can do that automatically when you switch back to SAI
 
@@ -191,13 +194,19 @@ If that doesn't sort it, **[open an issue](https://github.com/ametrien/Paint-Too
 and start it with **Copy problem report** on the Setup tab:
 
 <p align="center">
-  <img src="docs/assets/screenshots/setup.png" alt="The Setup tab, with the Copy problem report button next to Reset everything and Uninstall" width="88%">
+  <img src="docs/assets/screenshots/setup.png" alt="The Setup tab, with the Copy problem report button under Launch" width="88%">
 </p>
 
 That one button collects everything needed to help: your Mac and chip, macOS and Wine versions,
 your tablet and how it is connected, whether Wine is loading the pressure bridge or ignoring it,
 what SAI last received, and the recent log. Paste it into the issue and there is usually nothing
 else to gather.
+
+**Please write issues in English.** A machine translation (DeepL, Google Translate, ChatGPT) is
+completely fine — I just can't read Chinese, Japanese, Korean and so on, and I'd rather not guess at
+what you meant. You're welcome to paste your original text underneath the translation.
+
+请用英文提交 issue（机器翻译即可）· Issue は英語でお願いします（機械翻訳で大丈夫です）
 
 ---
 

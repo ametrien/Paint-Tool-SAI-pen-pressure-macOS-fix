@@ -136,6 +136,21 @@ you only if you happened to reinstall.
 A Wine focus bug, not a pressure one. Press **⌃⌥⌘Space**, or use **Wake SAI** in the setup
 window or the menu-bar icon. Recent versions also auto-recover on returning to SAI.
 
+## Alt does nothing — the eyedropper won't come up
+
+Up to 0.3.5 no Mac key sent Alt to SAI: ⌘ was mapped to Ctrl for the shortcuts, and that was the
+only key Wine sends as Alt ([issue #36](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/36)).
+Since 0.3.6, **both ⌥ Option keys are Alt**. Relaunch SAI once after updating, since Wine reads
+the setting when it starts.
+
+To change it, open the **Keys** tab. Each ⌘ and ⌥ key can be set separately, and **Try a key**
+shows what a key press turns into. If your keyboard layout types characters with ⌥ (@ is ⌥L on a
+German Mac), set one Option key to *types special characters* and type them with that one: an
+Option key set to Alt can't type them in SAI.
+
+There is no need to edit `user.reg` by hand. The app writes these four values on every launch, so
+a hand edit is replaced by whatever the Keys tab says.
+
 ## Two cursors — the macOS arrow sits on top of SAI's brush cursor
 
 Known, intermittent at launch, [issue #20](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/20).
@@ -151,7 +166,7 @@ otherwise have to ask you for.
 
 <p align="center">
   <img src="assets/screenshots/setup.png" width="620"
-       alt="The Setup tab, with the Copy problem report button in the bottom row beside Reset everything and Uninstall">
+       alt="The Setup tab, with the Copy problem report button under Launch">
 </p>
 
 For pen problems specifically, launch with the DLL's own log enabled:

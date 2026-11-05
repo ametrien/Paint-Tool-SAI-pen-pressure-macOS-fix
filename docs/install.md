@@ -111,7 +111,7 @@ the SAI installed inside it, your licence, brushes and preferences all live outs
 bundle and are not touched. There's no need to rebuild the prefix or to pick your SAI folder
 again.
 
-**Don't use Uninstall… to update.** That button removes the Wine prefix — which is where SAI
+**Don't use More → Uninstall… to update.** It removes the Wine prefix — which is where SAI
 itself is installed. It's for removing the installation, not for replacing the app.
 
 Upgrading is enough to pick up fixes that live deeper than the app: the bundled `wintab32.dll` is
