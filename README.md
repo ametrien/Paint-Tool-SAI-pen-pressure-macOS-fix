@@ -26,17 +26,15 @@ The result: pressure-sensitive strokes that taper with how hard you press.
 Six tabs, one window.
 
 <p align="center">
-  <img src="docs/assets/screenshots/setup.png" alt="Setup tab: everything ready on one line, Launch, Wake SAI, and a quiet row with Copy problem report and a More menu" width="49%">
-  <img src="docs/assets/screenshots/pen.png" alt="Pen tab: pressure levels, pen feel, and a live test showing what is being sent and what is arriving inside Wine" width="49%">
+  <a href="docs/assets/screenshots/all-tabs.png"><img src="docs/assets/screenshots/all-tabs.png" alt="All six tabs side by side. Top row: Setup, with Launch and Wake SAI; Pen, with pressure levels, pen feel and a live test; Keys, with what each Option and Command key sends. Bottom row: Recording, with the timelapse switch and save folder; Videos, one video per drawing; Advanced, with developer mode, logs and a health check." width="100%"></a>
 </p>
-<p align="center">
-  <img src="docs/assets/screenshots/keys.png" alt="Keys tab: what each Option and Command key sends to SAI, with a box to try keys in" width="49%">
-  <img src="docs/assets/screenshots/recording.png" alt="Recording tab: canvas timelapse on or off and where videos are saved" width="49%">
-</p>
-<p align="center">
-  <img src="docs/assets/screenshots/videos.png" alt="Videos tab: one video per drawing, with Play, Export and a More menu" width="49%">
-  <img src="docs/assets/screenshots/advanced.png" alt="Advanced tab: developer mode, automatic updates, the logs, a health check and Copy problem report" width="49%">
-</p>
+<p align="center"><sub>Full size:
+  <a href="docs/assets/screenshots/setup.png">Setup</a> ·
+  <a href="docs/assets/screenshots/pen.png">Pen</a> ·
+  <a href="docs/assets/screenshots/keys.png">Keys</a> ·
+  <a href="docs/assets/screenshots/recording.png">Recording</a> ·
+  <a href="docs/assets/screenshots/videos.png">Videos</a> ·
+  <a href="docs/assets/screenshots/advanced.png">Advanced</a></sub></p>
 
 **Setup** gets SAI running and tells you which of the four prerequisites are missing.
 **More → Update SAI…** swaps in a newer SAI build without touching your licence, brushes or preferences —
