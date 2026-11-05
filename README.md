@@ -58,7 +58,7 @@ being sent alongside what is actually arriving on SAI's side of the bridge.
 > - Tablet: **Wacom Intuos BT S (CTL-4100WL)**, over USB and Bluetooth
 > - Displays: **single screen**, and **two screens in mirroring mode**
 >
-> Other tablets / Macs / display setups are untested — reports welcome (see
+> Other tablets / Macs / display setups are untested — reports welcome as issues (see
 > [CONTRIBUTING](CONTRIBUTING.md)).
 
 📺 **Video walkthrough:** [watch the setup tutorial](https://youtu.be/62mJwWQsEYI)
