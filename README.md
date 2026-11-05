@@ -229,6 +229,10 @@ Contributions welcome — especially testing on other tablets and Macs.
 
 ## Credit
 
+**The canvas timelapse is our own implementation, inspired by
+[art-timelapse](https://github.com/cromachina/art-timelapse).** How we built it, step by step:
+[TIMELAPSE-PLAN.md](TIMELAPSE-PLAN.md).
+
 The timelapse exists because of [**cromachina/art-timelapse**](https://github.com/cromachina/art-timelapse),
 which has been doing this on Windows and Linux for a while. The insight — that SAI's canvas can be
 read out of the running process, so a timelapse can show the artwork rather than a recording of the
