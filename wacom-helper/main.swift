@@ -275,17 +275,21 @@ func ensureSetup(_ saiSrc: String, _ wine: String) -> Bool {
     performSetup(saiSrc, wine, mode: .ensure)
 }
 
-// Mac-friendly shortcuts: make WINE map Command -> Control (undo/redo/save/etc.)
-// itself, inside Wine apps only, at the driver level. This replaces an earlier
-// CGEventTap-based remap that synthesized wrong shortcuts and needed the
-// Accessibility permission. Idempotent + fast, so we run it on EVERY launch —
-// existing prefixes (set up before this feature) get the keys too. Cmd+Tab /
-// Cmd+Q etc. are unaffected (those never reach Wine).
+// Mac-friendly modifier keys, done by WINE itself at the driver level, inside
+// Wine apps only: Command -> Ctrl (undo/redo/save) and, by default, left
+// Option -> Alt (SAI's eyedropper). The Keys tab can change each of the four.
+// This replaces an earlier CGEventTap-based remap that synthesized wrong
+// shortcuts and needed the Accessibility permission. Idempotent + fast, so we
+// run it on EVERY launch — existing prefixes get the keys too, and a change on
+// the Keys tab lands the next time SAI starts. Cmd+Tab / Cmd+Q etc. are
+// unaffected (those never reach Wine).
 func applyWineShortcutRemap(_ wine: String) {
     let env = ["WINEPREFIX": appPrefix, "WINEDEBUG": "-all"]
-    for key in ["LeftCommandIsCtrl", "RightCommandIsCtrl"] {
+    // All four, "N" included: a key switched back off must be turned off in
+    // Wine too, not just left as it was.
+    for (name, value) in storedKeyMapping().wineValues {
         runProc(wine, ["reg", "add", "HKCU\\Software\\Wine\\Mac Driver",
-                       "/v", key, "/t", "REG_SZ", "/d", "Y", "/f"], env: env)
+                       "/v", name, "/t", "REG_SZ", "/d", value, "/f"], env: env)
     }
 }
 /// Self-test entry point for the SAI update, used by tests/run-tests.sh.
@@ -531,7 +535,10 @@ if let dir = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_TABLAYOUT"] {
     w.contentView?.addSubview(tab)
     w.layoutIfNeeded()
     func dump(_ v: NSView, _ depth: Int) {
+        // A pull-down's items are menu items, not subviews, so they are listed
+        // explicitly or the More menu would be invisible to the test.
         let name = (v as? NSTextField)?.stringValue
+            ?? (v as? NSPopUpButton).map { "popup[" + $0.itemTitles.joined(separator: "|") + "]" }
             ?? (v as? NSButton)?.title
             ?? String(describing: type(of: v))
         print(String(format: "%@%@ %.0fx%.0f", String(repeating: "  ", count: depth),
@@ -1473,12 +1480,27 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     var libraryTab: NSStackView!
     var libStack: NSStackView!
     var libFooter: NSTextField!
+    var libScrollHeight: NSLayoutConstraint!
+    // The Keys tab (KeysUI.swift). Nothing cached: the settings file is read on
+    // every change, so it is the only copy of the truth.
+    var keysTab: NSStackView!
+    var keyPopups: [MacModifierKey: NSPopUpButton] = [:]
+    var keysWarning: NSTextField!
+    var keysRestartNote: NSTextField!
+    var keysNote: NSTextField!
+    /// Set when a key changes while SAI is open; cleared once SAI has closed,
+    /// because the next start picks the change up on its own.
+    var keysNeedSAIRestart = false
     var libStore: LibraryStore?
     var settingsTab: NSStackView!
     var settingsScratch: PenScratchView!
     var scratchRow: NSStackView!
+    var setupReportBtn: NSButton!
     var autoWakeCheck: NSButton!
     var recUsageLabel: NSTextField!
+    var recButtonRow: NSStackView!
+    var recApplyHint: NSTextField!
+    var recApplyPending = false
     var recPreview: AVPlayerView!
     var recPreviewLabel: NSTextField!
     var recHidePreviewBtn: NSButton!
@@ -2002,7 +2024,8 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
                                  action: #selector(autoWakeCheckToggled))
         autoWakeCheck.controlSize = .small
         secondaryRow.addArrangedSubview(autoWakeCheck)
-        secondaryRow.addArrangedSubview(advancedBtn)
+        // advancedBtn goes in the tools row further down, with the other things
+        // that are about the app rather than about SAI running right now.
         content.addArrangedSubview(secondaryRow)
 
         testHint = lbl("Press your pen on the tablet. Both bars should move.", 10, color: .secondaryLabelColor)
@@ -2071,22 +2094,39 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         // The whole point: a single obvious action that rebuilds everything, for
         // when the prefix is broken and you don't want to reason about which
         // half is at fault.
-        scratchRow = NSStackView(); scratchRow.orientation = .horizontal; scratchRow.spacing = 8
-        // First, and outside Developer mode on purpose: the person who needs it
-        // is the one reporting a fault, and in #29 everything worth pasting was
-        // behind a switch they had no reason to find. It also has to sit before
-        // the hint below, which belongs to the two destructive buttons.
+        // One quiet row for everything that is about the app rather than about
+        // drawing: three rows of identical grey buttons made Uninstall look as
+        // ordinary as Wake, and nothing said which buttons belonged together.
+        // Recessed bezels only show on hover, so this row reads as secondary
+        // next to Launch.
+        scratchRow = NSStackView(); scratchRow.orientation = .horizontal
+        scratchRow.alignment = .centerY; scratchRow.spacing = 4
+        advancedBtn.bezelStyle = .recessed
+        scratchRow.addArrangedSubview(advancedBtn)
+        // Visible, not in the menu, and outside Developer mode on purpose: the
+        // person who needs it is the one reporting a fault, and in #29
+        // everything worth pasting was behind a switch they had no reason to find.
         let reportBtn = NSButton(title: "Copy problem report", target: self, action: #selector(copyProblemReport))
-        reportBtn.bezelStyle = .rounded; reportBtn.controlSize = .small
+        reportBtn.bezelStyle = .recessed; reportBtn.controlSize = .small
         scratchRow.addArrangedSubview(reportBtn)
-        let scratchBtn = NSButton(title: "Reset everything & reinstall…", target: self, action: #selector(installFromScratch))
-        scratchBtn.bezelStyle = .rounded; scratchBtn.controlSize = .small
-        scratchRow.addArrangedSubview(scratchBtn)
-        let uninstallBtn = NSButton(title: "Uninstall…", target: self, action: #selector(uninstallEverything))
-        uninstallBtn.bezelStyle = .rounded; uninstallBtn.controlSize = .small
-        scratchRow.addArrangedSubview(uninstallBtn)
-        let scratchHint = lbl("Keeps your SAI folder and license.", 10, color: .tertiaryLabelColor)
-        scratchRow.addArrangedSubview(scratchHint)
+        setupReportBtn = reportBtn
+        // Update is routine (SAI Ver.2 is a rolling preview); Reset and
+        // Uninstall are not, and sit under a separator so they are never the
+        // thing a stray click lands on.
+        let more = NSPopUpButton(frame: .zero, pullsDown: true)
+        more.bezelStyle = .recessed; more.controlSize = .small
+        more.addItem(withTitle: "More")             // a pull-down's title is item 0
+        func item(_ t: String, _ sel: Selector, _ tip: String) {
+            let i = NSMenuItem(title: t, action: sel, keyEquivalent: "")
+            i.target = self; i.toolTip = tip
+            more.menu?.addItem(i)
+        }
+        item("Update SAI…", #selector(updateSAITapped),
+             "Point at a newer SAI folder. Keeps your licence, brushes and preferences.")
+        more.menu?.addItem(.separator())
+        item("Reset everything & reinstall…", #selector(installFromScratch), "Keeps your SAI folder and licence.")
+        item("Uninstall…", #selector(uninstallEverything), "Keeps your SAI folder and licence.")
+        scratchRow.addArrangedSubview(more)
         // NOT appended to rowViews — that array is index-locked to `reqs` and an
         // extra entry would desync applyLayout()'s loop. It's Settings-only.
         // --- footers: explanation, only in Settings ---------------------------
@@ -2262,25 +2302,12 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         // with Launch and Wake — not on Pen, which is about how the pen behaves.
         // Inserted after the secondary action row rather than appended, which
         // would strand them below the footers and the version line.
-        // SAI Ver.2 is a rolling preview, so swapping in a new build is a
-        // routine thing rather than a repair. Given its own action so nobody
-        // has to reach for Reinstall and lose their brushes.
-        let updateRow = NSStackView(); updateRow.orientation = .horizontal
-        updateRow.alignment = .centerY; updateRow.spacing = 8
-        let updateBtn2 = NSButton(title: "Update SAI…", target: self, action: #selector(updateSAITapped))
-        updateBtn2.bezelStyle = .rounded; updateBtn2.controlSize = .small
-        updateRow.addArrangedSubview(updateBtn2)
-        updateRow.addArrangedSubview(
-            lbl("point at a newer SAI folder · keeps your licence, brushes and preferences",
-                10, color: .tertiaryLabelColor))
-
         if let after = content.arrangedSubviews.firstIndex(of: secondaryRow) {
-            content.insertArrangedSubview(updateRow, at: after + 1)
-            content.insertArrangedSubview(scratchRow, at: after + 2)
+            content.insertArrangedSubview(scratchRow, at: after + 1)
         } else {
-            content.addArrangedSubview(updateRow)
             content.addArrangedSubview(scratchRow)
         }
+        content.setCustomSpacing(16, after: secondaryRow)
 
         buildRecordingTab()
 
@@ -2295,6 +2322,9 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         // compete with a scrolling list.
         for (label, view) in [("Setup", content!),
                               ("Pen", settingsTab!),
+                              // Its own tab, not a corner of Pen or Advanced:
+                              // it is where people look when Alt does nothing.
+                              ("Keys", buildKeysTab()),
                               ("Recording", recordingTab!),
                               ("Videos", buildLibraryTab()),
                               ("Advanced", devSection!)] {
@@ -2455,6 +2485,9 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         // for ten minutes still read "Nothing recorded yet". Only when that tab
         // is actually selected: it stats the frames folder, and there is no
         // reason to do that once a second behind a tab nobody is looking at.
+        if (tabView?.selectedTabViewItem?.identifier as? String) == "Keys" {
+            refreshKeysRestartNote()
+        }
         if (tabView?.selectedTabViewItem?.identifier as? String) == "Recording" {
             refreshRecordingTab()
         }

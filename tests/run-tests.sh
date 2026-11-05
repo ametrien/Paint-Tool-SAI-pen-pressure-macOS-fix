@@ -48,6 +48,13 @@ swiftc -o "$WORK/update-tests" "$REPO/wacom-helper/UpdateCore.swift" "$REPO/test
 "$WORK/update-tests"
 
 echo ""
+echo "== Swift core (KeysCore.swift) =="
+# Which Mac key sends Alt. For years none did (issue #36): ⌘ was mapped to Ctrl,
+# and that silently took away the only key Wine sends as Alt.
+swiftc -o "$WORK/keys-tests" "$REPO/wacom-helper/KeysCore.swift" "$REPO/tests/KeysTests.swift"
+"$WORK/keys-tests"
+
+echo ""
 echo "== Swift core (EncoderCore.swift) =="
 swiftc -o "$WORK/encoder-tests" "$REPO/timelapse-encoder/EncoderCore.swift" "$REPO/tests/EncoderTests.swift"
 "$WORK/encoder-tests"
@@ -770,20 +777,24 @@ echo "$layout" | grep -q "Export length" \
   && echo "  ok   tab: the controls below the list are still on screen" \
   || { echo "  FAIL tab: the export row was pushed off the bottom"; tab_fail=1; }
 # The drawing recorded by the end-to-end test above must appear, with its buttons.
-echo "$layout" | grep -q "session(s)" \
+echo "$layout" | grep -qE "[0-9]+ sessions? · " \
   && echo "  ok   tab: the drawing from the previous test is listed" \
   || { echo "  FAIL tab: no drawing row:"; echo "$layout"; tab_fail=1; }
-echo "$layout" | grep -q "Rebuild" \
-  && echo "  ok   tab: its actions are there too" \
+echo "$layout" | grep -q "popup\[More|Rename…|Sessions…|Rebuild video||Delete…\]" \
+  && echo "  ok   tab: its actions are there too (Play, Export, and the More menu)" \
   || { echo "  FAIL tab: no action buttons"; tab_fail=1; }
 # How long is it? That is the first thing anyone wants to know about a video,
 # and frames alone do not answer it.
-echo "$layout" | grep -qE "session\(s\).*[0-9]+ frames.*[0-9]+s" \
+echo "$layout" | grep -qE "[0-9]+ sessions? · [0-9]+ frames? · [0-9]+s" \
   && echo "  ok   tab: a drawing says how many frames and how long it runs" \
-  || { echo "  FAIL tab: no length on the drawing row:"; echo "$layout" | grep "session(s)"; tab_fail=1; }
+  || { echo "  FAIL tab: no length on the drawing row:"; echo "$layout" | grep "session"; tab_fail=1; }
 # THE TRAP: prettyBytes reports whole megabytes, which is right for a folder of
 # raw frames and wrong for one video — line art encodes so small that every row
 # read "0 MB" next to a real file.
+# Counts are spelled out: "1 session", never "1 session(s)".
+echo "$layout" | grep -q "(s)" \
+  && { echo "  FAIL tab: a count still reads \"(s)\":"; echo "$layout" | grep "(s)"; tab_fail=1; } \
+  || echo "  ok   tab: counts say 1 session / 2 sessions, not session(s)"
 echo "$layout" | grep -q "0 MB" \
   && { echo "  FAIL tab: a real video is reported as 0 MB"; tab_fail=1; } \
   || echo "  ok   tab: small videos are sized in KB, not rounded to 0 MB"
@@ -819,7 +830,7 @@ echo "$layout" | grep -q "000" \
 echo "$layout" | grep -q "Nothing recorded yet" \
   && { echo "  FAIL loose: claimed nothing was recorded with videos sitting there"; loose_fail=1; } \
   || echo "  ok   loose: does not claim the folder is empty"
-echo "$layout" | grep -q "older video(s)" \
+echo "$layout" | grep -qE "^ *[0-9]+ older videos?( ·| [0-9]+x[0-9]+$)" \
   && echo "  ok   loose: the footer counts them" \
   || { echo "  FAIL loose: footer says: $(echo "$layout" | tail -2)"; loose_fail=1; }
 # Loose videos get the same facts as drawings do: a real file, not a mystery.

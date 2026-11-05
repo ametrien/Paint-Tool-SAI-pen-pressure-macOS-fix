@@ -24,52 +24,69 @@ extension SetupController {
 
         recordingTab.addArrangedSubview(lbl("Recording", 18, bold: true))
         recordingTab.addArrangedSubview(
-            lbl("What gets captured while you draw. Finished videos are in the Videos tab.\n"
-                + "Captures the canvas itself, not the screen: no panels, no zooming, no cursor.",
+            lbl("Records the canvas, not the screen: no panels, no cursor, no zooming.",
                 12, color: .secondaryLabelColor))
 
+        // Less text on this tab (the details moved into tooltips): four grey
+        // footnotes under the buttons read as fine print nobody needed.
         recCheck = NSButton(checkboxWithTitle: "Record a timelapse while I draw",
                             target: self, action: #selector(recToggle))
+        recCheck.toolTip = "Undo shows up in the video at your next stroke, not the moment you press it."
+        recordingTab.setCustomSpacing(14, after: recordingTab.arrangedSubviews.last!)
         recordingTab.addArrangedSubview(recCheck)
-        recordingTab.addArrangedSubview(
-            lbl("Takes effect the next time SAI launches.", 11, color: .tertiaryLabelColor))
+        // Only while it matters: a change made with SAI closed simply applies.
+        recApplyHint = lbl("SAI is open: this applies the next time it starts.", 11, color: .systemOrange)
+        recApplyHint.isHidden = true
+        recordingTab.addArrangedSubview(recApplyHint)
 
-        recFramesLabel = lbl("", 12)
+        recFramesLabel = lbl("", 13, bold: true)
+        recordingTab.setCustomSpacing(14, after: recApplyHint)
         recordingTab.addArrangedSubview(recFramesLabel)
         recUsageLabel = lbl("", 11, color: .secondaryLabelColor)
         recUsageLabel.usesSingleLineMode = false
         recUsageLabel.lineBreakMode = .byWordWrapping
         recUsageLabel.maximumNumberOfLines = 8
         recordingTab.addArrangedSubview(recUsageLabel)
+        recordingTab.setCustomSpacing(16, after: recFramesLabel)
 
         let folderRow = NSStackView(); folderRow.orientation = .horizontal
         folderRow.alignment = .centerY; folderRow.spacing = 8
         folderRow.addArrangedSubview(lbl("Save to", 12, bold: true))
         recFolderLabel = lbl(prettyPath(timelapseOutputFolder()), 11, color: .secondaryLabelColor)
         recFolderLabel.lineBreakMode = .byTruncatingMiddle
+        // Without a cap the middle-truncation never kicks in and a long path
+        // pushes Choose… off the edge.
+        recFolderLabel.translatesAutoresizingMaskIntoConstraints = false
+        recFolderLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 260).isActive = true
+        recFolderLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         folderRow.addArrangedSubview(recFolderLabel)
         let chooseBtn = NSButton(title: "Choose…", target: self, action: #selector(chooseTimelapseFolder))
         chooseBtn.bezelStyle = .rounded; chooseBtn.controlSize = .small
         folderRow.addArrangedSubview(chooseBtn)
+        // "Show frames" used to matter when frames sat on disk until you asked
+        // for a video. They are now encoded and deleted within a second of
+        // being captured, so that button opened an empty folder. It sits with
+        // the folder it opens now, not with the buttons that act on a recording.
+        let showBtn = NSButton(title: "Show in Finder", target: self, action: #selector(revealTimelapseVideos))
+        showBtn.bezelStyle = .rounded; showBtn.controlSize = .small
+        folderRow.addArrangedSubview(showBtn)
         recordingTab.addArrangedSubview(folderRow)
 
-        let btnRow = NSStackView(); btnRow.orientation = .horizontal; btnRow.spacing = 8
-        recMakeBtn = NSButton(title: "Make video…", target: self, action: #selector(makeTimelapseVideo))
+        // Hidden, not greyed out, while there is nothing to act on: two dead
+        // buttons were the most prominent thing on an idle tab.
+        recButtonRow = NSStackView(); recButtonRow.orientation = .horizontal; recButtonRow.spacing = 8
+        recMakeBtn = NSButton(title: "Make video now…", target: self, action: #selector(makeTimelapseVideo))
         recMakeBtn.bezelStyle = .rounded
         recMakeBtn.keyEquivalent = "\r"
+        recMakeBtn.toolTip = "Closing SAI makes the video by itself; this only makes one early. "
+            + "Recording carries on afterwards."
         recDiscardBtn = NSButton(title: "Discard recording", target: self,
                                  action: #selector(discardTimelapseFrames))
         recDiscardBtn.bezelStyle = .rounded
-        // "Show frames" used to matter when frames sat on disk until you asked
-        // for a video. They are now encoded and deleted within a second of
-        // being captured, so that button opened an empty folder — the finished
-        // videos are the thing anyone actually wants to get to.
-        let showBtn = NSButton(title: "Show videos", target: self, action: #selector(revealTimelapseVideos))
-        showBtn.bezelStyle = .rounded
-        btnRow.addArrangedSubview(recMakeBtn)
-        btnRow.addArrangedSubview(recDiscardBtn)
-        btnRow.addArrangedSubview(showBtn)
-        recordingTab.addArrangedSubview(btnRow)
+        recButtonRow.addArrangedSubview(recMakeBtn)
+        recButtonRow.addArrangedSubview(recDiscardBtn)
+        recordingTab.addArrangedSubview(recButtonRow)
+        recordingTab.setCustomSpacing(16, after: recUsageLabel)
 
         // Preview. Watching the result is how you find out the length or speed
         // is wrong, and sending people to Finder to check made that a chore.
@@ -85,6 +102,7 @@ extension SetupController {
         recHidePreviewBtn.bezelStyle = .rounded; recHidePreviewBtn.controlSize = .small
         recHidePreviewBtn.isHidden = true
         previewRow.addArrangedSubview(recHidePreviewBtn)
+        previewRow.isHidden = true      // shown with the preview, see showPreview()
         recordingTab.addArrangedSubview(previewRow)
         recPreview = AVPlayerView()
         recPreview.translatesAutoresizingMaskIntoConstraints = false
@@ -95,18 +113,10 @@ extension SetupController {
         recPreview.isHidden = true
         recordingTab.addArrangedSubview(recPreview)
 
+        recordingTab.setCustomSpacing(18, after: recPreview)
         recordingTab.addArrangedSubview(
-            lbl("Closing SAI makes the video by itself. This button only makes one early.",
-                11, color: .tertiaryLabelColor))
-        recordingTab.addArrangedSubview(
-            lbl("You can make a video while SAI is open; recording carries on afterwards.",
-                11, color: .tertiaryLabelColor))
-        recordingTab.addArrangedSubview(
-            lbl("Drawing on this again another day adds to the same video (see the Videos tab).",
-                11, color: .tertiaryLabelColor))
-        recordingTab.addArrangedSubview(
-            lbl("Undo is captured at your next stroke rather than the moment you press it.",
-                11, color: .tertiaryLabelColor))
+            lbl("SAI makes the video when it closes. Coming back to a drawing adds to its video.",
+                11, color: .secondaryLabelColor))
         refreshRecordingTab()
         restorePreview()
     }
@@ -125,9 +135,20 @@ extension SetupController {
             : (segs > 0
                ? "Recorded and encoded\(n > 0 ? ", \(n) frame\(n == 1 ? "" : "s") still to process" : ".")"
                : "\(n) frame\(n == 1 ? "" : "s") recorded.")
-        recMakeBtn.isEnabled = n > 0 || segs > 0
-        recDiscardBtn.isEnabled = n > 0 || segs > 0
+        let hasSomething = n > 0 || segs > 0
+        if recButtonRow.isHidden == hasSomething {
+            recButtonRow.isHidden = !hasSomething
+            applyLayout()
+        }
+        let pending = recApplyPending && saiProcessRunning()
+        if !pending { recApplyPending = false }
+        if recApplyHint.isHidden == pending {
+            recApplyHint.isHidden = !pending
+            applyLayout()
+        }
         let use = timelapseUsage(timelapseFramesDir)
+        // Hidden when empty: an empty label still takes its share of spacing.
+        recUsageLabel.isHidden = use.total == 0
         if use.total == 0 {
             recUsageLabel.stringValue = ""
         } else {
@@ -138,9 +159,9 @@ extension SetupController {
                              + "\(c.frames) frame\(c.frames == 1 ? "" : "s"), \(prettyBytes(c.bytes))")
             }
             if use.canvases.count > 6 { lines.append("   …and \(use.canvases.count - 6) more") }
-            lines.append("Frames are deleted as they are encoded. Beyond ~2 GB the oldest detail is "
-                         + "thinned (every 2nd frame) rather than losing the start.")
             recUsageLabel.stringValue = lines.joined(separator: "\n")
+            recUsageLabel.toolTip = "Frames are deleted as they are encoded. Beyond ~2 GB the oldest "
+                + "detail is thinned (every 2nd frame) rather than losing the start."
         }
         recFolderLabel?.stringValue = prettyPath(timelapseOutputFolder())
     }
@@ -150,12 +171,14 @@ extension SetupController {
     func showPreview(_ path: String) {
         guard recPreview != nil else { return }
         guard FileManager.default.fileExists(atPath: path) else {
-            recPreview.isHidden = true; recPreviewLabel.stringValue = ""; return
+            recPreview.isHidden = true; recPreviewLabel.stringValue = ""
+            recPreviewLabel.superview?.isHidden = true; return
         }
         try? path.write(toFile: appSupport() + "/timelapse-last.txt",
                         atomically: true, encoding: .utf8)
         recPreview.player = AVPlayer(url: URL(fileURLWithPath: path))
         recPreview.isHidden = false
+        recPreviewLabel.superview?.isHidden = false
         recHidePreviewBtn?.isHidden = false
         recPreviewLabel.stringValue = "Last video: \(prettyPath(path))"
         applyLayout()
@@ -166,6 +189,7 @@ extension SetupController {
         recPreview?.player?.pause()
         recPreview?.player = nil
         recPreview?.isHidden = true
+        recPreviewLabel?.superview?.isHidden = true
         recHidePreviewBtn?.isHidden = true
         recPreviewLabel?.stringValue = ""
         try? FileManager.default.removeItem(atPath: appSupport() + "/timelapse-last.txt")
@@ -176,7 +200,11 @@ extension SetupController {
                                   encoding: .utf8) else { return }
         showPreview(p.trimmingCharacters(in: .whitespacesAndNewlines))
     }
-    @objc func recToggle() { timelapseOn = (recCheck.state == .on); refreshRecordingTab() }
+    @objc func recToggle() {
+        timelapseOn = (recCheck.state == .on)
+        recApplyPending = saiProcessRunning()
+        refreshRecordingTab()
+    }
     @objc func recLengthChanged() {
         try? String(recLengthPopup.indexOfSelectedItem)
             .write(toFile: appSupport() + "/timelapse-length.txt", atomically: true, encoding: .utf8)

@@ -206,3 +206,18 @@ func saveGamma(_ v: Double) {
     PressureCore.pressureGamma = v
 }
 func saveSAIPath(_ p: String) { try? p.write(toFile: appSupport() + "/config.txt", atomically: true, encoding: .utf8) }
+
+/// Keys tab: what each Mac modifier key sends to SAI. Missing file = defaults
+/// (KeyMapping.defaults), so a fresh install gets Alt on left Option without
+/// anyone finding the setting. See KeysCore.swift for why.
+func keyMappingFile() -> String { appSupport() + "/keys.txt" }
+func storedKeyMapping() -> KeyMapping {
+    guard let s = try? String(contentsOfFile: keyMappingFile(), encoding: .utf8) else {
+        return .defaults
+    }
+    return KeyMapping.parse(s)
+}
+func storeKeyMapping(_ m: KeyMapping) {
+    if m == .defaults { try? FileManager.default.removeItem(atPath: keyMappingFile()) }
+    else { try? m.serialized.write(toFile: keyMappingFile(), atomically: true, encoding: .utf8) }
+}

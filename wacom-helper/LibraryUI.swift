@@ -171,9 +171,12 @@ extension SetupController {
         tab.edgeInsets = NSEdgeInsets(top: 18, left: 24, bottom: 18, right: 24)
         tab.addArrangedSubview(lbl("Your videos", 18, bold: true))
         tab.addArrangedSubview(
-            lbl("One video per drawing. Come back to a drawing later and it is added "
-                + "to the same video.\nHover over a still to play it.",
+            lbl("One video per drawing. Hover over a still to play it.",
                 11, color: .secondaryLabelColor))
+        // The totals sit under the heading, where they read as a summary of the
+        // list, not under the export setting, where they read as part of it.
+        libFooter = lbl("", 11, color: .tertiaryLabelColor)
+        tab.addArrangedSubview(libFooter)
 
         libStack = NSStackView()
         libStack.orientation = .vertical
@@ -186,7 +189,12 @@ extension SetupController {
         // main.swift documents, in the opposite direction.
         libStack.translatesAutoresizingMaskIntoConstraints = false
         let scroll = NSScrollView()
+        // THE TRAP: NSClipView is not flipped, so a list shorter than the
+        // scroll view settles at the BOTTOM of it. One drawing showed up a
+        // hand's width below the heading with nothing above it.
+        scroll.contentView = TopAnchoredClipView()
         scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
         scroll.drawsBackground = false
         scroll.documentView = libStack
         scroll.translatesAutoresizingMaskIntoConstraints = false
@@ -197,10 +205,13 @@ extension SetupController {
             // content scroll vertically instead of squashing to fit.
             libStack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
         ])
-        // A fixed height, not a minimum: with a minimum the list grew to fill
-        // the tab and pushed the controls below it off the bottom.
-        scroll.heightAnchor.constraint(equalToConstant: 300).isActive = true
-        scroll.widthAnchor.constraint(equalToConstant: 500).isActive = true
+        // An exact height, never a minimum: with a minimum the list grew to fill
+        // the tab and pushed the controls below it off the bottom. The constant
+        // follows the content (see refreshLibraryTab) up to a cap, so one drawing
+        // is not followed by a screenful of nothing.
+        libScrollHeight = scroll.heightAnchor.constraint(equalToConstant: 300)
+        libScrollHeight.isActive = true
+        scroll.widthAnchor.constraint(equalToConstant: 540).isActive = true
         tab.addArrangedSubview(scroll)
 
         // The export default lives here rather than with the recording
@@ -214,12 +225,10 @@ extension SetupController {
         recLengthPopup.selectItem(at: storedTimelapseLengthIndex())
         recLengthPopup.target = self; recLengthPopup.action = #selector(recLengthChanged)
         lenRow.addArrangedSubview(recLengthPopup)
-        lenRow.addArrangedSubview(
-            lbl("your drawings always keep a full-length video", 11, color: .tertiaryLabelColor))
+        recLengthPopup.toolTip = "The length Export… starts with. The video here always stays full length."
+        tab.setCustomSpacing(16, after: scroll)
         tab.addArrangedSubview(lenRow)
 
-        libFooter = lbl("", 11, color: .secondaryLabelColor)
-        tab.addArrangedSubview(libFooter)
         libraryTab = tab
         refreshLibraryTab()
         return tab
@@ -255,25 +264,47 @@ extension SetupController {
             for url in loose { libStack.addArrangedSubview(looseRow(url)) }
         }
 
+        defer { fitLibraryHeight() }
         if drawings.isEmpty && loose.isEmpty {
             libStack.addArrangedSubview(
                 lbl("Nothing recorded yet. Draw in SAI with recording on, and your "
                     + "drawings will appear here.", 12, color: .secondaryLabelColor))
             libFooter.stringValue = ""
+            libFooter.isHidden = true
             return
         }
 
         let pieces = drawings.reduce(0) { $0 + $1.pieces.count }
-        var footer = ""
-        if !drawings.isEmpty { footer = "\(drawings.count) drawing(s), \(pieces) session(s)" }
-        if !loose.isEmpty {
-            footer += (footer.isEmpty ? "" : ", ") + "\(loose.count) older video(s)"
+        var parts: [String] = []
+        if !drawings.isEmpty {
+            parts.append(counted(drawings.count, "drawing"))
+            parts.append(counted(pieces, "session"))
         }
-        footer += " · " + prettyFileSize(folderSize(store.videosDir))
+        if !loose.isEmpty { parts.append(counted(loose.count, "older video")) }
+        let size = prettyFileSize(folderSize(store.videosDir))
+        if !size.isEmpty { parts.append(size) }
         if !store.lib.pending.isEmpty {
-            footer += "  ·  \(store.lib.pending.count) session(s) to confirm"
+            parts.append(counted(store.lib.pending.count, "session") + " to confirm")
         }
-        libFooter.stringValue = footer
+        libFooter.stringValue = parts.joined(separator: " · ")
+        libFooter.isHidden = false
+    }
+
+    /// Size the list to what it holds, up to a cap; past the cap it scrolls.
+    private func fitLibraryHeight() {
+        guard let h = libScrollHeight else { return }
+        libStack.layoutSubtreeIfNeeded()
+        let want = min(max(libStack.fittingSize.height, 60), 340)
+        if abs(h.constant - want) > 0.5 {
+            h.constant = want
+            applyLayout()
+        }
+    }
+
+    /// "1 session", "3 sessions". "session(s)" is what software says when it
+    /// could not be bothered, and the number is right there.
+    func counted(_ n: Int, _ noun: String) -> String {
+        "\(n) \(noun)\(n == 1 ? "" : "s")"
     }
 
     /// One drawing: a poster frame, what it is, and what can be done to it.
@@ -298,7 +329,7 @@ extension SetupController {
         col.addArrangedSubview(title)
 
         let f = DateFormatter(); f.dateStyle = .medium; f.timeStyle = .none
-        var parts = ["\(d.pieces.count) session(s)", "\(d.totalFrames) frames"]
+        var parts = [counted(d.pieces.count, "session"), counted(d.totalFrames, "frame")]
         let length = prettyDuration(videoSeconds(store.videoURL(d)))
         if !length.isEmpty { parts.append(length) }
         let size = prettyFileSize(fileSize(store.videoURL(d)))
@@ -325,12 +356,28 @@ extension SetupController {
             b.identifier = NSUserInterfaceItemIdentifier(d.id)
             return b
         }
+        // Play and Export are what people come here for. The rest are repairs
+        // and housekeeping: six equal buttons in a row made Delete exactly as
+        // prominent as Play, and the row ran past the edge of the list.
         buttons.addArrangedSubview(button("Play", #selector(libPlay(_:))))
         buttons.addArrangedSubview(button("Export…", #selector(libExport(_:))))
-        buttons.addArrangedSubview(button("Rebuild", #selector(libRebuild(_:))))
-        buttons.addArrangedSubview(button("Sessions…", #selector(libSessions(_:))))
-        buttons.addArrangedSubview(button("Rename…", #selector(libRename(_:))))
-        buttons.addArrangedSubview(button("Delete…", #selector(libDelete(_:))))
+        let more = NSPopUpButton(frame: .zero, pullsDown: true)
+        more.bezelStyle = .rounded
+        more.controlSize = .small
+        more.font = NSFont.systemFont(ofSize: 11)
+        more.addItem(withTitle: "More")            // a pull-down's title is item 0
+        func item(_ t: String, _ sel: Selector) {
+            let i = NSMenuItem(title: t, action: sel, keyEquivalent: "")
+            i.target = self
+            i.identifier = NSUserInterfaceItemIdentifier(d.id)
+            more.menu?.addItem(i)
+        }
+        item("Rename…", #selector(libRename(_:)))
+        item("Sessions…", #selector(libSessions(_:)))
+        item("Rebuild video", #selector(libRebuild(_:)))
+        more.menu?.addItem(.separator())
+        item("Delete…", #selector(libDelete(_:)))
+        buttons.addArrangedSubview(more)
         col.addArrangedSubview(buttons)
 
         box.addArrangedSubview(col)
@@ -495,7 +542,8 @@ extension SetupController {
     }
 
     private func drawing(from sender: Any?) -> Drawing? {
-        guard let id = (sender as? NSButton)?.identifier?.rawValue,
+        // From a button or from an item in the More menu: both carry the id.
+        guard let id = (sender as? NSUserInterfaceItemIdentification)?.identifier?.rawValue,
               let store = libStore else { return nil }
         return store.lib.drawing(id: id)
     }
@@ -506,7 +554,7 @@ extension SetupController {
         guard let d = drawing(from: sender), let store = libStore else { return }
         let url = store.videoURL(d)
         guard FileManager.default.fileExists(atPath: url.path) else {
-            alertUser("This drawing has no video yet. Press Rebuild to make one from its sessions.")
+            alertUser("This drawing has no video yet. Choose More → Rebuild video to make one from its sessions.")
             return
         }
         // The system player, not one built here: it already does scrubbing,
@@ -605,7 +653,7 @@ extension SetupController {
         alert.messageText = "Delete the recording of “\(d.title)”?"
         // The same promise the Discard button makes, for the same reason: the
         // one thing somebody needs to be certain of is that this is not their art.
-        alert.informativeText = "This deletes \(d.pieces.count) session recording(s) and the video "
+        alert.informativeText = "This deletes \(counted(d.pieces.count, "session recording")) and the video "
             + "made from them. Your artwork is untouched."
         alert.addButton(withTitle: "Delete"); alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -686,4 +734,10 @@ extension SetupController {
         row.frame = NSRect(x: 0, y: 0, width: 344, height: 150)
         return row
     }
+}
+
+/// A clip view that keeps short content at the top. NSClipView is unflipped, so
+/// without this a one-row list sits at the bottom of its scroll view.
+final class TopAnchoredClipView: NSClipView {
+    override var isFlipped: Bool { true }
 }

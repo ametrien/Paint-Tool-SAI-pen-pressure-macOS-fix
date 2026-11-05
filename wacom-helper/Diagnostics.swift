@@ -186,12 +186,15 @@ extension SetupController {
         let (bst, bage) = bridgeStatus()
         check("bridge seen alive inside SAI", BridgeCheck.verdict(bst, ageSeconds: bage) == .working,
               bridgeDiagnosticLine(), fatal: false)
-        if let w = wine {
-            let env = ["WINEPREFIX": appPrefix, "WINEDEBUG": "-all"]
-            let cmd = runCapture(w, ["reg", "query", "HKCU\\Software\\Wine\\Mac Driver", "/v", "LeftCommandIsCtrl"], env: env)
-            check("Cmd→Ctrl remap (LeftCommandIsCtrl=Y)", cmd.uppercased().contains("Y"),
-                  "", fatal: false)
-        }
+        // Read from user.reg, i.e. what Wine will actually use, and compared
+        // with the Keys tab. Not fatal: the tab's settings are written at the
+        // next launch, so a difference before that is expected, not broken.
+        let keys = storedKeyMapping()
+        let off = keys.mismatches(againstUserReg: readUserReg() ?? "")
+        check("modifier keys in Wine match the Keys tab", off.isEmpty,
+              off.isEmpty ? keys.summary
+                          : "differs: \(off.joined(separator: ", ")). Applied the next time SAI is launched from this app.",
+              fatal: false)
 
         // --- licence + runtime files
         check("license (.slc) in prefix", installedLicenseName() != nil,
@@ -427,6 +430,9 @@ extension SetupController {
             "bridge in SAI: \(bridgeDiagnosticLine())",
             "Input Monitoring: \(inputMonitoringGranted())",
             "auto-wake: \(autoWake)",
+            "keys: \(storedKeyMapping().summary)"
+                + (storedKeyMapping().mismatches(againstUserReg: readUserReg() ?? "").isEmpty
+                   ? "" : " (Wine has something else until SAI is relaunched)"),
         ]
         return lines.joined(separator: "\n")
     }

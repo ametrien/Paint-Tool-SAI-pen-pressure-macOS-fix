@@ -24,4 +24,6 @@ wacom-helper/RecordingUI.swift
 wacom-helper/RecordingActions.swift
 wacom-helper/LibraryStore.swift
 wacom-helper/LibraryUI.swift
+wacom-helper/KeysCore.swift
+wacom-helper/KeysUI.swift
 timelapse-encoder/LibraryCore.swift
