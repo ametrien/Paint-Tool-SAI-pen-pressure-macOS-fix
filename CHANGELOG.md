@@ -3,6 +3,31 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- **Extended displays** ([#37](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/37)).
+  With a second screen set to *Extended* (not mirrored), ink could land a fifth of the screen to
+  the left and a little high, and the other screen could not be drawn on at all. It happened
+  whenever the screens changed while SAI was open: plugging a screen in, unplugging it, switching
+  between mirrored and extended, or rearranging them. The DLL measured the desktop once, when SAI
+  started, while the app re-measured on every change, so the two disagreed. The DLL now re-reads
+  the screens about once a second and places the pen at the same point on the glass either way.
+- **A screen to the left of or above the main one.** The desktop then starts at a negative
+  position, and SAI was always told it starts at 0,0, which pushed every stroke on the main screen
+  sideways by the width of the other one. SAI is now told where the desktop really starts.
+
+### Added
+- **A screen connected while SAI is open** gets the pen right away. If SAI does not pick up the new
+  layout by itself, that screen works like a mouse (right place, no pressure) instead of putting
+  ink somewhere else, and the menu-bar pen turns into a warning sign: *Screens changed. Restart SAI
+  for pressure there.* The Setup tab's bridge row says the same.
+- **A self-check.** While the pen hovers over SAI, the DLL compares where it thinks the pen is with
+  where Wine's cursor is. If they stay apart, it follows the cursor and says so in the log, so a
+  layout nothing else anticipated still cannot put ink in the wrong place.
+- `tools/multimon/`: a fake second display, a fake pen and a log-based check of every screen
+  layout, so this can be tested without a monitor or a tablet.
+
 ## [0.3.6] — 2026-11-05
 
 ### Added

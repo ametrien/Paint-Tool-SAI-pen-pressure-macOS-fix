@@ -142,6 +142,27 @@ or Cmd-Tab away and click SAI's window body.
 
 ---
 
+## 3. A screen connected while SAI is open may have no pressure until SAI restarts
+
+**Symptom.** You plug in a screen (or switch from mirrored to extended) while SAI is open. On that
+new screen the pen draws in the right place but without pressure, and the menu-bar pen shows a
+warning sign: *Screens changed. Restart SAI for pressure there.*
+
+**Why.** SAI learns the tablet's area once, when it opens the tablet at launch. A screen that
+appears later lies outside that area. Before [#37](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/37)
+the DLL squeezed the whole new desktop into SAI's old area, so ink landed a fifth of a screen off
+and the new screen could not be reached. Now the DLL keeps the screen SAI started on exact, and on
+a screen outside SAI's area it stops sending tablet packets so SAI takes the pen as a mouse there.
+
+**What we tried.** When the screens change, the DLL also sends SAI the standard WinTab messages a
+tablet driver sends (`WT_INFOCHANGE`, `WT_CTXUPDATE`). If SAI answers by reading its tablet area
+again, the new screen gets pressure with no restart and the warning never appears. Whether SAI
+does is visible in the DLL log: look for `SAI re-read its context`.
+
+**Fix.** Save and restart SAI. Every screen gets pressure from launch.
+
+---
+
 ## Non-bugs (expected — please don't report these)
 
 - **Boxy fast curves over Bluetooth** (~130 Hz report rate) — use a USB data cable (~200 Hz).
