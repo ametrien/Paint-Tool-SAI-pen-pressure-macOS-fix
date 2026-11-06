@@ -126,11 +126,18 @@ static int wtc_place(const WTC_SAMPLE *s, WTC_RECT virt, WTC_RECT sys,
     int64_t sw8 = (int64_t)sys.w * 8, sh8 = (int64_t)sys.h * 8;
     int64_t lx = wx8 - (int64_t)sys.x * 8;
     int64_t ly = ((int64_t)sys.y + sys.h) * 8 - wy8;
-    int inside = lx >= 0 && lx < sw8 && ly >= 0 && ly <= sh8;
-    if (lx < 0) lx = 0;
-    if (lx > sw8 - 1) lx = sw8 - 1;
-    if (ly < 0) ly = 0;
-    if (ly > sh8) ly = sh8;
+    /* Edges are inclusive on every side: a tablet maps its edge onto the
+     * screen's edge, so x == width happens, and calling it outside ended the
+     * stroke at the last column of a single screen. Inside points are left
+     * exactly as they are (single screen == old mapping, edges included);
+     * only points that really are outside get clamped. */
+    int inside = lx >= 0 && lx <= sw8 && ly >= 0 && ly <= sh8;
+    if (!inside) {
+        if (lx < 0) lx = 0;
+        if (lx > sw8 - 1) lx = sw8 - 1;
+        if (ly < 0) ly = 0;
+        if (ly > sh8) ly = sh8;
+    }
     WTC_SAMPLE local = *s;
     local.x = (int)lx; local.y = (int)ly; local.w = (int)sw8; local.h = (int)sh8;
     wtc_map_to_out(&local, oX, oY, eX, eY, in_ext, outX, outY);

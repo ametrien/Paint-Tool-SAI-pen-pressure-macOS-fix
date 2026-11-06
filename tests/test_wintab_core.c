@@ -122,6 +122,25 @@ int main(void) {
         }
         EXPECT(same, "place: one screen gives exactly the old mapping");
         EXPECT(allin, "place: one screen, every point is inside SAI's area");
+        /* The far edges are INSIDE. A tablet maps its edge onto the screen's
+         * edge, so the pen can report x == width exactly. Counting that as
+         * outside ends the stroke and makes the pen step aside at the last
+         * column of a single screen, which no single-screen user should ever
+         * see. Every edge must also keep the old mapping to the unit. To see
+         * this fail, make the x check in wtc_place() exclusive (lx < sw8). */
+        {
+            double edges[][2] = { {0, 0}, {1512, 0}, {0, 982}, {1512, 982}, {1512, 491}, {756, 982} };
+            int edges_in = 1, edges_same = 1;
+            for (int i = 0; i < 6; i++) {
+                WTC_SAMPLE e = helper_sample(edges[i][0], edges[i][1], one);
+                in = wtc_place(&e, one, one, 0, 0, 1512 * 8, 982 * 8, 32767, &ox, &oy);
+                wtc_map_to_out(&e, 0, 0, 1512 * 8, 982 * 8, 32767, &mx, &my);
+                if (!in) edges_in = 0;
+                if (ox != mx || oy != my) edges_same = 0;
+            }
+            EXPECT(edges_in, "place: every edge and corner of a single screen is inside");
+            EXPECT(edges_same, "place: edges keep exactly the old mapping too");
+        }
         /* and with a y-down context, which some apps open */
         WTC_SAMPLE hs = helper_sample(100, 200, one);
         wtc_place(&hs, one, one, 0, 0, 1512 * 8, -982 * 8, 32767, &ox, &oy);
