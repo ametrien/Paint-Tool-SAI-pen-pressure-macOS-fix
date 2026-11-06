@@ -13,6 +13,17 @@ static int failures = 0;
     else { printf("  FAIL %s  (%s:%d)\n", name, __FILE__, __LINE__); failures++; } \
 } while (0)
 
+/* A sample exactly as wacom-helper builds it for global point (gx, gy) on a
+ * desktop whose union is u: PressureCore.mapToVirtual + main.swift send(). */
+static WTC_SAMPLE helper_sample(double gx, double gy, WTC_RECT u) {
+    WTC_SAMPLE s = { 2000, 0, 0, 0, 0, 1 };
+    s.x = (int)((gx - u.x) * 8);
+    s.y = (int)(((u.y + u.h) - gy) * 8);
+    s.w = u.w * 8;
+    s.h = u.h * 8;
+    return s;
+}
+
 int main(void) {
     printf("wintab_core tests:\n");
 
@@ -84,6 +95,140 @@ int main(void) {
     WTC_SAMPLE zeroh = { 512, 100, 200, 800, 0, 1 };
     wtc_map_to_out(&zeroh, 5, 7, 1000, 800, 32767, &x, &y);
     EXPECT(x == 5 && y == 7, "map: zero height degrades to origin (no divide-by-zero)");
+
+    /* --- wtc_place: more than one screen (issue #37) ----------------------
+     * THE TRAP these guard: scaling the helper's desktop straight into SAI's
+     * area (wtc_map_to_out) is only right while both describe the SAME
+     * rectangle. They stop doing so the moment a screen is connected,
+     * unplugged, rearranged or switched between mirrored and extended while
+     * SAI is open, and with a screen left of or above the main one. To see
+     * these fail, make wtc_place() just call wtc_map_to_out() and return 1:
+     * the #37 replay lands at x 537 instead of 960, and the left/above/unplug
+     * cases fail with it. */
+    {
+        int32_t ox, oy, mx, my;
+        int in;
+
+        /* Single screen: must be EXACTLY the old answer, everywhere. Every
+         * single-screen user depends on this not moving by one unit. */
+        WTC_RECT one = { 0, 0, 1512, 982 };
+        int same = 1, allin = 1;
+        for (int gy = 0; gy < 982; gy += 97) for (int gx = 0; gx < 1512; gx += 151) {
+            WTC_SAMPLE hs = helper_sample(gx + 0.375, gy + 0.625, one);
+            in = wtc_place(&hs, one, one, 0, 0, 1512 * 8, 982 * 8, 32767, &ox, &oy);
+            wtc_map_to_out(&hs, 0, 0, 1512 * 8, 982 * 8, 32767, &mx, &my);
+            if (ox != mx || oy != my) same = 0;
+            if (!in) allin = 0;
+        }
+        EXPECT(same, "place: one screen gives exactly the old mapping");
+        EXPECT(allin, "place: one screen, every point is inside SAI's area");
+        /* and with a y-down context, which some apps open */
+        WTC_SAMPLE hs = helper_sample(100, 200, one);
+        wtc_place(&hs, one, one, 0, 0, 1512 * 8, -982 * 8, 32767, &ox, &oy);
+        wtc_map_to_out(&hs, 0, 0, 1512 * 8, -982 * 8, 32767, &mx, &my);
+        EXPECT(ox == mx && oy == my, "place: one screen, y-down context unchanged too");
+
+        /* #37 replay, numbers from the field log: SAI opened while the TV was
+         * MIRRORED (area 1920x1080), then the laptop was extended to the
+         * right of the TV, 139 pt lower. Desktop now 3432x1121. */
+        WTC_RECT ext   = { 0, 0, 3432, 1121 };
+        WTC_RECT stale = { 0, 0, 1920, 1080 };
+        hs = helper_sample(960, 540, ext);                      /* TV centre */
+        in = wtc_place(&hs, ext, stale, 0, 0, 15360, 8640, 32767, &ox, &oy);
+        EXPECT(in, "place #37: TV centre is inside the area SAI opened with");
+        EXPECT(ox == 960 * 8, "place #37: TV centre lands at x 960 (old code: 537, a fifth to the left)");
+        EXPECT(oy == (1080 - 540) * 8, "place #37: TV centre lands at y 540 (old code: 520, too high)");
+        wtc_map_to_out(&hs, 0, 0, 15360, 8640, 32767, &mx, &my);
+        EXPECT(mx / 8 == 537, "place #37: (the old mapping really did put it at 537)");
+        hs = helper_sample(10, 10, ext);                        /* TV top-left */
+        wtc_place(&hs, ext, stale, 0, 0, 15360, 8640, 32767, &ox, &oy);
+        EXPECT(ox == 80 && oy == (1080 - 10) * 8, "place #37: TV top-left corner exact");
+        hs = helper_sample(1900, 1070, ext);                    /* TV bottom-right */
+        wtc_place(&hs, ext, stale, 0, 0, 15360, 8640, 32767, &ox, &oy);
+        EXPECT(ox == 1900 * 8 && oy == (1080 - 1070) * 8, "place #37: TV bottom-right corner exact");
+        hs = helper_sample(1920 + 756, 139 + 491, ext);         /* laptop centre */
+        in = wtc_place(&hs, ext, stale, 0, 0, 15360, 8640, 32767, &ox, &oy);
+        EXPECT(!in, "place #37: laptop (added after SAI opened) is reported as outside");
+        EXPECT(ox == 15360 - 1, "place #37: outside points are clamped, never wrapped");
+
+        /* Screen to the LEFT of the main one: the desktop starts at x -1920.
+         * The point on the main screen must land on the main screen whether
+         * SAI's area starts at 0 (what v0.3.6 told it) or at -1920. */
+        WTC_RECT left = { -1920, 0, 3432, 1080 };
+        WTC_RECT sys0 = { 0, 0, 3432, 1080 };
+        hs = helper_sample(756, 491, left);                     /* main centre */
+        in = wtc_place(&hs, left, sys0, 0, 0, 3432 * 8, 1080 * 8, 32767, &ox, &oy);
+        EXPECT(in && ox == 756 * 8, "place left: main centre at x 756 in an area that starts at 0");
+        wtc_map_to_out(&hs, 0, 0, 3432 * 8, 1080 * 8, 32767, &mx, &my);
+        EXPECT(mx == (1920 + 756) * 8, "place left: (old mapping put it 1920 to the right, off the screen)");
+        in = wtc_place(&hs, left, left, 0, 0, 3432 * 8, 1080 * 8, 32767, &ox, &oy);
+        EXPECT(in && ox == (1920 + 756) * 8, "place left: same point in an area that starts at -1920");
+        hs = helper_sample(-960, 540, left);                    /* left screen centre */
+        in = wtc_place(&hs, left, left, 0, 0, 3432 * 8, 1080 * 8, 32767, &ox, &oy);
+        EXPECT(in && ox == 960 * 8 && oy == (1080 - 540) * 8, "place left: left screen reachable when SAI's area starts there");
+
+        /* Screen ABOVE the main one: the desktop starts at y -1080. */
+        WTC_RECT above = { 0, -1080, 1920, 2062 };
+        hs = helper_sample(756, 491, above);
+        in = wtc_place(&hs, above, above, 0, 0, 1920 * 8, 2062 * 8, 32767, &ox, &oy);
+        int32_t sx, sy;
+        wtc_sample_to_screen(&hs, above, &sx, &sy);
+        EXPECT(sx == 756 && sy == 491, "place above: sample means Windows point (756,491)");
+        EXPECT(in && ox == 756 * 8 && oy == (982 - 491) * 8, "place above: main centre exact (y measured from the bottom)");
+
+        /* TV UNPLUGGED while SAI ran: SAI's area is still the old 3432x1121,
+         * the desktop is now the laptop alone, at a new origin. */
+        WTC_RECT laptop = { 0, 0, 1352, 878 };
+        hs = helper_sample(676, 439, laptop);
+        in = wtc_place(&hs, laptop, ext, 0, 0, 3432 * 8, 1121 * 8, 32767, &ox, &oy);
+        EXPECT(in && ox == 676 * 8 && oy == (1121 - 439) * 8, "place unplug: laptop centre stays exact in the bigger old area");
+        wtc_map_to_out(&hs, 0, 0, 3432 * 8, 1121 * 8, 32767, &mx, &my);
+        EXPECT(mx != ox, "place unplug: (old mapping stretched it across the old area)");
+
+        /* Wine in Retina mode: Windows works in pixels (2x), the helper in
+         * points. The fraction makes the unit difference disappear. */
+        WTC_RECT px = { 0, 0, 3024, 1964 }, pt = { 0, 0, 1512, 982 };
+        hs = helper_sample(756, 491, pt);
+        in = wtc_place(&hs, px, px, 0, 0, 3024 * 8, 1964 * 8, 32767, &ox, &oy);
+        EXPECT(in && ox == 1512 * 8 && oy == (1964 - 982) * 8, "place retina: points map onto the pixel desktop");
+
+        /* Nothing usable to go on: behave exactly like before. */
+        WTC_RECT none = { 0, 0, 0, 0 };
+        hs = helper_sample(100, 200, one);
+        in = wtc_place(&hs, none, one, 0, 0, 1512 * 8, 982 * 8, 32767, &ox, &oy);
+        wtc_map_to_out(&hs, 0, 0, 1512 * 8, 982 * 8, 32767, &mx, &my);
+        EXPECT(in && ox == mx && oy == my, "place: unknown desktop falls back to the old mapping");
+        in = wtc_place(&hs, one, none, 0, 0, 1512 * 8, 982 * 8, 32767, &ox, &oy);
+        EXPECT(in && ox == mx && oy == my, "place: unknown SAI area falls back to the old mapping");
+        WTC_SAMPLE bad = { 512, 1, 1, 0, 0, 1 };
+        in = wtc_place(&bad, one, one, 3, 4, 1000, 800, 32767, &ox, &oy);
+        EXPECT(in && ox == 3 && oy == 4, "place: zero-size sample cannot divide by zero");
+
+        /* round trip used by the cursor fallback */
+        WTC_SAMPLE back = wtc_screen_to_sample(&hs, left, -100, 700);
+        wtc_sample_to_screen(&back, left, &sx, &sy);
+        EXPECT(sx == -100 && sy == 700, "place: screen -> sample -> screen round trip, negative origin");
+        EXPECT(back.press == hs.press && back.has_pos == hs.has_pos, "place: round trip keeps pressure and has_pos");
+    }
+
+    /* --- wtc_cursor_streak (self-check against Wine's cursor) ------------- */
+    EXPECT(wtc_cursor_streak(0, 100, 100, 100, 100, 48) == 0, "selfcheck: agreeing point keeps streak 0");
+    EXPECT(wtc_cursor_streak(5, 100, 100, 148, 52, 48) == 0, "selfcheck: exactly at tolerance agrees, resets streak");
+    EXPECT(wtc_cursor_streak(5, 100, 100, 149, 100, 48) == 6, "selfcheck: one past tolerance counts");
+    EXPECT(wtc_cursor_streak(0, 960, 540, 537, 520, 48) == 1, "selfcheck: the #37 offset is caught");
+    EXPECT(wtc_cursor_streak(1000000, 0, 0, 999, 999, 48) == 1000000, "selfcheck: streak saturates, no overflow");
+
+    /* --- wtc_format_screens ------------------------------------------------ */
+    {
+        char b[64];
+        EXPECT(wtc_format_screens(b, sizeof b, 1, 0) > 0 && !strcmp(b, "newscreen=1\nmismatch=0\n"),
+               "screens status: both lines, exact text the app parses");
+        EXPECT(wtc_format_screens(b, sizeof b, 0, 7) > 0 && !strcmp(b, "newscreen=0\nmismatch=1\n"),
+               "screens status: any true value is written as 1");
+        char tiny[4];
+        EXPECT(wtc_format_screens(tiny, sizeof tiny, 1, 1) == 0 && tiny[0] == '\0',
+               "screens status: too small writes nothing");
+    }
 
     /* --- wtc_should_post (conflation) -------------------------------------- */
     /* serial=next to assign, fetched=last consumed; window = 3 */

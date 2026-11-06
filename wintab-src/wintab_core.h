@@ -66,6 +66,121 @@ static void wtc_map_to_out(const WTC_SAMPLE *s,
         *outY = oY + (int32_t)((int64_t)(s->h - 1 - s->y) * (int64_t)(-eY) / s->h);
 }
 
+/* ---------------------------------------------------------------------------
+ * PLACING THE PEN WHEN THERE IS MORE THAN ONE SCREEN (issue #37)
+ * ---------------------------------------------------------------------------
+ * Two parts of this project each hold an idea of "the desktop", and before
+ * #37 the DLL assumed they always agreed:
+ *
+ *   the HELPER  re-measures every time macOS reports a display change, and
+ *               sends the pen as a position inside the WHOLE desktop (union of
+ *               all screens) together with that desktop's size;
+ *   SAI         learns the tablet area ONCE, from the context it opens at
+ *               launch, and keeps it.
+ *
+ * wtc_map_to_out() scaled the helper's position straight into SAI's area. That
+ * is right only while both describe the same rectangle. Start SAI with the
+ * screens mirrored (1920x1080), switch to extended (3432x1121): the helper now
+ * reports the TV centre as 960/3432 of the way across, SAI's area is 1920
+ * wide, and the ink lands at x 537, about a fifth of the screen to the left,
+ * slightly high, and the second screen cannot be reached at all. That is what
+ * the #37 reporter and our own test both saw.
+ *
+ * The fix goes through a third rectangle that is always current: the Windows
+ * virtual desktop as Wine reports it NOW (GetSystemMetrics, re-read about once
+ * a second). The helper's fraction of the desktop becomes a real Windows
+ * screen point, and that point is placed inside the area SAI opened with.
+ * Whichever side is stale, the point is the same place on the glass.
+ *
+ *   virt  the Windows virtual desktop now: origin can be negative (a screen to
+ *         the left of or above the main one), size in Windows pixels (== mac
+ *         points unless Wine's Retina mode is on, and the fraction makes that
+ *         difference irrelevant)
+ *   sys   the screen area SAI's context says the tablet covers (lcSysOrg/Ext)
+ *
+ * Returns 1 when the point is inside SAI's area. 0 means SAI cannot be told
+ * about this point at all (a screen added after SAI opened its context); the
+ * caller must NOT post it, because any coordinate it posted would be a lie
+ * that lands ink somewhere else. *out is still filled (clamped to the edge)
+ * so a caller that needs a last position has one.
+ *
+ * With one screen, or before anything has changed, virt == sys == the
+ * helper's desktop and this returns exactly what wtc_map_to_out() returned,
+ * to the unit. The tests pin that, because every single-screen user relies on
+ * it. Invalid virt or sys (zero size) falls back to wtc_map_to_out(). */
+typedef struct { int32_t x, y, w, h; } WTC_RECT;
+
+static int wtc_place(const WTC_SAMPLE *s, WTC_RECT virt, WTC_RECT sys,
+                     int32_t oX, int32_t oY, int32_t eX, int32_t eY,
+                     int32_t in_ext, int32_t *outX, int32_t *outY) {
+    if (s->w <= 0 || s->h <= 0 || virt.w <= 0 || virt.h <= 0 || sys.w <= 0 || sys.h <= 0) {
+        wtc_map_to_out(s, oX, oY, eX, eY, in_ext, outX, outY);
+        return 1;
+    }
+    /* helper fraction -> Windows screen point, 8x fixed point, y DOWN */
+    int64_t wx8 = (int64_t)virt.x * 8 + (int64_t)s->x * virt.w * 8 / s->w;
+    int64_t wy8 = (int64_t)virt.y * 8 + (int64_t)(s->h - s->y) * virt.h * 8 / s->h;
+    /* Windows point -> position inside SAI's area, in the helper's own
+     * convention (y UP from the area's bottom), so wtc_map_to_out() finishes
+     * the job unchanged */
+    int64_t sw8 = (int64_t)sys.w * 8, sh8 = (int64_t)sys.h * 8;
+    int64_t lx = wx8 - (int64_t)sys.x * 8;
+    int64_t ly = ((int64_t)sys.y + sys.h) * 8 - wy8;
+    int inside = lx >= 0 && lx < sw8 && ly >= 0 && ly <= sh8;
+    if (lx < 0) lx = 0;
+    if (lx > sw8 - 1) lx = sw8 - 1;
+    if (ly < 0) ly = 0;
+    if (ly > sh8) ly = sh8;
+    WTC_SAMPLE local = *s;
+    local.x = (int)lx; local.y = (int)ly; local.w = (int)sw8; local.h = (int)sh8;
+    wtc_map_to_out(&local, oX, oY, eX, eY, in_ext, outX, outY);
+    return inside;
+}
+
+/* The Windows screen point (whole pixels) a sample stands for, using the
+ * desktop as Wine reports it now. Same arithmetic as wtc_place(), exposed so
+ * the self-check below compares like with like. */
+static void wtc_sample_to_screen(const WTC_SAMPLE *s, WTC_RECT virt, int32_t *sx, int32_t *sy) {
+    if (s->w <= 0 || s->h <= 0 || virt.w <= 0 || virt.h <= 0) { *sx = virt.x; *sy = virt.y; return; }
+    *sx = (int32_t)(virt.x + (int64_t)s->x * virt.w / s->w);
+    *sy = (int32_t)(virt.y + (int64_t)(s->h - s->y) * virt.h / s->h);
+}
+
+/* The reverse: a Windows screen point as a helper-style sample of `virt`, so
+ * a position taken from Wine's cursor can go through wtc_place() like any
+ * other. Pressure and has_pos are copied from `like`. */
+static WTC_SAMPLE wtc_screen_to_sample(const WTC_SAMPLE *like, WTC_RECT virt, int32_t sx, int32_t sy) {
+    WTC_SAMPLE s = *like;
+    s.x = (sx - virt.x) * 8;
+    s.y = (virt.y + virt.h - sy) * 8;
+    s.w = virt.w * 8;
+    s.h = virt.h * 8;
+    return s;
+}
+
+/* SELF-CHECK against Wine's own cursor.
+ *
+ * The tablet moves the ordinary cursor too, and Wine always knows where that
+ * cursor is in Windows coordinates, screen changes included. So while the pen
+ * HOVERS (not while drawing: a stroke is too fast for the two to stay in step),
+ * where we think the pen is and where Wine's cursor is should agree within a
+ * few pixels. If they persistently do not, our idea of the screens is wrong in
+ * a way nothing else caught, and ink would land in the wrong place.
+ *
+ * This only decides. `streak` is the caller's counter of consecutive hover
+ * samples that disagreed; returns the new streak. A disagreement must persist
+ * for `need` samples (cursor updates lag the tablet by a frame or two, and a
+ * fast hover can open a gap for a moment), and any agreeing sample resets it.
+ * The caller treats streak >= need as "do not trust our position". */
+static int wtc_cursor_streak(int streak, int32_t ourX, int32_t ourY,
+                             int32_t curX, int32_t curY, int32_t tol) {
+    int32_t dx = ourX - curX, dy = ourY - curY;
+    if (dx < 0) dx = -dx;
+    if (dy < 0) dy = -dy;
+    if (dx <= tol && dy <= tol) return 0;
+    return streak < 1000000 ? streak + 1 : streak;
+}
+
 /* CONFLATION decision: post a new WT_PACKET now, or collapse this sample into
  * "latest" and deliver it once SAI catches up? Posting a packet per sample
  * floods SAI faster than it drains its message queue (ink trails the cursor);
@@ -149,6 +264,26 @@ static int wtc_format_status(char *out, size_t cap,
                  "fetched=%lu\n"
                  "pmax=%d\n",
                  build ? build : "unknown", open ? 1 : 0, recv, posted, fetched, max_press);
+    if (n < 0 || (size_t)n >= cap) { out[0] = '\0'; return 0; }
+    return n;
+}
+
+/* Screen lines of the status file (#37), appended after wtc_format_status().
+ *
+ *   newscreen=1  the pen went onto a screen SAI's tablet area does not cover
+ *                (connected after SAI opened it). The pen works as a plain
+ *                mouse there; the app tells the user a restart of SAI brings
+ *                pressure to that screen.
+ *   mismatch=1   the self-check found our pen position persistently away from
+ *                Wine's cursor, and the DLL is following the cursor instead.
+ *
+ * Kept separate so the long-standing lines above, which older apps parse,
+ * stay exactly as they were. Same contract: 0 and an empty string when the
+ * buffer is too small. */
+static int wtc_format_screens(char *out, size_t cap, int newscreen, int mismatch) {
+    int n;
+    if (!out || cap == 0) return 0;
+    n = snprintf(out, cap, "newscreen=%d\nmismatch=%d\n", newscreen ? 1 : 0, mismatch ? 1 : 0);
     if (n < 0 || (size_t)n >= cap) { out[0] = '\0'; return 0; }
     return n;
 }
