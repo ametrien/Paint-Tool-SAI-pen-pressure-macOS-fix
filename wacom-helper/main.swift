@@ -1871,6 +1871,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     }
 
     var statusItem: NSStatusItem?
+    var screenNotice = BridgeCheck.ScreenNotice.none   // see watchScreenNotice (#37)
 
 
 

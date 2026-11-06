@@ -447,6 +447,11 @@ func bridgeDetailLine() -> String {
     let live: BridgeCheck.Verdict? = (age.map { $0 <= 5 } ?? false)
         ? BridgeCheck.verdict(st, ageSeconds: age) : nil
 
+    // Screens changed under a running SAI (#37). Above "Working": the pen does
+    // work, but not with pressure on every screen, and that is the news.
+    if let notice = BridgeCheck.explain(BridgeCheck.screenNotice(st, ageSeconds: age)) {
+        return notice
+    }
     if let v = live, v != .notLoaded {
         return BridgeCheck.explain(v, st) + (bridgeInstalledOK() ? "" : " (Repair pending.)")
     }

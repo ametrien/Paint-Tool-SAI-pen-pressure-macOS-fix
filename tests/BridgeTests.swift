@@ -155,6 +155,45 @@ struct BridgeTests {
             expect(!BridgeCheck.explain(v, open).isEmpty, "explain: \(v) has a sentence")
         }
 
+        // --- screens changed while SAI was open (#37) -------------------------
+        // The exact two lines the DLL appends (wtc_format_screens). Pasted, so a
+        // change of wording on either side shows up here.
+        let screens = live + "\nnewscreen=1\nmismatch=0\n"
+        let sc = BridgeCheck.parseStatus(screens)
+        expect(sc?.newscreen == true && sc?.mismatch == false, "screens: newscreen=1 parsed")
+        expect(sc?.recv == 1234 && sc?.pmax == 4095, "screens: the older lines still parse alongside")
+        expect(BridgeCheck.parseStatus(live)?.newscreen == false,
+               "screens: an older DLL without the lines means no notice")
+        expect(BridgeCheck.parseStatus(live + "\nnewscreen=0\nmismatch=1\n")?.mismatch == true,
+               "screens: mismatch=1 parsed")
+
+        var ns = open; ns.newscreen = true
+        expect(BridgeCheck.screenNotice(ns, ageSeconds: 1) == .newScreen,
+               "screens: live, pen on an unknown screen -> restart notice")
+        // THE TRAP: SAI closed, the old status file is still on disk. Asking for
+        // a restart that has already happened would be a notice that never goes
+        // away. To see it fail, drop the age check from screenNotice().
+        expect(BridgeCheck.screenNotice(ns, ageSeconds: 60) == .none,
+               "screens: a stale file from a closed SAI asks for nothing")
+        expect(BridgeCheck.screenNotice(ns, ageSeconds: nil) == .none,
+               "screens: no file, no notice")
+        var closed = ns; closed.open = false
+        expect(BridgeCheck.screenNotice(closed, ageSeconds: 1) == .none,
+               "screens: no tablet context, nothing to restart for")
+        var mm = open; mm.mismatch = true
+        expect(BridgeCheck.screenNotice(mm, ageSeconds: 1) == .following,
+               "screens: self-check following the cursor -> softer notice")
+        var both = ns; both.mismatch = true
+        expect(BridgeCheck.screenNotice(both, ageSeconds: 1) == .newScreen,
+               "screens: both set -> the restart notice wins (it is the actionable one)")
+        expect(BridgeCheck.screenNotice(open, ageSeconds: 1) == .none, "screens: all fine -> nothing")
+        expect(BridgeCheck.explain(BridgeCheck.ScreenNotice.none) == nil, "screens: no notice, no text")
+        for n in [BridgeCheck.ScreenNotice.newScreen, .following] {
+            let t = BridgeCheck.explain(n) ?? ""
+            expect(!t.isEmpty && t.count <= 60, "screens: \(n) fits the row (\(t.count) chars)")
+            expect(!t.contains("\u{2014}") && !t.contains("\u{2013}"), "screens: \(n) has no dashes")
+        }
+
         // --- the probe: the far side, tested with SAI closed ------------------
         // Both fixtures below are REAL wtprobe.exe output, captured from the
         // same prefix: once healthy, and once broken exactly as #29 was. They
