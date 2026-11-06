@@ -147,6 +147,56 @@ int main(void) {
         wtc_map_to_out(&hs, 0, 0, 1512 * 8, -982 * 8, 32767, &mx, &my);
         EXPECT(ox == mx && oy == my, "place: one screen, y-down context unchanged too");
 
+        /* EVERY sub-pixel position on one screen, at the scalings people use.
+         * THE TRAP: the helper sends the pen in 1/8 px, and SAI asks for the
+         * same: its context in the field log is out ext 10816x7024 on a
+         * 1352x878 screen, 8 units per pixel. If any step rounds to whole
+         * pixels, strokes still land in the right place, so nothing looks
+         * broken, but every line snaps to the pixel grid and drawing feels
+         * less precise. This came up after #37 ("not as precise as before"),
+         * and the grid above checks only one fraction (3/8, 5/8) at 1512x982.
+         *
+         * Two checks, because they catch different breakages:
+         *   same:  wtc_place() == wtc_map_to_out(), the v0.3.6 mapping. Fails
+         *          when wtc_place() rounds (e.g. lx = (wx8 / 8) * 8).
+         *   exact: with SAI's 8-units-per-pixel area, out == the helper's
+         *          value, unit for unit. Fails when wtc_map_to_out() itself
+         *          rounds, which "same" cannot see: both would round alike.
+         * x and y are mapped independently, so one full row plus one full
+         * column, edges included, covers every value either can take.
+         *
+         * 1352x878 the screen in the "less precise" session (log);
+         * 1512x982 the MacBook Pro 14" default; 1168x755, 1800x1169 its other
+         * choices; 3024x1964 the same panel with Wine's Retina mode on;
+         * 1920x1080, 2560x1440, 1440x900 common external screens. */
+        {
+            static const int res[][2] = { {1352, 878}, {1512, 982}, {1168, 755}, {1800, 1169},
+                                          {3024, 1964}, {1920, 1080}, {2560, 1440}, {1440, 900} };
+            long diff = 0, inexact = 0, outside = 0;
+            for (unsigned r = 0; r < sizeof res / sizeof res[0]; r++) {
+                int w = res[r][0], h = res[r][1];
+                WTC_RECT scr = { 0, 0, w, h };
+                for (int ydown = 0; ydown < 2; ydown++) {
+                    int32_t eX = w * 8, eY = ydown ? -h * 8 : h * 8;
+                    for (int col = 0; col < 2; col++) {
+                        int n = col ? h * 8 : w * 8;
+                        for (int v = 0; v <= n; v++) {
+                            WTC_SAMPLE s = { 2000, w * 4, h * 4, w * 8, h * 8, 1 };
+                            if (col) s.y = v; else s.x = v;
+                            in = wtc_place(&s, scr, scr, 0, 0, eX, eY, 32767, &ox, &oy);
+                            wtc_map_to_out(&s, 0, 0, eX, eY, 32767, &mx, &my);
+                            if (ox != mx || oy != my) diff++;
+                            if (!in) outside++;
+                            if (!ydown && (ox != s.x || oy != s.y)) inexact++;
+                        }
+                    }
+                }
+            }
+            EXPECT(diff == 0, "place: every 1/8 px on one screen, 8 scalings: exactly the v0.3.6 mapping");
+            EXPECT(inexact == 0, "place: SAI's 8-per-pixel area gets the helper's 1/8 px unchanged, no rounding");
+            EXPECT(outside == 0, "place: every 1/8 px on one screen, edges included, is inside");
+        }
+
         /* #37 replay, numbers from the field log: SAI opened while the TV was
          * MIRRORED (area 1920x1080), then the laptop was extended to the
          * right of the TV, 139 pt lower. Desktop now 3432x1121. */
@@ -236,6 +286,90 @@ int main(void) {
     EXPECT(wtc_cursor_streak(5, 100, 100, 149, 100, 48) == 6, "selfcheck: one past tolerance counts");
     EXPECT(wtc_cursor_streak(0, 960, 540, 537, 520, 48) == 1, "selfcheck: the #37 offset is caught");
     EXPECT(wtc_cursor_streak(1000000, 0, 0, 999, 999, 48) == 1000000, "selfcheck: streak saturates, no overflow");
+
+    /* --- asking SAI to re-read its tablet area (#37) -----------------------
+     * THE TRAP: these values are what sai2.exe compares against (its jump
+     * table for messages 0x7FF1..0x7FF7 re-reads contexts only at 0x7FF4, and
+     * only in the window proc of class sflWintabCtrlWindow). Nothing in the
+     * build would notice a change; SAI would just stop re-reading. To see
+     * these fail: set WTC_CTXOVERLAP_OFFSET to 3, or misspell the class. */
+    EXPECT(0x7ff0 + WTC_CTXOVERLAP_OFFSET == 0x7ff4, "reread: WT_CTXOVERLAP is base+4, the case SAI re-reads on");
+    EXPECT(wtc_sai_rereads_on_overlap("sflWintabCtrlWindow"), "reread: SAI's WinTab control window re-reads");
+    EXPECT(!wtc_sai_rereads_on_overlap("sflRootWindow"), "reread: SAI's main window never re-reads");
+    EXPECT(!wtc_sai_rereads_on_overlap("sflwintabctrlwindow"), "reread: exact spelling (GetClassName returns it as SAI registered it)");
+    EXPECT(!wtc_sai_rereads_on_overlap(""), "reread: unknown class, no message");
+    EXPECT(!wtc_sai_rereads_on_overlap(NULL), "reread: no class, no message");
+
+    /* --- wtc_selfcheck_step: a frozen cursor is not evidence ---------------
+     * THE TRAP: Wine's cursor freezes, still inside SAI's window, when the pen
+     * hovers onto another screen. The old check counted every such sample and
+     * after 20 of them switched the DLL to following that frozen cursor (field
+     * log 2026-11-06: "pen at (1510,623) but Wine's cursor at (2109,544) for 20
+     * samples"). To see these fail: make wtc_selfcheck_step() count every
+     * sample (drop the `frozen` test) and the replay trips; make it skip
+     * whenever the cursor did not move and the still-pen case goes blind;
+     * make a frozen sample reset the streak and the interleaved case does. */
+    {
+        const int need = WTC_SELFCHECK_NEED, tol = WTC_SELFCHECK_TOL;
+        WTC_SELFCHECK sc;
+        int st, maxst;
+
+        /* Replay of the field log. Laptop at x 1920..3432, TV at 0..1920.
+         * The pen hovers over SAI on the laptop with the cursor following it,
+         * then leaves for the TV: our position keeps moving, the cursor stays
+         * where it last was over SAI. Then the pen comes back. */
+        memset(&sc, 0, sizeof sc);
+        maxst = 0;
+        for (int i = 0; i < 10; i++) {                      /* over SAI, cursor live */
+            st = wtc_selfcheck_step(&sc, 2200 - 9 * i, 560, 2200 - 9 * i, 560, tol);
+            if (st > maxst) maxst = st;
+        }
+        int32_t frozenX = 2200 - 9 * 9, frozenY = 560;
+        for (int i = 1; i <= 60; i++) {                     /* onto the TV, cursor frozen */
+            st = wtc_selfcheck_step(&sc, frozenX - 12 * i, 560 + i, frozenX, frozenY, tol);
+            if (st > maxst) maxst = st;
+        }
+        EXPECT(maxst < need, "selfcheck: hovering onto another screen (frozen cursor) never trips it");
+        EXPECT(maxst == 0, "selfcheck: and the frozen samples do not even count");
+        st = wtc_selfcheck_step(&sc, 2036, 753, 2036, 753, tol);   /* back over SAI */
+        EXPECT(st == 0, "selfcheck: back over SAI with a live cursor, all clear");
+
+        /* A real fault must still be caught: our mapping squeezed as in #37
+         * while the cursor is live (both move). */
+        memset(&sc, 0, sizeof sc);
+        for (int i = 0; i < need; i++) {
+            int32_t cx = 960 + 8 * i;
+            st = wtc_selfcheck_step(&sc, cx * 1920 / 3432, 540, cx, 540, tol);
+        }
+        EXPECT(st == need, "selfcheck: a wrong mapping with a live cursor trips after exactly NEED samples");
+
+        /* Both standing still and apart: nothing is frozen there, so it
+         * counts. (The helper drops exact duplicates, so this is rare, but a
+         * check that only works while moving is not a check.) */
+        memset(&sc, 0, sizeof sc);
+        for (int i = 0; i < need; i++) st = wtc_selfcheck_step(&sc, 537, 540, 960, 540, tol);
+        EXPECT(st == need, "selfcheck: pen and cursor still and apart still count");
+
+        /* A frozen sample neither counts nor clears: 10 real disagreements,
+         * 5 frozen-cursor samples, 10 more real ones. */
+        memset(&sc, 0, sizeof sc);
+        for (int i = 0; i < 10; i++) st = wtc_selfcheck_step(&sc, 500 + i, 540, 960 + i, 540, tol);
+        int32_t fx = 960 + 9;
+        for (int i = 1; i <= 5; i++) st = wtc_selfcheck_step(&sc, 509 + 3 * i, 540, fx, 540, tol);
+        EXPECT(st == 10, "selfcheck: frozen samples leave the streak where it was");
+        for (int i = 1; i <= 10; i++) st = wtc_selfcheck_step(&sc, 530 + i, 540, 980 + i, 540, tol);
+        EXPECT(st == 20, "selfcheck: and the real disagreements on both sides add up");
+
+        /* The ordinary case stays quiet: a live cursor trailing by up to the
+         * tolerance during a hover. */
+        memset(&sc, 0, sizeof sc);
+        maxst = 0;
+        for (int i = 0; i < 100; i++) {
+            st = wtc_selfcheck_step(&sc, 400 + 6 * i, 300, 400 + 6 * i - (i % 9) * 5, 300, tol);
+            if (st > maxst) maxst = st;
+        }
+        EXPECT(maxst == 0, "selfcheck: a cursor trailing within tolerance never counts");
+    }
 
     /* --- wtc_format_screens ------------------------------------------------ */
     {

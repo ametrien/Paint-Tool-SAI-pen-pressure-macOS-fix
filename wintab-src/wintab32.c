@@ -247,15 +247,18 @@ static DWORD g_ring_time[RING_SZ];  /* GetTickCount when each serial was posted 
  * the log ("SAI re-read its context"). WT_NO_CTX_NOTIFY=1 turns the messages
  * off, should SAI ever react badly to them. */
 #define WT_CTXUPDATE  (WT_DEFBASE+3)
+#define WT_CTXOVERLAP (WT_DEFBASE+WTC_CTXOVERLAP_OFFSET)
 #define WT_INFOCHANGE (WT_DEFBASE+6)
+#define CXS_ONTOP     0x0004
 static int g_notify_ctx = 1;
-/* self-check: how far (Windows pixels) our pen position may sit from Wine's
- * cursor, and for how many consecutive hover samples, before we stop trusting
- * it. Generous on purpose: the cursor trails the tablet by a frame or two, and
- * a false alarm would cost sub-pixel precision for nothing. WT_NO_SELFCHECK=1
- * turns it off. */
-#define SELFCHECK_TOL  48
-#define SELFCHECK_NEED 20
+/* the window SAI gave WTOpenW is its WinTab control window, the only place
+ * SAI re-reads its tablet area (see wtc_sai_rereads_on_overlap) */
+static int g_ctx_rereads;
+/* self-check: the tolerance and sample count live in wintab_core.h
+ * (WTC_SELFCHECK_TOL / _NEED) next to the decision, so the tests use the same
+ * numbers. WT_NO_SELFCHECK=1 turns it off. */
+#define SELFCHECK_TOL  WTC_SELFCHECK_TOL
+#define SELFCHECK_NEED WTC_SELFCHECK_NEED
 static int g_selfcheck = 1;
 /* WT_LOG_POS=1 (with WT_DEBUG): log where EVERY positioned sample goes, inside
  * SAI's area or not. For tools/multimon/harness.py, which checks placement
@@ -299,6 +302,13 @@ static void refresh_virtual(void) {
         PostMessageW(g_hwnd, WT_INFOCHANGE, 0, 0);
         PostMessageW(g_hwnd, WT_CTXUPDATE, (WPARAM)0xC0FFEE01, 0);
         log_line("SCREENS: told SAI (WT_INFOCHANGE + WT_CTXUPDATE)");
+        if (g_ctx_rereads) {
+            PostMessageW(g_hwnd, WT_CTXOVERLAP, (WPARAM)0xC0FFEE01, CXS_ONTOP);
+            log_line("SCREENS: asked SAI's WinTab window to re-read its area (WT_CTXOVERLAP)");
+        } else {
+            log_line("SCREENS: SAI's context is on its main window, which never re-reads; "
+                     "a new screen needs a restart for pressure");
+        }
     }
 }
 
@@ -348,18 +358,21 @@ static void emit_sample(const SAMPLE *s) {
         }
         LeaveCriticalSection(&g_cs);
 
-        /* SELF-CHECK (see wtc_cursor_streak). Only while hovering, and only
+        /* SELF-CHECK (see wtc_selfcheck_step). Only while hovering, and only
          * while Wine's cursor is over SAI's own window: elsewhere Wine is not
          * told where the cursor is, and a stale cursor would look like a fault
-         * of ours. */
+         * of ours. That guard is NOT enough on its own: a cursor frozen when
+         * the pen left for another screen is still "over SAI's window".
+         * wtc_selfcheck_step() leaves those samples out; keep the comparison
+         * going through it, not through wtc_cursor_streak() directly. */
         SAMPLE use = *s;
         if (!down && g_selfcheck) {
-            static int streak;
+            static WTC_SELFCHECK sc;
             POINT cur; RECT wr;
             if (GetCursorPos(&cur) && GetWindowRect(g_hwnd, &wr) && PtInRect(&wr, cur)) {
                 int32_t ex, ey;
                 wtc_sample_to_screen(s, virt, &ex, &ey);
-                streak = wtc_cursor_streak(streak, ex, ey, cur.x, cur.y, SELFCHECK_TOL);
+                int streak = wtc_selfcheck_step(&sc, ex, ey, cur.x, cur.y, SELFCHECK_TOL);
                 if (!g_follow_cursor && streak >= SELFCHECK_NEED) {
                     g_follow_cursor = 1;
                     log_line("SELFCHECK: pen at (%d,%d) but Wine's cursor at (%ld,%ld) for %d samples; "
@@ -1111,6 +1124,14 @@ static void log_ctx(const char *who, const LOGCONTEXTW *lc) {
 HANDLE WINAPI WTOpenW(HWND hwnd, LOGCONTEXTW *lc, BOOL enable) {
     log_line("WTOpenW hwnd=%p enable=%d", hwnd, enable);
     g_hwnd = hwnd;
+    {
+        char cls[64] = "";
+        if (!hwnd || !GetClassNameA(hwnd, cls, (int)sizeof cls)) cls[0] = 0;
+        g_ctx_rereads = wtc_sai_rereads_on_overlap(cls);
+        log_line("WTOpenW window class=%s: %s", cls[0] ? cls : "?",
+                 g_ctx_rereads ? "SAI re-reads its area when told (WT_CTXOVERLAP)"
+                               : "SAI keeps its area until restarted");
+    }
     g_open = enable ? TRUE : FALSE;
     if (lc) {
         log_ctx("WTOpenW ctx from SAI", lc);
