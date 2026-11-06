@@ -14,6 +14,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
   whether the app quit, crashed or was force quit. A new recording also stops any encoder an
   earlier version left behind, so updating cleans up after 0.3.6 too. And quitting because SAI
   closed now finishes the session the way Quit does.
+- **Closing SAI no longer cuts a session's video down to its last few strokes.** On close, the
+  app adds the strokes the encoder had not picked up yet. Doing that could replace everything
+  recorded so far (up to the first 500 strokes) with just those few, and so could an encoder the
+  app restarted during a session. Both now add a new piece after the ones already recorded.
 
 ## [0.3.6] — 2026-11-05
 

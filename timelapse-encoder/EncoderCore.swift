@@ -220,6 +220,26 @@ extension EncoderCore {
 }
 
 extension EncoderCore {
+    /// The number for a live writer's next segment: one past the highest
+    /// "<prefix>.NNN.mp4" already in `existing` (a directory listing), or 0 when
+    /// there is none. Never a number that is already on disk, because creating
+    /// a segment deletes whatever is at its path (see LiveWriter.append).
+    ///
+    /// Only names that are EXACTLY the prefix, a dot, digits and ".mp4" count:
+    /// another canvas whose name merely starts the same ("Sketch 2", "Sketch.v2")
+    /// has segments of its own, and the finished "<prefix>.mp4" is not one.
+    static func nextSegmentIndex(prefix: String, existing: [String]) -> Int {
+        let head = prefix + "."
+        var next = 0
+        for n in existing where n.hasPrefix(head) && n.hasSuffix(".mp4") {
+            let digits = n.dropFirst(head.count).dropLast(4)
+            guard !digits.isEmpty, digits.allSatisfy({ $0.isASCII && $0.isNumber }),
+                  let i = Int(digits) else { continue }
+            next = max(next, i + 1)
+        }
+        return next
+    }
+
     /// Turn a canvas name into something safe for a filename. Empty or
     /// all-punctuation names fall back to the id so two canvases can never
     /// collide on disk.
