@@ -490,13 +490,14 @@ gone() {  # exited. A child of this script that has exited but not been reaped
           # yet is a zombie, which kill -0 still answers for, so that counts too.
   ! kill -0 "$1" 2>/dev/null || [ "$(ps -o stat= -p "$1" 2>/dev/null | cut -c1)" = Z ]
 }
-stop_watcher() {  # pid -> SIGTERM, as the app stops it; a FAIL rather than a hang if it won't stop
+stop_watcher() {  # pid -> SIGTERM, as the app stops it; FAILs (status 1) rather than hanging
   # Not SIGINT: bash starts background jobs with SIGINT ignored, so one sent in
   # the few milliseconds before the watcher installs its handlers is dropped.
   # SIGTERM in that window simply kills it, as it does when the app sends it.
   kill -TERM "$1" 2>/dev/null || true
   if ! wait_until 10 gone "$1"; then
-    echo "  FAIL own: watcher $1 did not stop on SIGTERM"; own_fail=1; kill -KILL "$1" 2>/dev/null || true
+    echo "  FAIL watcher $1 did not stop on SIGTERM"; kill -KILL "$1" 2>/dev/null || true
+    wait "$1" 2>/dev/null || true; return 1
   fi
   wait "$1" 2>/dev/null || true
 }
@@ -535,7 +536,7 @@ ls "$P1/rec" | grep -q "^session 1716.NewCanvas1" \
 "$WORK/enc-live" --frames "$P1/frames" --out "$P1/rec/session 1939.mp4" --fps 5 --watch > "$P1/new.log" 2>&1 &
 NEW=$!; WATCHERS="$WATCHERS $NEW"
 wait_until 10 no_frames "$P1/frames" || true
-stop_watcher "$NEW"
+stop_watcher "$NEW" || own_fail=1
 p=$(probe_of "$P1/rec/session 1939.NewCanvas1.000.mp4")
 [ "$p" = "64x48 1.00s" ] && echo "  ok   own: the new session's video holds all 5 of its frames ($p)" \
   || { echo "  FAIL own: the new session's video is '$p', want 64x48 1.00s"; own_fail=1; }
@@ -576,7 +577,7 @@ p=$(probe_of "$P2/rec/session 1716.Sketch.000.mp4")
   || { echo "  FAIL orphan: the orphan's video is '$p', want 64x48 0.60s"; own_fail=1; }
 mkframes 4 8 BBBB NewCanvas1 64 48 "$P2/frames"
 wait_until 10 no_frames "$P2/frames" || true
-stop_watcher "$NEW"
+stop_watcher "$NEW" || own_fail=1
 p=$(probe_of "$P2/rec/session 1939.NewCanvas1.000.mp4")
 [ "$p" = "64x48 1.00s" ] && echo "  ok   orphan: the new session's video holds all 5 of its frames ($p)" \
   || { echo "  FAIL orphan: the new session's video is '$p', want 64x48 1.00s"; own_fail=1; }
@@ -637,7 +638,7 @@ gone "$LIVE" && { echo "  FAIL others: stopped a watcher whose app is still runn
   || echo "  ok   others: a watcher whose app is still running is left alone"
 gone "$OTHER" && { echo "  FAIL others: stopped an orphan on a different folder"; own_fail=1; } \
   || echo "  ok   others: an orphan on a different folder is left alone"
-stop_watcher "$NEW"
+stop_watcher "$NEW" || own_fail=1
 kill -TERM "$LIVE" "$OTHER" 2>/dev/null || true
 wait_until 5 gone "$LIVE" || true; wait_until 5 gone "$OTHER" || true
 wait "$LIVE_APP" 2>/dev/null || true
@@ -734,6 +735,41 @@ check(d["opening"]["cells"] != d["closing"]["cells"],
       "session: opening and closing are actually different")
 sys.exit(0 if ok else 1)
 PY
+
+# THE TRAP: --finalize puts the leftover frames in a NEW segment, and creating a
+# segment deletes whatever is at its path. It used to number from .000 like the
+# watcher, so it deleted the watcher's segment and kept only the 3 leftovers.
+# The sidecar above still said 9 frames, so only the VIDEO's length catches it:
+# all 9 frames at 5fps is 1.80s, the leftovers alone 0.60s. Make
+# LiveWriter.append count from 0 again and this goes red.
+p=$("$WORK/enc-live" --probe "$REB/out/session.Sketch.mp4" 2>/dev/null || echo "no video")
+[ "$p" = "64x48 1.80s" ] \
+  && echo "  ok   session: the finished video holds both runs, all 9 frames ($p)" \
+  || { echo "  FAIL session: the finished video is '$p', want 64x48 1.80s (0.60s: --finalize replaced the watcher's segment)"; reb_fail=1; }
+
+# The same trap one step earlier: a watcher restarted on the same session (the
+# app brings back one that died, and a relaunched app keeps the session) used to
+# start at .000 again and delete the first run's video before --finalize ran.
+RST="$REB/restarted"; mkdir -p "$RST/frames" "$RST/out"
+restart_run() {  # first last
+  mkframes "$1" "$2" CAFE Sketch 64 48 "$RST/frames"
+  "$WORK/enc-live" --frames "$RST/frames" --out "$RST/out/session.mp4" --fps 5 --watch \
+      >> "$RST/log" 2>&1 &
+  local pid=$!; WATCHERS="$WATCHERS $pid"
+  wait_until 10 no_frames "$RST/frames" || { echo "  FAIL restart: frames $1-$2 were not read"; reb_fail=1; }
+  stop_watcher "$pid" || reb_fail=1
+}
+restart_run 1 3
+restart_run 4 7
+p0=$(probe_of "$RST/out/session.Sketch.000.mp4"); p1=$(probe_of "$RST/out/session.Sketch.001.mp4")
+[ "$p0" = "64x48 0.60s" ] && [ "$p1" = "64x48 0.80s" ] \
+  && echo "  ok   restart: the second run starts .001 and the first run's .000 is untouched" \
+  || { echo "  FAIL restart: .000 is '$p0' (want 0.60s), .001 is '$p1' (want 0.80s)"; ls "$RST/out"; reb_fail=1; }
+"$WORK/enc-live" --frames "$RST/frames" --out "$RST/out/session.mp4" --fps 5 --finalize >> "$RST/log" 2>&1 \
+  || { echo "  FAIL restart: --finalize failed"; cat "$RST/log"; reb_fail=1; }
+p=$(probe_of "$RST/out/session.Sketch.mp4")
+[ "$p" = "64x48 1.40s" ] && echo "  ok   restart: and the finished video holds both runs in order ($p)" \
+  || { echo "  FAIL restart: the finished video is '$p', want 64x48 1.40s"; reb_fail=1; }
 
 # --- rebuilding a drawing from its pieces ------------------------------------
 mkpiece() {  # dir name w h count

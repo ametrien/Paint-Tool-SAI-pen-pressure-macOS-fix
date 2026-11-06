@@ -238,6 +238,33 @@ do {
            "encoder: a name that only starts the same is not the encoder")
 }
 
+// --- numbering live segments -------------------------------------------------
+// Creating a segment deletes whatever is at its path, so the next number must
+// never be one already on disk. A writer that counted from 0 instead made
+// --finalize replace the watcher's whole session with its few leftover frames.
+do {
+    let p = "session 2026-11-06 1716.Sketch"
+    func next(_ names: [String]) -> Int { EncoderCore.nextSegmentIndex(prefix: p, existing: names) }
+    expect(next([]) == 0, "segments: the first one in an empty folder is .000")
+    expect(next(["\(p).000.mp4"]) == 1,
+           "segments: after the watcher's .000, --finalize writes .001 instead of replacing it")
+    expect(next(["\(p).000.mp4", "\(p).001.mp4", "\(p).json"]) == 2,
+           "segments: one past the highest, and the sidecar is not a segment")
+    expect(next(["\(p).000.mp4", "\(p).004.mp4"]) == 5,
+           "segments: past the highest even with a gap, so the stitching order holds")
+    expect(next(["\(p).999.mp4"]) == 1000 && next(["\(p).1000.mp4"]) == 1001,
+           "segments: past .999 the numbers just grow a digit")
+    expect(next(["\(p).mp4"]) == 0, "segments: the finished video of the session is not a segment")
+    expect(next(["session 2026-11-06 1716.Sketch 2.000.mp4"]) == 0,
+           "segments: another canvas whose name starts the same has its own numbers")
+    expect(next(["\(p).v2.000.mp4", "\(p).001.000.mp4"]) == 0,
+           "segments: so does a canvas whose name continues after a dot")
+    expect(next(["session 2026-11-06 1939.Sketch.003.mp4"]) == 0,
+           "segments: another session's segments are not this one's")
+    expect(next(["\(p).00a.mp4", "\(p)..mp4", "\(p).-1.mp4", "\(p).٣.mp4"]) == 0,
+           "segments: anything that is not plain ASCII digits is not a segment number")
+}
+
 if failures > 0 {
     print("FAILED: \(failures) test(s)")
     exit(1)

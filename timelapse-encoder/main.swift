@@ -290,6 +290,8 @@ final class LiveWriter {
     private let fps: Int
     private let maxFramesPerSegment: Int
     private var segment: Segment?
+    /// Number of the segment being written. Taken from the disk each time one
+    /// starts, never counted up from 0: see append().
     private var index = 0
     private(set) var total = 0
 
@@ -335,11 +337,15 @@ final class LiveWriter {
     /// AVAssetWriter that never gets finishWriting() produces something no
     /// player will open. Rolling periodically bounds a crash to one segment
     /// instead of the whole session.
-    private func url(for i: Int) -> URL {
+    /// What every file of this canvas's session starts with: segments are
+    /// "<prefix>.NNN.mp4", the sidecar "<prefix>.json".
+    private var prefix: String {
         let stem = base.deletingPathExtension().lastPathComponent
-        let name = label.isEmpty ? stem : "\(stem).\(label)"
-        return base.deletingLastPathComponent()
-            .appendingPathComponent(String(format: "%@.%03d.mp4", name, i))
+        return label.isEmpty ? stem : "\(stem).\(label)"
+    }
+    private func url(for i: Int) -> URL {
+        base.deletingLastPathComponent()
+            .appendingPathComponent(String(format: "%@.%03d.mp4", prefix, i))
     }
 
     func append(_ px: Data, stride: Int, width: Int, height: Int) -> Bool {
@@ -347,7 +353,21 @@ final class LiveWriter {
                                   next: (width, height),
                                   framesInSegment: segment?.frameCount ?? 0,
                                   maxFramesPerSegment: maxFramesPerSegment) {
-            if segment != nil { segment?.finish(); index += 1 }
+            segment?.finish(); segment = nil
+            // THE TRAP: the number comes from the DISK, not from a counter that
+            // starts at 0. Segment.init deletes whatever is already at its path,
+            // and this writer is often not the first one this session has had:
+            // --finalize is a separate process that folds in the frames left
+            // after --watch stopped, and the app restarts a watcher that died, or
+            // starts one in a relaunched app, on the same session. Counting from
+            // 0 made each of them delete the session's .000.mp4 and put only its
+            // own frames there: 6 watched frames plus 3 leftovers came out as a
+            // video of the 3. One past the highest number on disk never lands on
+            // an existing segment, and keeps the order finalizeSegments
+            // stitches them in.
+            let dir = base.deletingLastPathComponent().path
+            index = EncoderCore.nextSegmentIndex(
+                prefix: prefix, existing: (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? [])
             guard let s = Segment(url: url(for: index), width: width, height: height, fps: fps)
             else { return false }
             segment = s
