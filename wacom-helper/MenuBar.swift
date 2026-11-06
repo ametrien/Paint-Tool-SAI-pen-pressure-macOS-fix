@@ -37,6 +37,7 @@ extension SetupController {
         si.button?.toolTip = "SAI Pen Pressure"
         si.menu = makeMenu()
         statusItem = si
+        watchScreenNotice()
 
         // Report where macOS actually put it. Kept because this bug is invisible
         // from the outside — the item reports itself as visible either way, and
@@ -46,6 +47,29 @@ extension SetupController {
             let f = si.button?.window?.frame
             let x = f?.origin.x ?? -1
             wlog("statusItem: visible=\(si.isVisible) frame=\(f.map { "\($0)" } ?? "nil") -> \(x > 1200 ? "BAD (parked far right, likely hidden)" : "looks placed")")
+        }
+    }
+    /// Screens changed under a running SAI (#37): the pen still works on every
+    /// screen, but a screen SAI did not know about at launch gets no pressure
+    /// until SAI restarts. Nothing pops up (you may be mid-stroke); the menu-bar
+    /// pen gets a warning mark and the menu's first line says what to do. Read
+    /// from the DLL's status file every 2 s; cheap, and only rebuilds on change.
+    func watchScreenNotice() {
+        var last = BridgeCheck.ScreenNotice.none
+        Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            let (st, age) = bridgeStatus()
+            let now = BridgeCheck.screenNotice(st, ageSeconds: age)
+            guard now != last, let self = self else { return }
+            last = now
+            wlog("screen notice: \(now)")
+            self.screenNotice = now
+            let name = now == .none ? "applepencil" : "exclamationmark.triangle"
+            if let img = NSImage(systemSymbolName: name, accessibilityDescription: "SAI Pen Pressure") {
+                img.isTemplate = true
+                self.statusItem?.button?.image = img
+            }
+            self.statusItem?.button?.toolTip = BridgeCheck.explain(now) ?? "SAI Pen Pressure"
+            self.rebuildMenus()
         }
     }
     /// Rebuild both menus after something that changes their contents (dev mode).
@@ -66,6 +90,12 @@ extension SetupController {
         // nobody could scan. What survives is what you want WITHOUT opening the
         // window: unstick SAI, see at a glance whether recording is on, and get
         // to the window itself.
+        if let notice = BridgeCheck.explain(screenNotice) {
+            let it = NSMenuItem(title: notice, action: nil, keyEquivalent: "")
+            it.isEnabled = false
+            menu.addItem(it)
+            menu.addItem(.separator())
+        }
         add("Wake SAI window (if stuck)   ⌃⌥⌘Space", #selector(wakeSAI))
         menu.addItem(.separator())
         let frames = timelapseFrameCount()

@@ -109,6 +109,8 @@ enum BridgeCheck {
         var posted = 0          // packets the DLL posted to SAI
         var fetched = 0         // packets SAI actually came and read
         var pmax = 0            // full-scale pressure the DLL is advertising
+        var newscreen = false   // pen reached a screen SAI's tablet area doesn't cover (#37)
+        var mismatch = false    // DLL's self-check is following Wine's cursor (#37)
     }
 
     /// Parse `wt_status.txt`. Deliberately lenient about unknown keys (a newer
@@ -130,6 +132,8 @@ enum BridgeCheck {
             case "posted":  s.posted = Int(val) ?? 0
             case "fetched": s.fetched = Int(val) ?? 0
             case "pmax":    s.pmax = Int(val) ?? 0
+            case "newscreen": s.newscreen = (val == "1")
+            case "mismatch":  s.mismatch = (val == "1")
             default: break
             }
         }
@@ -179,6 +183,38 @@ enum BridgeCheck {
             return "SAI gets pressure but reads none. Try the AirBrush tool."
         case .working:
             return "Working. SAI has drawn \(status?.fetched ?? 0) points."
+        }
+    }
+
+    // ---- 2a. screens changed while SAI was open (issue #37) ----------------
+    // SAI learns the tablet area once, when it opens it. A screen connected
+    // later can lie outside that area. The DLL then lets the pen work there as
+    // a plain mouse (right place, no pressure) rather than post a position that
+    // would land somewhere else, and says so in the status file. A restart of
+    // SAI is the only thing that brings pressure to that screen, and nobody
+    // would guess that unaided, so the app says it.
+
+    enum ScreenNotice: Equatable {
+        case none
+        case newScreen      // pen is on a screen SAI doesn't know about
+        case following      // self-check: our position disagreed with the cursor
+    }
+
+    /// Only a LIVE status counts: an old file left behind by a SAI that has
+    /// since closed must not keep asking for a restart that already happened.
+    static func screenNotice(_ status: Status?, ageSeconds: Double?, staleAfter: Double = 5) -> ScreenNotice {
+        guard let s = status, let age = ageSeconds, age <= staleAfter, s.open else { return .none }
+        if s.newscreen { return .newScreen }
+        if s.mismatch { return .following }
+        return .none
+    }
+
+    /// Short: shown in the menu and in a row that truncates.
+    static func explain(_ notice: ScreenNotice) -> String? {
+        switch notice {
+        case .none:      return nil
+        case .newScreen: return "Screens changed. Restart SAI for pressure there."
+        case .following: return "Screens changed. Restart SAI if strokes look off."
         }
     }
 
