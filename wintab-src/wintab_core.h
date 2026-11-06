@@ -11,6 +11,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 /* Hard ceiling for the wire format. The ACTIVE full-scale value is chosen
  * at runtime (see g_max_press in wintab32.c) and may be lower; this only
@@ -186,6 +187,74 @@ static int wtc_cursor_streak(int streak, int32_t ourX, int32_t ourY,
     if (dy < 0) dy = -dy;
     if (dx <= tol && dy <= tol) return 0;
     return streak < 1000000 ? streak + 1 : streak;
+}
+
+/* GETTING SAI TO RE-READ ITS TABLET AREA AFTER A SCREEN CHANGE (#37).
+ *
+ * Read from sai2.exe (static disassembly, SAI2 build of 5,171,200 bytes; see
+ * MULTI-MONITOR-FINDINGS.md for addresses). SAI copies the tablet area out of
+ * WTGetW() into its own fields and maps every packet with those copies. It
+ * calls WTGetW() at start-up and in exactly one other place: on WT_CTXOVERLAP
+ * (base + 4) arriving at its WinTab control window, class
+ * "sflWintabCtrlWindow". SAI only opens its context on that window in one of
+ * its WinTab modes; in the other it hands WTOpenW() its main window
+ * ("sflRootWindow"), where WT_CTXUPDATE and WT_INFOCHANGE are ignored and
+ * WT_CTXOVERLAP merely clears a flag.
+ *
+ * So the extra message goes out only when the window SAI gave us is the
+ * control window. THE TRAP: the message number and the class name are what
+ * SAI's code compares against; "tidying" either (base + 3, a different
+ * spelling, a case-insensitive guess at another class) silently brings back
+ * "restart SAI for pressure there" with nothing failing at build time. */
+#define WTC_CTXOVERLAP_OFFSET 4
+#define WTC_SAI_WINTAB_WINDOW "sflWintabCtrlWindow"
+
+static int wtc_sai_rereads_on_overlap(const char *window_class) {
+    return window_class && strcmp(window_class, WTC_SAI_WINTAB_WINDOW) == 0;
+}
+
+/* How far (Windows pixels) our pen may sit from Wine's cursor, and for how
+ * many consecutive hover samples, before the DLL stops trusting its own
+ * position. Generous on purpose: the cursor trails the tablet by a frame or
+ * two, and a false alarm costs sub-pixel precision for nothing. Here, not in
+ * wintab32.c, so the DLL and the tests cannot drift apart. */
+#define WTC_SELFCHECK_TOL  48
+#define WTC_SELFCHECK_NEED 20
+
+/* ONE HOVER SAMPLE OF THE SELF-CHECK, with a stale cursor left out.
+ *
+ * THE TRAP (seen 2026-11-06, two screens): Wine only learns where the cursor
+ * is while it is over one of Wine's own windows. Hover from SAI's window onto
+ * another screen and Wine's cursor stays frozen where it last was, INSIDE
+ * SAI's window, so the caller's "cursor is over SAI" guard still passes. Our
+ * position (right) then moves away from that frozen point (wrong), and 20
+ * samples later the DLL decided its own position was the fault and followed
+ * the cursor: "pen at (1510,623) but Wine's cursor at (2109,544) for 20
+ * samples". Had a stroke started then, it would have been drawn from Wine's
+ * cursor, in whole pixels and late.
+ *
+ * The signature of a frozen cursor: our position moved since the last sample
+ * and Wine's cursor did not move at all. Such a sample says nothing about us,
+ * so it neither counts nor clears the streak. Everything else is compared as
+ * before, which keeps the real faults visible:
+ *   - our mapping wrong while the cursor is live: both move, so it counts;
+ *   - both standing still and apart: counts too (nothing is frozen there);
+ *   - first sample after a gap: nothing to compare with, so it counts.
+ * Do not "simplify" this to "the cursor did not move": a pen held still
+ * would then never be checked. */
+typedef struct { int streak, have; int32_t ourX, ourY, curX, curY; } WTC_SELFCHECK;
+
+static int wtc_selfcheck_step(WTC_SELFCHECK *st, int32_t ourX, int32_t ourY,
+                              int32_t curX, int32_t curY, int32_t tol) {
+    int frozen = st->have
+              && (ourX != st->ourX || ourY != st->ourY)
+              && curX == st->curX && curY == st->curY;
+    st->have = 1;
+    st->ourX = ourX; st->ourY = ourY;
+    st->curX = curX; st->curY = curY;
+    if (!frozen)
+        st->streak = wtc_cursor_streak(st->streak, ourX, ourY, curX, curY, tol);
+    return st->streak;
 }
 
 /* CONFLATION decision: post a new WT_PACKET now, or collapse this sample into
