@@ -166,6 +166,35 @@ func stopLiveEncoder() {
     g_liveEncoder = nil
     wlog("timelapse: live encoder stopped")
 }
+/// Leave the app the way Quit does: stop the live encoder and finish the
+/// session, then exit. Every exit from a RUNNING app goes through here.
+///
+/// THE TRAP: exit() is not Quit. It skips applicationWillTerminate, which was
+/// the only place the encoder got stopped on the way out, and macOS does not end
+/// a child process with its parent. So each bare exit(0) here used to leave a
+/// --watch encoder behind, reparented to launchd, taking every later session's
+/// frames from the shared folder into a video named after its own old session.
+/// Seen on 2026-11-06: the app quit through pollUntilSAICloses at 17:16:25, and
+/// its encoder was still stealing frames at 19:40. The encoder now also stops by
+/// itself when we vanish (WatchGuard.swift), which covers crashes and force
+/// quits; this is the part that also FINISHES the session instead of leaving
+/// it half-open for the next launch to write into.
+///
+/// `relaunch` reopens the app a second later, for the permission flows. The
+/// session is finished BEFORE that is scheduled: finishing can take longer than
+/// the second, and `open` on an app that is still running only brings it
+/// forward, so the relaunch would quietly not happen.
+func endRecordingAndExit(relaunch: Bool = false) -> Never {
+    stopLiveEncoder()
+    finalizeTimelapseNow()
+    if relaunch {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        p.arguments = ["-c", "sleep 1; open '\(Bundle.main.bundlePath)'"]
+        try? p.run()
+    }
+    exit(0)
+}
 func isForeignSAIWindow(_ w: [String: Any]) -> Bool {
     let owner = (w[kCGWindowOwnerName as String] as? String ?? "").lowercased()
     guard owner.contains("wine") || owner.contains("sai") else { return false }
@@ -195,7 +224,7 @@ func saiProcessRunning() -> Bool {
 }
 func pollUntilSAICloses() {
     let t = Timer(timeInterval: 2.0, repeats: true) { timer in
-        if !saiWindowIsOpen() { timer.invalidate(); exit(0) }
+        if !saiWindowIsOpen() { timer.invalidate(); endRecordingAndExit() }
     }
     RunLoop.main.add(t, forMode: .common)
 }
@@ -285,8 +314,12 @@ func launchSAIApp() {
         // can hand off to another process and let this one exit immediately,
         // which used to make us quit while SAI was still on screen. Only exit
         // once no SAI window is left.
+        //
+        // The encoder was stopped above, but refresh() restarts it while an SAI
+        // window is still on screen, and in the 1.5 seconds below one can be.
+        // So the exit stops whatever is running THEN, not only what ran before.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            if !saiWindowIsOpen() { exit(0) }
+            if !saiWindowIsOpen() { endRecordingAndExit() }
             else { pollUntilSAICloses() }
         }
     }

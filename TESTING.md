@@ -121,6 +121,13 @@ moves a real application to the Trash), and the **Wine prefix rebuild** itself
 ### Safety / lifecycle
 - [ ] Kill switch: `echo 0 > <prefix>/drive_c/wt_pressure.txt` stops pressure immediately.
 - [ ] Closing SAI quits the helper/app cleanly (no lingering process, cursor released).
+- [ ] **No encoder outlives the app.** With SAI already open, open the app, press Launch (it
+      raises the open SAI), then close SAI. Once the app has quit,
+      `pgrep -fl 'sai-timelapse-encoder.*--watch'` prints nothing. The wake log says
+      `timelapse: live encoder stopped`, and if you drew anything, `auto-finalised on close`.
+      This is the path that left
+      an encoder running for hours in 0.3.6. The encoder side (parent gone, orphan from an older
+      version) is covered by `run-tests.sh`; this checks the app side.
 
 ### Known non-bugs (don't report as new)
 - Fast curves are boxy over **Bluetooth** (~130 Hz) — use USB (~200 Hz).

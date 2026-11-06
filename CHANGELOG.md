@@ -3,6 +3,18 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- **A new session's strokes no longer end up in an old session's video.** When SAI closed and the
+  app quit with it, the app could leave its timelapse encoder running in the background. That
+  encoder kept reading the frames folder every session shares, so every later session's strokes
+  went into a video named after the old one, and the real session's video stayed empty. The
+  encoder now stops by itself, after closing its video, once the app that started it has gone,
+  whether the app quit, crashed or was force quit. A new recording also stops any encoder an
+  earlier version left behind, so updating cleans up after 0.3.6 too. And quitting because SAI
+  closed now finishes the session the way Quit does.
+
 ## [0.3.6] — 2026-11-05
 
 ### Added

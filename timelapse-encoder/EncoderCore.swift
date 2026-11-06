@@ -126,6 +126,99 @@ private extension Int {
 }
 
 
+// --- recognising another watcher on the same frames folder -------------------
+//
+// Pure halves of WatchGuard.swift, here so they are unit-tested: given what the
+// kernel reports about another process, is it a `--watch` encoder reading OUR
+// frames folder? A wrong "yes" stops somebody else's process, so every rule
+// below errs towards "no".
+extension EncoderCore {
+    /// Where the DLL writes frames when nobody says otherwise. main.swift's
+    /// --frames default and the watcher recognition both read this, because a
+    /// watcher started without --frames is still watching this folder.
+    static let defaultFramesDir = "~/SAI2-pressure/drive_c/sai-timelapse/frames"
+
+    /// The name the app ships the encoder under. Two copies of the app (an
+    /// installed one and a dist/ build) both call it this.
+    static let executableName = "sai-timelapse-encoder"
+
+    /// Split a KERN_PROCARGS2 buffer into the executable path and the argument
+    /// list. Layout: a 32-bit argc, the executable path, NUL padding, then argc
+    /// NUL-terminated arguments (argv[0] first). The environment follows and is
+    /// ignored. Nil for anything malformed, never a guess.
+    static func parseProcArgs(_ buf: [UInt8]) -> (exe: String, argv: [String])? {
+        guard buf.count >= 4 else { return nil }
+        let argc = Int(buf[0]) | Int(buf[1]) << 8 | Int(buf[2]) << 16 | Int(buf[3]) << 24
+        guard argc > 0, argc < 4096 else { return nil }
+        var i = 4
+        func cString() -> String? {
+            guard let end = buf[i...].firstIndex(of: 0) else { return nil }
+            defer { i = end + 1 }
+            return String(decoding: buf[i..<end], as: UTF8.self)
+        }
+        guard let exe = cString(), !exe.isEmpty else { return nil }
+        while i < buf.count, buf[i] == 0 { i += 1 }
+        var argv: [String] = []
+        while argv.count < argc {
+            guard i < buf.count, let s = cString() else { return nil }
+            argv.append(s)
+        }
+        return (exe, argv)
+    }
+
+    /// The frames folder `argv` watches, or nil when it is not a --watch run.
+    ///
+    /// Mirrors the argument loop in main.swift, including which options take a
+    /// value: skipping those is what keeps a path that happens to contain
+    /// "--watch" from being read as the flag. --finalize, --rebuild and --probe
+    /// all take precedence over --watch there, so a run with any of them is not
+    /// a watcher here either.
+    static func watchedFolder(argv: [String]) -> String? {
+        let takesValue: Set<String> = ["--frames", "--out", "--fps", "--max-seconds", "--from",
+                                       "--to", "--segment-frames", "--rebuild", "--probe"]
+        var frames = defaultFramesDir
+        var watch = false, other = false
+        var i = 1                                   // argv[0] is the program
+        while i < argv.count {
+            let a = argv[i]
+            if takesValue.contains(a) {
+                let v = i + 1 < argv.count ? argv[i + 1] : ""
+                if a == "--frames" { frames = v }
+                if a == "--rebuild" || a == "--probe" { other = true }
+                i += 2; continue
+            }
+            if a == "--watch" { watch = true }
+            if a == "--finalize" || a == "--finalise" { other = true }
+            i += 1
+        }
+        return watch && !other ? frames : nil
+    }
+
+    /// One spelling per folder: tilde expanded, `.`/`..` and trailing slashes
+    /// gone, symlinks resolved (/tmp is /private/tmp). A relative path cannot be
+    /// resolved for ANOTHER process without its working directory, so it gets
+    /// no spelling at all and never matches anything.
+    ///
+    /// realpath(3), not URL.resolvingSymlinksInPath(): that one strips a leading
+    /// /private on purpose, so it turns /private/tmp back into /tmp. A folder
+    /// that does not exist cannot be resolved and keeps its tidied spelling.
+    static func canonicalFolder(_ path: String) -> String? {
+        let p = NSString(string: path).expandingTildeInPath
+        guard p.hasPrefix("/") else { return nil }
+        let tidy = (p as NSString).standardizingPath
+        guard let r = realpath(tidy, nil) else { return tidy }
+        defer { free(r) }
+        return String(cString: r)
+    }
+
+    /// Is the program at `exe` an encoder? By file name: the shipped name, or
+    /// whatever this copy is called (the tests build it under another name).
+    static func isEncoder(exe: String, ownName: String) -> Bool {
+        let name = (exe as NSString).lastPathComponent
+        return name == executableName || name == ownName
+    }
+}
+
 extension EncoderCore {
     /// Turn a canvas name into something safe for a filename. Empty or
     /// all-punctuation names fall back to the id so two canvases can never

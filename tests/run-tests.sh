@@ -4,7 +4,16 @@
 set -e
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+# Every --watch encoder a test starts is listed here and stopped on the way out,
+# pass or fail, so a failing run never leaves one behind. A failing run of the
+# orphan tests is exactly the case where one would otherwise outlive the script.
+WATCHERS=""
+# (`|| true`: set -e applies inside the trap too, and most of these have already
+# exited, so a bare failing kill would abort the trap before the rm and turn a
+# passing run into exit status 1.)
+# A test below leaves one STOPPED (SIGSTOP), and a stopped process holds a SIGTERM
+# pending forever, so each one is also continued.
+trap 'for p in $WATCHERS; do kill -TERM "$p" 2>/dev/null || true; kill -CONT "$p" 2>/dev/null || true; done; rm -rf "$WORK"' EXIT
 
 echo "== C core (wintab_core.h) — under AddressSanitizer + UBSanitizer =="
 # Sanitizers turn any out-of-bounds / divide-by-zero / integer-UB into a hard
@@ -449,6 +458,225 @@ left=$(ls "$LIVE/frames" 2>/dev/null | wc -l | tr -d ' ')
   || { echo "  FAIL live: $left frame(s) left on disk"; live_fail=1; }
 [ "$live_fail" = 0 ] || exit 1
 echo "All live encoding tests passed."
+
+echo ""
+echo "== A watcher never outlives the app that started it (real filesystem) =="
+# The frames folder is SHARED by every session, and a watcher deletes each frame
+# it encodes. On 2026-11-06 the app quit through a bare exit(0), which skipped
+# stopping its watcher. macOS handed the watcher to launchd, and from 17:16 to
+# 19:40 it took every later session's frames into "session 2026-11-06 1716...",
+# while the real session's video stayed at 0 bytes. See WatchGuard.swift.
+#
+# The "app" below is a throwaway bash that starts the watcher as its child and
+# waits. SIGKILLing it is exactly what exit(), a crash or a force quit look like
+# from the watcher's side: its parent is simply gone, with no word sent.
+OWN="$WORK/own"; own_fail=0
+start_app() {  # encoder frames out log -> sets APP_PID (the "app") and ENC_PID (its watcher)
+  rm -f "$WORK/enc.pid"
+  bash -c '"$1" --frames "$2" --out "$3" --fps 5 --watch > "$4" 2>&1 & echo $! > "$5"; wait' \
+       _ "$1" "$2" "$3" "$4" "$WORK/enc.pid" > /dev/null 2>&1 &
+  APP_PID=$!
+  wait_until 5 test -s "$WORK/enc.pid" || { echo "  FAIL own: the watcher did not start"; exit 1; }
+  ENC_PID=$(cat "$WORK/enc.pid"); WATCHERS="$WATCHERS $ENC_PID"
+}
+quit_app() {  # how the app ends doesn't matter to the watcher: it just vanishes
+  kill -KILL "$APP_PID"; wait "$APP_PID" 2>/dev/null || true
+}
+wait_until() {  # seconds command... -> succeeds as soon as the command does
+  local end=$((SECONDS + $1)); shift
+  until "$@"; do [ "$SECONDS" -ge "$end" ] && return 1; sleep 0.2; done
+}
+gone() {  # exited. A child of this script that has exited but not been reaped
+          # yet is a zombie, which kill -0 still answers for, so that counts too.
+  ! kill -0 "$1" 2>/dev/null || [ "$(ps -o stat= -p "$1" 2>/dev/null | cut -c1)" = Z ]
+}
+stop_watcher() {  # pid -> SIGTERM, as the app stops it; a FAIL rather than a hang if it won't stop
+  # Not SIGINT: bash starts background jobs with SIGINT ignored, so one sent in
+  # the few milliseconds before the watcher installs its handlers is dropped.
+  # SIGTERM in that window simply kills it, as it does when the app sends it.
+  kill -TERM "$1" 2>/dev/null || true
+  if ! wait_until 10 gone "$1"; then
+    echo "  FAIL own: watcher $1 did not stop on SIGTERM"; own_fail=1; kill -KILL "$1" 2>/dev/null || true
+  fi
+  wait "$1" 2>/dev/null || true
+}
+no_frames() { [ -z "$(ls -A "$1" 2>/dev/null)" ]; }
+probe_of()  { "$WORK/enc-live" --probe "$1" 2>/dev/null || echo "no video"; }
+
+# --- 1. the app goes: its watcher closes its video, and takes nothing more ---
+P1="$OWN/parentless"; mkdir -p "$P1/frames" "$P1/rec"
+mkframes 1 3 AAAA Sketch 64 48 "$P1/frames"
+start_app "$WORK/enc-live" "$P1/frames" "$P1/rec/session 1716.mp4" "$P1/old.log"
+wait_until 10 no_frames "$P1/frames" \
+  || { echo "  FAIL own: the watcher never read its own session's frames"; cat "$P1/old.log"; exit 1; }
+quit_app
+# THE TRAP: delete the parentIsGone() check in main.swift's watch loop and this
+# goes red. The watcher carries on as a child of launchd, and the next two
+# checks go red with it, because it takes the next session's frames.
+wait_until 5 gone "$ENC_PID" \
+  && echo "  ok   own: a watcher stops once the app that started it has gone" \
+  || { echo "  FAIL own: the watcher outlived its app (pid $ENC_PID, parent now $(ps -o ppid= -p "$ENC_PID"))"; own_fail=1; }
+p=$(probe_of "$P1/rec/session 1716.Sketch.000.mp4")
+[ "$p" = "64x48 0.60s" ] && echo "  ok   own: it closed its own video first, all 3 frames playable ($p)" \
+  || { echo "  FAIL own: the old session's video is '$p', want 64x48 0.60s"; own_fail=1; }
+grep -q "the app that started this watcher has gone" "$P1/old.log" \
+  && echo "  ok   own: and it says why it stopped" \
+  || { echo "  FAIL own: no reason in the log:"; cat "$P1/old.log"; own_fail=1; }
+
+# The next session starts drawing before its own watcher is up.
+mkframes 4 8 BBBB NewCanvas1 64 48 "$P1/frames"
+sleep 2.5                                   # two polls of anything still there
+left=$(ls "$P1/frames" | wc -l | tr -d ' ')
+[ "$left" = 5 ] && echo "  ok   own: the next session's frames wait for the next session's watcher" \
+  || { echo "  FAIL own: $left of 5 new frames left; something else took them"; own_fail=1; }
+ls "$P1/rec" | grep -q "^session 1716.NewCanvas1" \
+  && { echo "  FAIL own: the new canvas was recorded into the OLD session"; ls "$P1/rec"; own_fail=1; } \
+  || echo "  ok   own: nothing of the new canvas lands in the old session"
+"$WORK/enc-live" --frames "$P1/frames" --out "$P1/rec/session 1939.mp4" --fps 5 --watch > "$P1/new.log" 2>&1 &
+NEW=$!; WATCHERS="$WATCHERS $NEW"
+wait_until 10 no_frames "$P1/frames" || true
+stop_watcher "$NEW"
+p=$(probe_of "$P1/rec/session 1939.NewCanvas1.000.mp4")
+[ "$p" = "64x48 1.00s" ] && echo "  ok   own: the new session's video holds all 5 of its frames ($p)" \
+  || { echo "  FAIL own: the new session's video is '$p', want 64x48 1.00s"; own_fail=1; }
+
+# --- 2. an orphan from 0.3.6 is stopped before the new session reads a frame -
+# 0.3.6 has no parent check, so an orphan it left will never stop by itself:
+# the one on 2026-11-06 ran for hours. Upgrading does not end it either. So a new
+# watcher has to stop it, AND wait until it has closed its video, before reading.
+# The stand-in is the real encoder with PreFixWatchGuard.swift linked in place
+# of WatchGuard.swift, under the shipped name, as an installed copy would be.
+mkdir -p "$WORK/v036"
+IFS=$'\n' read -r -d '' -a PREFIX_SRC < <(bash "$REPO/tools/sources.sh" encoder \
+                                          | grep -v '/WatchGuard\.swift$' && printf '\0')
+swiftc -O -o "$WORK/v036/sai-timelapse-encoder" "${PREFIX_SRC[@]}" \
+       "$REPO/tests/PreFixWatchGuard.swift" 2>/dev/null
+P2="$OWN/orphan"; mkdir -p "$P2/frames" "$P2/rec"
+mkframes 1 3 AAAA Sketch 64 48 "$P2/frames"
+start_app "$WORK/v036/sai-timelapse-encoder" "$P2/frames" "$P2/rec/session 1716.mp4" "$P2/old.log"
+wait_until 10 no_frames "$P2/frames" \
+  || { echo "  FAIL orphan: the stand-in never read its frames"; cat "$P2/old.log"; exit 1; }
+quit_app; OLD=$ENC_PID
+sleep 1.5
+# The stand-in has to reproduce the bug, or everything after this proves nothing.
+if ! gone "$OLD" && [ "$(ps -o ppid= -p "$OLD" | tr -d ' ')" = 1 ]; then
+  echo "  ok   orphan: the 0.3.6 stand-in really is left running under launchd"
+else
+  echo "  FAIL orphan: the stand-in did not stay behind as an orphan; this test is void"; exit 1
+fi
+"$WORK/enc-live" --frames "$P2/frames" --out "$P2/rec/session 1939.mp4" --fps 5 --watch > "$P2/new.log" 2>&1 &
+NEW=$!; WATCHERS="$WATCHERS $NEW"
+# THE TRAP: delete the stopOrphanedWatchers() call in main.swift and this goes
+# red. The orphan carries on, and the two watchers race for every new frame.
+wait_until 10 gone "$OLD" \
+  && echo "  ok   orphan: a new watcher stops the orphan on its folder" \
+  || { echo "  FAIL orphan: the orphan (pid $OLD) is still running beside the new watcher"; own_fail=1; }
+p=$(probe_of "$P2/rec/session 1716.Sketch.000.mp4")
+[ "$p" = "64x48 0.60s" ] && echo "  ok   orphan: which closed its own video first, all 3 frames playable ($p)" \
+  || { echo "  FAIL orphan: the orphan's video is '$p', want 64x48 0.60s"; own_fail=1; }
+mkframes 4 8 BBBB NewCanvas1 64 48 "$P2/frames"
+wait_until 10 no_frames "$P2/frames" || true
+stop_watcher "$NEW"
+p=$(probe_of "$P2/rec/session 1939.NewCanvas1.000.mp4")
+[ "$p" = "64x48 1.00s" ] && echo "  ok   orphan: the new session's video holds all 5 of its frames ($p)" \
+  || { echo "  FAIL orphan: the new session's video is '$p', want 64x48 1.00s"; own_fail=1; }
+ls "$P2/rec" | grep -q "^session 1716.NewCanvas1" \
+  && { echo "  FAIL orphan: the orphan recorded the new canvas"; ls "$P2/rec"; own_fail=1; } \
+  || echo "  ok   orphan: and none of them land in the orphan's session"
+grep -q "stopping an orphaned watcher on this folder (pid $OLD)" "$P2/new.log" \
+  && echo "  ok   orphan: the new watcher says which process it stopped" \
+  || { echo "  FAIL orphan: nothing in the log:"; cat "$P2/new.log"; own_fail=1; }
+
+# --- 2b. a watcher still waiting for an orphan can still be stopped --------
+# THE TRAP: the new watcher WAITS for the orphan to close its video. If its
+# Ctrl-C/SIGTERM handlers are installed only after that wait (they once were),
+# a stop sent during it is lost: bash starts background jobs with SIGINT
+# ignored, so the watcher sat there and the script hung. The orphan here is
+# frozen with SIGSTOP, so the wait is guaranteed to be in progress.
+P2B="$OWN/stalled"; mkdir -p "$P2B/frames" "$P2B/rec"
+mkframes 1 3 AAAA Sketch 64 48 "$P2B/frames"
+start_app "$WORK/v036/sai-timelapse-encoder" "$P2B/frames" "$P2B/rec/session 1716.mp4" "$P2B/old.log"
+wait_until 10 no_frames "$P2B/frames" \
+  || { echo "  FAIL stalled: the stand-in never read its frames"; cat "$P2B/old.log"; exit 1; }
+quit_app; STALLED=$ENC_PID
+kill -STOP "$STALLED"
+"$WORK/enc-live" --frames "$P2B/frames" --out "$P2B/rec/session 1939.mp4" --fps 5 --watch > "$P2B/new.log" 2>&1 &
+NEW=$!; WATCHERS="$WATCHERS $NEW"
+sleep 1.5                                   # it has signalled the orphan and is waiting
+gone "$NEW" && { echo "  FAIL stalled: the new watcher did not wait for the orphan"; own_fail=1; }
+kill -INT "$NEW" 2>/dev/null || true
+wait_until 3 gone "$NEW" \
+  && echo "  ok   stalled: a watcher waiting for an orphan still stops on Ctrl-C" \
+  || { echo "  FAIL stalled: Ctrl-C was lost while it waited for the orphan"; own_fail=1;
+       kill -KILL "$NEW" 2>/dev/null || true; }
+wait "$NEW" 2>/dev/null || true
+# Let the orphan go: the SIGTERM it was sent is still pending, and it must still
+# close its own video once it runs again.
+kill -CONT "$STALLED"
+wait_until 10 gone "$STALLED" \
+  && echo "  ok   stalled: the orphan acts on the stop it was sent once it runs again" \
+  || { echo "  FAIL stalled: the orphan (pid $STALLED) is still running"; own_fail=1; }
+p=$(probe_of "$P2B/rec/session 1716.Sketch.000.mp4")
+[ "$p" = "64x48 0.60s" ] && echo "  ok   stalled: and its video is whole ($p)" \
+  || { echo "  FAIL stalled: the orphan's video is '$p', want 64x48 0.60s"; own_fail=1; }
+
+# --- 3. and nobody else's ---------------------------------------------------
+# A wrong "this is an orphan on my folder" sends SIGTERM to somebody else's
+# process. A watcher whose app is still running is that app's own, and an orphan
+# on another folder is stealing from nobody here.
+P3="$OWN/others"; mkdir -p "$P3/frames" "$P3/elsewhere" "$P3/rec"
+start_app "$WORK/v036/sai-timelapse-encoder" "$P3/frames" "$P3/rec/live.mp4" "$P3/live.log"
+LIVE_APP=$APP_PID; LIVE=$ENC_PID
+start_app "$WORK/v036/sai-timelapse-encoder" "$P3/elsewhere" "$P3/rec/other.mp4" "$P3/other.log"
+quit_app; OTHER=$ENC_PID
+sleep 1
+"$WORK/enc-live" --frames "$P3/frames" --out "$P3/rec/new.mp4" --fps 5 --watch > "$P3/new.log" 2>&1 &
+NEW=$!; WATCHERS="$WATCHERS $NEW"
+sleep 2
+gone "$LIVE" && { echo "  FAIL others: stopped a watcher whose app is still running"; own_fail=1; } \
+  || echo "  ok   others: a watcher whose app is still running is left alone"
+gone "$OTHER" && { echo "  FAIL others: stopped an orphan on a different folder"; own_fail=1; } \
+  || echo "  ok   others: an orphan on a different folder is left alone"
+stop_watcher "$NEW"
+kill -TERM "$LIVE" "$OTHER" 2>/dev/null || true
+wait_until 5 gone "$LIVE" || true; wait_until 5 gone "$OTHER" || true
+wait "$LIVE_APP" 2>/dev/null || true
+
+[ "$own_fail" = 0 ] || exit 1
+echo "All watcher lifetime tests passed."
+
+echo ""
+echo "== Every exit from the running app ends the recording first =="
+# THE TRAP: exit() is not Quit. It skips applicationWillTerminate, and a bare
+# exit(0) in pollUntilSAICloses is how the orphan above came about. The encoder
+# now stops by itself when the app vanishes, but only endRecordingAndExit() also
+# FINISHES the session; skip it and the next launch writes into a half-open one.
+# The app cannot be launched here, so this reads the source: no exit() anywhere
+# in the running app except the one inside endRecordingAndExit.
+#   * main.swift above `final class SetupController` is command-line modes that
+#     run instead of the app, so only the part from there on is checked;
+#   * a developer hook (SAIPP_TEST_*) may exit within a few lines of its check.
+bare=$(awk '
+  FNR == 1 { app = (FILENAME !~ /\/main\.swift$/); inside = 0; hook = -100 }
+  FILENAME ~ /\/main\.swift$/ && /^final class SetupController/ { app = 1 }
+  /SAIPP_TEST_/ { hook = FNR }
+  /^func endRecordingAndExit/ { inside = 1 }
+  inside { if (/^}/) inside = 0; next }
+  app && FNR - hook > 4 && /(^|[^A-Za-z0-9_])_?exit\(/ && $0 !~ /^[[:space:]]*\/\// {
+    n = split(FILENAME, parts, "/"); print "    " parts[n] ":" FNR ": " $0
+  }' "$REPO"/wacom-helper/*.swift)
+if [ -z "$bare" ]; then
+  echo "  ok   exits: every exit from the running app goes through endRecordingAndExit"
+else
+  echo "  FAIL exits: a bare exit() in the running app skips ending the recording:"
+  echo "$bare"; exit 1
+fi
+# And the exit that actually left the orphan behind is one of them.
+awk '/^func pollUntilSAICloses/,/^}/' "$REPO/wacom-helper/SAIProcess.swift" \
+  | grep -q "endRecordingAndExit()" \
+  && echo "  ok   exits: quitting because SAI closed is one of them" \
+  || { echo "  FAIL exits: pollUntilSAICloses no longer ends the recording"; exit 1; }
+echo "All exit tests passed."
 
 echo ""
 echo "== A session leaves a fingerprint, and pieces rebuild into one video =="
