@@ -157,12 +157,9 @@ extension SetupController {
         let c = osa("button returned of (display dialog \"Make macOS ask for Input Monitoring again?\n\nThis clears only this app's own permission entry, so the system prompt reappears.\n\nYou still approve it in System Settings. The app will relaunch.\" buttons {\"Cancel\", \"Reset & ask again\"} default button \"Reset & ask again\" with icon caution)")
         guard c == "Reset & ask again" else { return }
         _ = runCapture("/usr/bin/tccutil", ["reset", "ListenEvent", bid])
-        // The prompt only fires on a fresh launch, so bounce ourselves.
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/bin/bash")
-        p.arguments = ["-c", "sleep 1; open '\(Bundle.main.bundlePath)'"]
-        try? p.run()
-        exit(0)
+        // The prompt only fires on a fresh launch, so bounce ourselves. Through
+        // endRecordingAndExit, never a bare exit(): see there for why.
+        endRecordingAndExit(relaunch: true)
     }
     /// Granting Input Monitoring means finding this app in a file picker, which
     /// is the fiddliest step in the whole setup. Do the finding FOR the user:
@@ -713,9 +710,8 @@ extension SetupController {
         // and reopen the app (macOS applies the grant on a fresh launch).
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
         _ = osa("display dialog \"Couldn't read the tablet yet.\n\nIn System Settings → Privacy & Security → Input Monitoring, turn ON 'SAI Pen Pressure', then reopen this app.\" buttons {\"Reopen now\"} default button \"Reopen now\" with icon caution")
-        let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/bash")
-        p.arguments = ["-c", "sleep 1; open '\(Bundle.main.bundlePath)'"]
-        try? p.run()
-        exit(0)
+        // An SAI window left open from before starts the live encoder (see
+        // refresh()), so there can be one running even here.
+        endRecordingAndExit(relaunch: true)
     }
 }

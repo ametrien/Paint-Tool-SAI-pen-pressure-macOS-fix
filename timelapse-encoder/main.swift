@@ -17,7 +17,9 @@
 //     --from <n> --to <n> inclusive 1-based frame range
 //     --segment-frames <n> roll a new file every n frames (default 0 = never)
 //     --keep              do not delete frames after encoding
-//     --watch             keep running, encoding frames as they appear
+//     --watch             keep running, encoding frames as they appear, until
+//                         stopped or until whatever started it exits (see
+//                         WatchGuard.swift for why it must not outlive it)
 //
 // SEPARATE PROCESS from the pressure helper, deliberately: the helper's job is
 // realtime pen input, and an encoder doing GPU work and disk I/O in the same
@@ -30,7 +32,7 @@ import Foundation
 
 func home(_ p: String) -> String { NSString(string: p).expandingTildeInPath }
 
-var framesDir = home("~/SAI2-pressure/drive_c/sai-timelapse/frames")
+var framesDir = home(EncoderCore.defaultFramesDir)
 var outPath = home("~/Movies/sai-timelapse.mp4")
 var fps = 12
 var maxSeconds = 0.0
@@ -70,7 +72,8 @@ while let a = args.first {
           --from <n> --to <n>  inclusive 1-based frame range
           --segment-frames <n> roll a new file every n frames
           --keep               keep frames after encoding
-          --watch              encode continuously as frames appear
+          --watch              encode continuously as frames appear; stops when
+                               whatever started it exits
           --finalize           stitch --watch segments into one video per canvas
           --rebuild <dir>      concatenate a drawing's session pieces in <dir>
                                into --out, without re-encoding them
@@ -287,6 +290,8 @@ final class LiveWriter {
     private let fps: Int
     private let maxFramesPerSegment: Int
     private var segment: Segment?
+    /// Number of the segment being written. Taken from the disk each time one
+    /// starts, never counted up from 0: see append().
     private var index = 0
     private(set) var total = 0
 
@@ -332,11 +337,15 @@ final class LiveWriter {
     /// AVAssetWriter that never gets finishWriting() produces something no
     /// player will open. Rolling periodically bounds a crash to one segment
     /// instead of the whole session.
-    private func url(for i: Int) -> URL {
+    /// What every file of this canvas's session starts with: segments are
+    /// "<prefix>.NNN.mp4", the sidecar "<prefix>.json".
+    private var prefix: String {
         let stem = base.deletingPathExtension().lastPathComponent
-        let name = label.isEmpty ? stem : "\(stem).\(label)"
-        return base.deletingLastPathComponent()
-            .appendingPathComponent(String(format: "%@.%03d.mp4", name, i))
+        return label.isEmpty ? stem : "\(stem).\(label)"
+    }
+    private func url(for i: Int) -> URL {
+        base.deletingLastPathComponent()
+            .appendingPathComponent(String(format: "%@.%03d.mp4", prefix, i))
     }
 
     func append(_ px: Data, stride: Int, width: Int, height: Int) -> Bool {
@@ -344,7 +353,21 @@ final class LiveWriter {
                                   next: (width, height),
                                   framesInSegment: segment?.frameCount ?? 0,
                                   maxFramesPerSegment: maxFramesPerSegment) {
-            if segment != nil { segment?.finish(); index += 1 }
+            segment?.finish(); segment = nil
+            // THE TRAP: the number comes from the DISK, not from a counter that
+            // starts at 0. Segment.init deletes whatever is already at its path,
+            // and this writer is often not the first one this session has had:
+            // --finalize is a separate process that folds in the frames left
+            // after --watch stopped, and the app restarts a watcher that died, or
+            // starts one in a relaunched app, on the same session. Counting from
+            // 0 made each of them delete the session's .000.mp4 and put only its
+            // own frames there: 6 watched frames plus 3 leftovers came out as a
+            // video of the 3. One past the highest number on disk never lands on
+            // an existing segment, and keeps the order finalizeSegments
+            // stitches them in.
+            let dir = base.deletingLastPathComponent().path
+            index = EncoderCore.nextSegmentIndex(
+                prefix: prefix, existing: (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? [])
             guard let s = Segment(url: url(for: index), width: width, height: height, fps: fps)
             else { return false }
             segment = s
@@ -395,7 +418,9 @@ let sidecarDecoder: JSONDecoder = {
 }()
 
 var liveWriters: [UInt64: LiveWriter] = [:]
-var signalSources: [DispatchSourceSignal] = []
+/// Strong references to the watch loop's dispatch sources: a source that is
+/// released stops firing.
+var signalSources: [DispatchSourceProtocol] = []
 
 /// Consume whatever frames are present, appending them to the open writers and
 /// deleting each one only once it is safely inside a video.
@@ -683,28 +708,57 @@ if finalizeOnly {
 }
 
 if watch {
-    print("watching \(framesDir) — Ctrl-C to stop")
+    // Taken first, before anything can wait: who started us. See WatchGuard.
+    let startedBy = getppid()
+    // ONE serial queue for everything that touches the writers: the poll, the
+    // signal handlers and the parent check. They used to run on two queues, so a
+    // signal could finish a writer while the poll was still appending to it, and
+    // with a second way out (the app vanishing) both could finish the same one.
+    // Either crashes and leaves the video unplayable. On one queue, whichever
+    // comes first finishes, and nothing touches the writers after it.
+    let watchQueue = DispatchQueue(label: "sai-timelapse.watch")
     // A half-written video is unplayable, so the writers MUST be closed on the
     // way out. signal() alone is not enough: only async-signal-safe calls are
     // legal in a handler, and finishing an AVAssetWriter is nowhere near that.
     // DispatchSource delivers it as an ordinary event instead.
     for sig in [SIGINT, SIGTERM] {
         signal(sig, SIG_IGN)
-        let src = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+        let src = DispatchSource.makeSignalSource(signal: sig, queue: watchQueue)
         src.setEventHandler { finishLive(); exit(0) }
         src.resume()
         signalSources.append(src)
     }
+    // The frames folder is shared by every session, so an orphaned watcher on it
+    // would take this session's frames. Stop any before reading one.
+    //
+    // THE TRAP: this waits (for an orphan to close its video), so the handlers
+    // above must exist BEFORE it. They run on watchQueue, not this thread, so a
+    // stop still works mid-wait, and with nothing open yet it just exits. It
+    // used to run before them, which looked harmless: an unhandled SIGTERM kills
+    // at once. But bash starts background jobs with SIGINT IGNORED, so a Ctrl-C
+    // sent while it waited was silently dropped and the watcher never stopped.
+    WatchGuard.stopOrphanedWatchers(of: framesDir) { print($0) }
+    print("watching \(framesDir) — Ctrl-C to stop")
     // Deliberately simple polling. The frames directory changes at drawing
     // speed, a few times a second at most, so an FSEvents stream would be
     // machinery for no gain.
-    DispatchQueue.global().async {
-        while true {
-            let files = frameFiles(in: framesDir)
-            if !files.isEmpty { liveConsume(files) }
-            Thread.sleep(forTimeInterval: 1.0)
+    let tick = DispatchSource.makeTimerSource(queue: watchQueue)
+    tick.schedule(deadline: .now(), repeating: 1.0)
+    tick.setEventHandler {
+        // THE TRAP: checked BEFORE reading, every time. Once the app that
+        // started us has gone, the next frame in this folder may already be the
+        // next session's, so not one more is taken. Close our own video and go.
+        // Remove this and an app that ends without stopping us (exit(), crash,
+        // force quit) leaves a watcher stealing every later session's frames.
+        if WatchGuard.parentIsGone(startedBy: startedBy) {
+            print("the app that started this watcher has gone; closing its video and stopping")
+            finishLive(); exit(0)
         }
+        let files = frameFiles(in: framesDir)
+        if !files.isEmpty { liveConsume(files) }
     }
+    tick.resume()
+    signalSources.append(tick)
     dispatchMain()
 } else {
     let files = frameFiles(in: framesDir)

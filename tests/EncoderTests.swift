@@ -159,6 +159,112 @@ do {
            "range: no frames gives an empty range")
 }
 
+// --- recognising another watcher on the frames folder ------------------------
+// A wrong "yes" here makes a new watcher SIGTERM somebody else's process, so the
+// "no" cases matter as much as the "yes" ones. The whole path, with real
+// processes, is tested in run-tests.sh.
+do {
+    /// A KERN_PROCARGS2 buffer laid out as the kernel lays it out: argc, the
+    /// executable path, NUL padding, argv, then the environment.
+    func procArgs(exe: String, argv: [String], env: [String] = ["HOME=/Users/x"],
+                  padding: Int = 3, argc: Int? = nil) -> [UInt8] {
+        var b: [UInt8] = []
+        withUnsafeBytes(of: Int32(argc ?? argv.count).littleEndian) { b.append(contentsOf: $0) }
+        b += Array(exe.utf8) + [0] + [UInt8](repeating: 0, count: padding)
+        for s in argv + env { b += Array(s.utf8) + [0] }
+        return b
+    }
+    let app = "/Applications/SAI Pen Pressure.app/Contents/Resources/sai-timelapse-encoder"
+    let frames = "/Users/x/SAI2-pressure/drive_c/sai-timelapse/frames"
+    // Exactly the command line the app builds in startLiveEncoder(), spaces and all.
+    let shipped = [app, "--frames", frames,
+                   "--out", "/Users/x/Movies/SAI Timelapses/.recording/session 2026-11-06 1716.mp4",
+                   "--fps", "12", "--watch"]
+
+    let parsed = EncoderCore.parseProcArgs(procArgs(exe: app, argv: shipped))
+    expect(parsed?.exe == app, "procargs: the executable path, spaces included")
+    expect(parsed?.argv == shipped, "procargs: every argument, and not the environment")
+    expect(EncoderCore.parseProcArgs(procArgs(exe: app, argv: shipped, padding: 0))?.argv == shipped,
+           "procargs: no padding after the executable is fine too")
+    expect(EncoderCore.parseProcArgs([1, 0]) == nil, "procargs: a truncated buffer is refused")
+    expect(EncoderCore.parseProcArgs(procArgs(exe: app, argv: ["a"], env: [], argc: 5)) == nil,
+           "procargs: fewer arguments than argc claims is refused, not padded out")
+    var cut = procArgs(exe: app, argv: shipped, env: [])
+    cut.removeLast()                                   // last argument loses its NUL
+    expect(EncoderCore.parseProcArgs(cut) == nil, "procargs: an unterminated argument is refused")
+
+    expect(EncoderCore.watchedFolder(argv: shipped) == frames,
+           "watcher: the app's own --watch command line watches --frames")
+    expect(EncoderCore.watchedFolder(argv: [app, "--watch"]) == EncoderCore.defaultFramesDir,
+           "watcher: without --frames it watches the default folder, as main.swift does")
+    expect(EncoderCore.watchedFolder(argv: [app, "--frames", frames, "--out", "/x.mp4"]) == nil,
+           "watcher: a one-shot encode is not a watcher")
+    expect(EncoderCore.watchedFolder(argv: [app, "--frames", frames, "--out", "/x.mp4",
+                                            "--fps", "12", "--finalize"]) == nil,
+           "watcher: the app's --finalize run is not a watcher")
+    expect(EncoderCore.watchedFolder(argv: [app, "--frames", frames, "--watch", "--finalize"]) == nil,
+           "watcher: --finalize wins over --watch, as it does in main.swift")
+    expect(EncoderCore.watchedFolder(argv: [app, "--probe", "/x.mp4", "--watch"]) == nil,
+           "watcher: --probe wins over --watch")
+    expect(EncoderCore.watchedFolder(argv: [app, "--frames", frames, "--out", "/v/--watch"]) == nil,
+           "watcher: '--watch' inside a VALUE is not the flag")
+    expect(EncoderCore.watchedFolder(argv: [app, "--out", "--watch", "--frames", frames]) == nil,
+           "watcher: an option's value is skipped even when it looks like a flag")
+    expect(EncoderCore.watchedFolder(argv: [app, "--frames", "/a", "--frames", frames, "--watch"]) == frames,
+           "watcher: the last --frames wins, as it does in main.swift")
+    expect(EncoderCore.watchedFolder(argv: [app]) == nil, "watcher: no arguments, no watcher")
+
+    expect(EncoderCore.canonicalFolder("/a/b/") == EncoderCore.canonicalFolder("/a/b"),
+           "folder: a trailing slash is the same folder")
+    expect(EncoderCore.canonicalFolder("/a/./c/../b") == EncoderCore.canonicalFolder("/a/b"),
+           "folder: . and .. are the same folder")
+    expect(EncoderCore.canonicalFolder("/tmp") == "/private/tmp"
+           && EncoderCore.canonicalFolder("/private/tmp") == "/private/tmp",
+           "folder: symlinks are resolved, both spellings of /tmp are one folder")
+    expect(EncoderCore.canonicalFolder("~/f") == NSString(string: "~/f").expandingTildeInPath,
+           "folder: ~ is the home folder")
+    expect(EncoderCore.canonicalFolder("frames") == nil,
+           "folder: a relative path has no spelling, so it matches nothing")
+    expect(EncoderCore.canonicalFolder("/a/b") != EncoderCore.canonicalFolder("/a/b2"),
+           "folder: a folder is not its neighbour with a longer name")
+
+    expect(EncoderCore.isEncoder(exe: app, ownName: "whatever"),
+           "encoder: the shipped name is recognised from any copy")
+    expect(EncoderCore.isEncoder(exe: "/w/enc-live", ownName: "enc-live"),
+           "encoder: so is this copy's own name")
+    expect(!EncoderCore.isEncoder(exe: "/usr/bin/python3", ownName: "enc-live"),
+           "encoder: another program with the same arguments is left alone")
+    expect(!EncoderCore.isEncoder(exe: "/x/sai-timelapse-encoder-old", ownName: "enc-live"),
+           "encoder: a name that only starts the same is not the encoder")
+}
+
+// --- numbering live segments -------------------------------------------------
+// Creating a segment deletes whatever is at its path, so the next number must
+// never be one already on disk. A writer that counted from 0 instead made
+// --finalize replace the watcher's whole session with its few leftover frames.
+do {
+    let p = "session 2026-11-06 1716.Sketch"
+    func next(_ names: [String]) -> Int { EncoderCore.nextSegmentIndex(prefix: p, existing: names) }
+    expect(next([]) == 0, "segments: the first one in an empty folder is .000")
+    expect(next(["\(p).000.mp4"]) == 1,
+           "segments: after the watcher's .000, --finalize writes .001 instead of replacing it")
+    expect(next(["\(p).000.mp4", "\(p).001.mp4", "\(p).json"]) == 2,
+           "segments: one past the highest, and the sidecar is not a segment")
+    expect(next(["\(p).000.mp4", "\(p).004.mp4"]) == 5,
+           "segments: past the highest even with a gap, so the stitching order holds")
+    expect(next(["\(p).999.mp4"]) == 1000 && next(["\(p).1000.mp4"]) == 1001,
+           "segments: past .999 the numbers just grow a digit")
+    expect(next(["\(p).mp4"]) == 0, "segments: the finished video of the session is not a segment")
+    expect(next(["session 2026-11-06 1716.Sketch 2.000.mp4"]) == 0,
+           "segments: another canvas whose name starts the same has its own numbers")
+    expect(next(["\(p).v2.000.mp4", "\(p).001.000.mp4"]) == 0,
+           "segments: so does a canvas whose name continues after a dot")
+    expect(next(["session 2026-11-06 1939.Sketch.003.mp4"]) == 0,
+           "segments: another session's segments are not this one's")
+    expect(next(["\(p).00a.mp4", "\(p)..mp4", "\(p).-1.mp4", "\(p).٣.mp4"]) == 0,
+           "segments: anything that is not plain ASCII digits is not a segment number")
+}
+
 if failures > 0 {
     print("FAILED: \(failures) test(s)")
     exit(1)

@@ -5,3 +5,4 @@
 timelapse-encoder/EncoderCore.swift
 timelapse-encoder/LibraryCore.swift
 timelapse-encoder/main.swift
+timelapse-encoder/WatchGuard.swift
