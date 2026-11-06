@@ -127,6 +127,13 @@ static UINT  g_serial = 1;
 static BOOL  g_open;
 static int   g_screenW = 1352, g_screenH = 878;   /* primary screen (fallback) */
 static int   g_virtW = 1352, g_virtH = 878;       /* full virtual desktop (all displays) */
+static int   g_virtX, g_virtY;                    /* ...and where it starts: negative when a
+                                                     screen sits left of / above the main one.
+                                                     All four are re-read about once a second
+                                                     (refresh_virtual), never only at load:
+                                                     that was issue #37. Guarded by g_cs. */
+static int   g_newscreen;   /* pen reached a screen SAI's tablet area does not cover (#37) */
+static int   g_follow_cursor;   /* self-check failed: following Wine's cursor instead */
 static OURPKT g_last;          /* most recent packet */
 static UINT   g_last_serial;
 #define RING_SZ 256            /* recent packets by serial, so WTPacket can return
@@ -181,8 +188,16 @@ static void fill_default_context(LOGCONTEXTW *lc) {
      * correctly instead of producing a doubled cursor. A square extent stretched
      * drawings; a single-screen extent broke the 2nd display. Single screen:
      * virtual == primary, so this is identical to before. */
-    lc->lcOutExtX = g_virtW * 8; lc->lcOutExtY = g_virtH * 8;
-    lc->lcSysExtX = g_virtW; lc->lcSysExtY = g_virtH;
+    /* The system area starts where the desktop really starts. A real Wacom
+     * driver reports the virtual desktop's origin here; before #37 we always
+     * said 0,0, which is wrong as soon as a screen sits left of or above the
+     * main one (the desktop then starts at a negative coordinate). */
+    EnterCriticalSection(&g_cs);
+    int vx = g_virtX, vy = g_virtY, vw = g_virtW, vh = g_virtH;
+    LeaveCriticalSection(&g_cs);
+    lc->lcOutExtX = vw * 8; lc->lcOutExtY = vh * 8;
+    lc->lcSysOrgX = vx; lc->lcSysOrgY = vy;
+    lc->lcSysExtX = vw; lc->lcSysExtY = vh;
     lc->lcSensX = lc->lcSensY = lc->lcSensZ = 65536;
 }
 
@@ -216,6 +231,76 @@ static int   g_dirty;      /* g_last holds a fresher sample than we've posted */
                               boxy fast curves (drops in-between points); higher = smoother
                               curves, more lag. Measuring SAI's draw rate to tune this. */
 static DWORD g_ring_time[RING_SZ];  /* GetTickCount when each serial was posted (latency probe) */
+
+/* ---- SCREENS (issue #37) ----------------------------------------------------
+ * Re-read the Windows virtual desktop. Wine updates it the moment macOS
+ * reports a display change; reading it only once at load is what left the DLL
+ * describing a mirrored 1920x1080 desktop after the user switched to extended.
+ * Cheap enough to call from the hot path; it throttles itself to once a second.
+ *
+ * When it changes we also tell SAI, the way a WinTab driver does: WT_INFOCHANGE
+ * (the device/desktop info changed) and WT_CTXUPDATE for its context. If SAI
+ * responds by reading its context again (WTGetW), it learns the new area and
+ * the new screen gets pressure without a restart. If it does not, nothing is
+ * lost: wtc_place() keeps placing the pen inside the area SAI still believes
+ * in, and steps aside on screens outside it. Which of the two SAI does is in
+ * the log ("SAI re-read its context"). WT_NO_CTX_NOTIFY=1 turns the messages
+ * off, should SAI ever react badly to them. */
+#define WT_CTXUPDATE  (WT_DEFBASE+3)
+#define WT_INFOCHANGE (WT_DEFBASE+6)
+static int g_notify_ctx = 1;
+/* self-check: how far (Windows pixels) our pen position may sit from Wine's
+ * cursor, and for how many consecutive hover samples, before we stop trusting
+ * it. Generous on purpose: the cursor trails the tablet by a frame or two, and
+ * a false alarm would cost sub-pixel precision for nothing. WT_NO_SELFCHECK=1
+ * turns it off. */
+#define SELFCHECK_TOL  48
+#define SELFCHECK_NEED 20
+static int g_selfcheck = 1;
+/* WT_LOG_POS=1 (with WT_DEBUG): log where EVERY positioned sample goes, inside
+ * SAI's area or not. For tools/multimon/harness.py, which checks placement
+ * with hover-only samples so nothing ever clicks in SAI. Off by default: one
+ * line per sample is far too much for normal debugging. */
+static int g_log_pos;
+
+static void read_virtual(int *x, int *y, int *w, int *h) {
+    *x = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    *y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    *w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+    *h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    if (*w <= 0 || *h <= 0) {          /* no multi-monitor metrics: primary only */
+        *x = 0; *y = 0;
+        *w = GetSystemMetrics(SM_CXSCREEN);
+        *h = GetSystemMetrics(SM_CYSCREEN);
+    }
+}
+
+static void refresh_virtual(void) {
+    static DWORD last;
+    DWORD now = GetTickCount();
+    if (last && now - last < 1000) return;
+    last = now;
+    int x, y, w, h;
+    read_virtual(&x, &y, &w, &h);
+    if (w <= 0 || h <= 0) return;
+    EnterCriticalSection(&g_cs);
+    int changed = x != g_virtX || y != g_virtY || w != g_virtW || h != g_virtH;
+    int ox = g_virtX, oy = g_virtY, ow = g_virtW, oh = g_virtH;
+    if (changed) { g_virtX = x; g_virtY = y; g_virtW = w; g_virtH = h; }
+    LONG sx = g_ctx.lcSysOrgX, sy = g_ctx.lcSysOrgY, sw = g_ctx.lcSysExtX, sh = g_ctx.lcSysExtY;
+    BOOL have = g_have_ctx;
+    LeaveCriticalSection(&g_cs);
+    if (!changed) return;
+    log_line("SCREENS changed: desktop (%d,%d %dx%d) -> (%d,%d %dx%d); SAI's tablet area %s(%ld,%ld %ldx%ld)",
+             ox, oy, ow, oh, x, y, w, h, have ? "" : "not opened yet ", sx, sy, sw, sh);
+    /* a fresh layout: whether the pen can reach every screen is re-learned */
+    g_newscreen = 0;
+    if (g_notify_ctx && g_open && g_hwnd) {
+        PostMessageW(g_hwnd, WT_INFOCHANGE, 0, 0);
+        PostMessageW(g_hwnd, WT_CTXUPDATE, (WPARAM)0xC0FFEE01, 0);
+        log_line("SCREENS: told SAI (WT_INFOCHANGE + WT_CTXUPDATE)");
+    }
+}
 
 /* build a WinTab packet from one sample and post it to SAI. Streams
  * CONTINUOUSLY, exactly like a real Wacom driver: pen-down samples carry
@@ -251,15 +336,72 @@ static void emit_sample(const SAMPLE *s) {
      * 64-bit step, no intermediate screen-pixel quantization. */
     if (s->has_pos) {
         LONG oX = 0, oY = 0, eX = IN_EXT, eY = IN_EXT;
+        refresh_virtual();
         EnterCriticalSection(&g_cs);
+        WTC_RECT virt = { g_virtX, g_virtY, g_virtW, g_virtH };
+        WTC_RECT sys = virt;            /* no context yet: assume it covers everything */
         if (g_have_ctx) {
             oX = g_ctx.lcOutOrgX; eX = g_ctx.lcOutExtX;
             oY = g_ctx.lcOutOrgY; eY = g_ctx.lcOutExtY;
+            sys.x = g_ctx.lcSysOrgX; sys.y = g_ctx.lcSysOrgY;
+            sys.w = g_ctx.lcSysExtX; sys.h = g_ctx.lcSysExtY;
         }
         LeaveCriticalSection(&g_cs);
+
+        /* SELF-CHECK (see wtc_cursor_streak). Only while hovering, and only
+         * while Wine's cursor is over SAI's own window: elsewhere Wine is not
+         * told where the cursor is, and a stale cursor would look like a fault
+         * of ours. */
+        SAMPLE use = *s;
+        if (!down && g_selfcheck) {
+            static int streak;
+            POINT cur; RECT wr;
+            if (GetCursorPos(&cur) && GetWindowRect(g_hwnd, &wr) && PtInRect(&wr, cur)) {
+                int32_t ex, ey;
+                wtc_sample_to_screen(s, virt, &ex, &ey);
+                streak = wtc_cursor_streak(streak, ex, ey, cur.x, cur.y, SELFCHECK_TOL);
+                if (!g_follow_cursor && streak >= SELFCHECK_NEED) {
+                    g_follow_cursor = 1;
+                    log_line("SELFCHECK: pen at (%d,%d) but Wine's cursor at (%ld,%ld) for %d samples; "
+                             "following the cursor", ex, ey, (long)cur.x, (long)cur.y, streak);
+                } else if (g_follow_cursor && streak == 0) {
+                    g_follow_cursor = 0;
+                    log_line("SELFCHECK: pen and cursor agree again at (%d,%d)", ex, ey);
+                }
+            }
+        }
+        if (g_follow_cursor) {
+            POINT cur;
+            if (GetCursorPos(&cur)) use = wtc_screen_to_sample(s, virt, cur.x, cur.y);
+        }
+
         int32_t px, py;
-        wtc_map_to_out(s, oX, oY, eX, eY, IN_EXT, &px, &py);
-        pk.x = px; pk.y = py;
+        int inside = wtc_place(&use, virt, sys, oX, oY, eX, eY, IN_EXT, &px, &py);
+        if (g_log_pos) {
+            int32_t gx, gy;
+            wtc_sample_to_screen(&use, virt, &gx, &gy);
+            log_line("POS screen=(%d,%d) inside=%d out=(%ld,%ld) follow=%d",
+                     gx, gy, inside, (long)px, (long)py, g_follow_cursor);
+        }
+        if (!inside) {
+            /* A screen SAI's tablet area does not cover: any coordinate we
+             * posted would put ink somewhere else. Step aside instead. End a
+             * stroke in progress where it last was, then stay silent, so SAI
+             * takes the pen as an ordinary mouse there (right place, no
+             * pressure). The app reads newscreen=1 and suggests a restart. */
+            if (!g_newscreen)
+                log_line("SCREENS: pen on a screen outside SAI's tablet area (%d,%d %dx%d); "
+                         "stepping aside so it works as a mouse there", sys.x, sys.y, sys.w, sys.h);
+            g_newscreen = 1;
+            if (g_was_down) {
+                pk.buttons = 0; pk.pressure = 0;      /* pk.x/y still hold the last point */
+                down = 0;
+            } else {
+                return;
+            }
+        } else {
+            pk.x = px; pk.y = py;
+        }
     }
     /* else: keep pk.x/pk.y from g_last (position-less pen-up) */
 
@@ -784,6 +926,8 @@ static void write_status(unsigned long recv, unsigned long posted) {
                               recv, posted, g_fetch_count, g_max_press);
     FILE *f;
     if (n <= 0) return;
+    /* #37 lines; if they do not fit, the long-standing part still goes out */
+    n += wtc_format_screens(buf + n, sizeof buf - (size_t)n, g_newscreen, g_follow_cursor);
     f = fopen("C:\\wt_status.txt", "wb");
     if (!f) return;
     fwrite(buf, 1, (size_t)n, f);
@@ -882,6 +1026,7 @@ static DWORD WINAPI producer(LPVOID arg) {
         ensure_click_dedup();           /* pen-tap double-click fix, once hwnd exists */
         check_win32_wake(now);          /* helper asked us to restore Win32 focus? */
         check_zoom(now);                /* ...or asked us to zoom (pinch gesture) */
+        refresh_virtual();              /* screens changed? (#37) tell SAI promptly */
         flush_pending();                /* pen still/lifted: deliver the final point */
         if (now - lastStatus > 1000) {
             lastStatus = now;
@@ -1002,7 +1147,30 @@ int WINAPI WTPacket(HANDLE ctx, UINT serial, LPVOID buf) {
 }
 
 UINT WINAPI WTQueueSizeSet(HANDLE ctx, int n) { log_line("WTQueueSizeSet n=%d", n); (void)ctx; (void)n; return 1; }
-BOOL WINAPI WTGetW(HANDLE ctx, LOGCONTEXTW *lc) { log_line("WTGetW"); (void)ctx; if(lc) fill_default_context(lc); return TRUE; }
+BOOL WINAPI WTGetW(HANDLE ctx, LOGCONTEXTW *lc) {
+    log_line("WTGetW"); (void)ctx;
+    if (lc) {
+        fill_default_context(lc);
+        /* SAI now believes the area we just handed it, so place the pen in
+         * THAT area from here on. This is how a screen added after launch can
+         * get pressure without a restart (#37), if SAI re-reads its context
+         * when told the screens changed. */
+        EnterCriticalSection(&g_cs);
+        if (g_have_ctx && (g_ctx.lcSysOrgX != lc->lcSysOrgX || g_ctx.lcSysOrgY != lc->lcSysOrgY ||
+                           g_ctx.lcSysExtX != lc->lcSysExtX || g_ctx.lcSysExtY != lc->lcSysExtY)) {
+            log_line("SCREENS: SAI re-read its context: area (%d,%d %dx%d) -> (%d,%d %dx%d)",
+                     g_ctx.lcSysOrgX, g_ctx.lcSysOrgY, g_ctx.lcSysExtX, g_ctx.lcSysExtY,
+                     lc->lcSysOrgX, lc->lcSysOrgY, lc->lcSysExtX, lc->lcSysExtY);
+            g_ctx.lcSysOrgX = lc->lcSysOrgX; g_ctx.lcSysOrgY = lc->lcSysOrgY;
+            g_ctx.lcSysExtX = lc->lcSysExtX; g_ctx.lcSysExtY = lc->lcSysExtY;
+            g_ctx.lcOutOrgX = lc->lcOutOrgX; g_ctx.lcOutOrgY = lc->lcOutOrgY;
+            g_ctx.lcOutExtX = lc->lcOutExtX; g_ctx.lcOutExtY = lc->lcOutExtY;
+            g_newscreen = 0;
+        }
+        LeaveCriticalSection(&g_cs);
+    }
+    return TRUE;
+}
 BOOL WINAPI WTEnable(HANDLE ctx, BOOL enable) { log_line("WTEnable enable=%d", enable); (void)ctx; g_open = enable?TRUE:FALSE; return TRUE; }
 int  WINAPI WTPacketsGet(HANDLE ctx, int max, LPVOID buf) {
     log_line("WTPacketsGet max=%d", max);
@@ -1142,6 +1310,10 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID r) {
         g_virtH = GetSystemMetrics(SM_CYVIRTUALSCREEN);
         if (g_virtW <= 0) g_virtW = g_screenW;
         if (g_virtH <= 0) g_virtH = g_screenH;
+        read_virtual(&g_virtX, &g_virtY, &g_virtW, &g_virtH);
+        if (getenv("WT_NO_CTX_NOTIFY")) g_notify_ctx = 0;
+        if (getenv("WT_NO_SELFCHECK")) g_selfcheck = 0;
+        if (getenv("WT_LOG_POS")) g_log_pos = 1;
         /* logging is OFF unless WT_DEBUG is set: without a log file, log_line() is a
          * no-op (g_log stays NULL) so there's zero per-packet fflush overhead. */
         if (getenv("WT_DEBUG")) g_log = fopen("C:\\wtlog.txt", "w");
@@ -1154,8 +1326,8 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID r) {
          * unanswerable from the log, and a stale DLL looked exactly like a
          * broken fix. One line here settles it. */
         log_line("==== OwnTab wintab32.dll loaded; built " WT_BUILD_STAMP
-                 "; screen %dx%d virtual %dx%d maxPress=%d ====",
-             g_screenW, g_screenH, g_virtW, g_virtH, g_max_press);
+                 "; screen %dx%d virtual %dx%d at (%d,%d) maxPress=%d ====",
+             g_screenW, g_screenH, g_virtW, g_virtH, g_virtX, g_virtY, g_max_press);
         CreateThread(NULL, 0, producer, NULL, 0, NULL);
         /* Off unless WT_TIMELAPSE / WT_TIMELAPSE_PROBE is set. Started after
          * the producer so nothing here can delay pressure coming up. */
