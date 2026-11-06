@@ -84,7 +84,25 @@ means a real fault rather than a brush that was never going to taper.
 - [ ] A **single pen tap = a single click** (no accidental double-click) on canvas and on tools.
 
 ### Multi-monitor (if available)
+Quit SAI completely before each layout unless the step says otherwise. Draw near a corner and in
+the middle of each screen: an offset that grows across the screen and one that doesn't come from
+different bugs.
 - [ ] With a 2nd display, there's a **single** cursor that lands where the pen is on both screens.
+- [ ] **Mirrored**: ink under the pen.
+- [ ] **Extended, 2nd screen right** of the main one, SAI launched after: ink under the pen on both.
+- [ ] **Extended, 2nd screen left**, SAI launched after: ink under the pen on both (#37: was offset
+      by the width of the other screen).
+- [ ] **Extended, 2nd screen above**, SAI launched after: same.
+- [ ] **Screens changed while SAI is open** (start mirrored, switch to extended; or plug the screen
+      in): on the screen SAI started on, ink stays under the pen (#37: was a fifth to the left).
+      On the new screen, either pressure works, or the pen draws like a mouse and the menu-bar
+      icon shows a warning that says to restart SAI. Never ink in the wrong place.
+- [ ] **Unplug the 2nd screen while SAI is open**: the remaining screen still draws under the pen.
+- [ ] After any of these, the DLL log (Advanced → DLL logging) has `SCREENS changed` lines, and says
+      whether `SAI re-read its context`.
+
+Without a monitor or tablet: `tools/multimon/` (see its README) checks every layout from the DLL
+log.
 
 ### Shortcuts / saving
 - [ ] **Cmd+Z undoes**, Cmd+Y / Cmd+Shift+Z redoes, Cmd+S saves — inside SAI (via Wine's

@@ -56,7 +56,8 @@ being sent alongside what is actually arriving on SAI's side of the bridge.
 > - Mac: **Apple M3 Pro**, **macOS Tahoe 26.6.2 (25G83)**
 > - SAI: **PaintTool SAI Ver.2 (64-bit)**
 > - Tablet: **Wacom Intuos BT S (CTL-4100WL)**, over USB and Bluetooth
-> - Displays: **single screen**, and **two screens in mirroring mode**
+> - Displays: **single screen**, **two screens in mirroring mode**, and (from the next release)
+>   **two screens extended**, including screens connected while SAI is open
 >
 > Other tablets / Macs / display setups are untested — reports welcome as issues (see
 > [CONTRIBUTING](CONTRIBUTING.md)).
@@ -172,6 +173,8 @@ how much disk it uses
   macOS driver *should* work (the helper reads standard tablet events) but are untested.
 - **Bluetooth report rate (~130 Hz)** makes fast curves boxy — use USB for ~200 Hz ([why](https://ametrien.github.io/Paint-Tool-SAI-pen-pressure-macOS-fix/troubleshooting#fast-curves-come-out-boxy)).
 - Tilt/rotation are not forwarded (the test tablet has none); pressure only.
+- **A screen connected while SAI is open** may need SAI restarted before it gets pressure. Until
+  then the pen works there as a mouse, and the menu-bar icon says so ([#37](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/37)).
 - **SAI can freeze on input after app-switching** — press **⌃⌥⌘Space** (or the 🖊 menu-bar icon → *Wake SAI*) to instantly un-stick it.
 
 The last two are caused by SAI and by Wine's macOS driver (not the pressure bridge). See
