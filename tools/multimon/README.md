@@ -8,6 +8,7 @@ Checks where the pen lands with any screen layout, with no second monitor and no
 | `inject.py` | Plays the helper: sends pen samples to the DLL over UDP, computed exactly as `wacom-helper` does. `--hover` never clicks. |
 | `harness.py` | Puts it together: fake screen, SAI started without the helper, hover on every screen, then checks the DLL log (`WT_LOG_POS`) against where each point really is. |
 | `strokefind.m` | Screenshot diff of where ink appeared. Needs Screen Recording permission for whatever runs it. |
+| `wtbench.c` | Times the Win32 calls the DLL makes per sample, under Wine, with no visible window. Result in `MULTI-MONITOR-FINDINGS.md`. |
 
 Build the two Objective-C tools first:
 
