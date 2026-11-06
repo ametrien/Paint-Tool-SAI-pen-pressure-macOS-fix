@@ -3,7 +3,7 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.3.7] — 2026-11-06
 
 ### Fixed
 - **Extended displays** ([#37](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/37)).
@@ -16,6 +16,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
 - **A screen to the left of or above the main one.** The desktop then starts at a negative
   position, and SAI was always told it starts at 0,0, which pushed every stroke on the main screen
   sideways by the width of the other one. SAI is now told where the desktop really starts.
+- **A new session's strokes no longer end up in an old session's video.** When SAI closed and the
+  app quit with it, the app could leave its timelapse encoder running in the background. That
+  encoder kept reading the frames folder every session shares, so every later session's strokes
+  went into a video named after the old one, and the real session's video stayed empty. The
+  encoder now stops by itself, after closing its video, once the app that started it has gone,
+  whether the app quit, crashed or was force quit. A new recording also stops any encoder an
+  earlier version left behind, so updating cleans up after 0.3.6 too. And quitting because SAI
+  closed now finishes the session the way Quit does.
+- **Closing SAI no longer cuts a session's video down to its last few strokes.** On close, the
+  app adds the strokes the encoder had not picked up yet. Doing that could replace everything
+  recorded so far (up to the first 500 strokes) with just those few, and so could an encoder the
+  app restarted during a session. Both now add a new piece after the ones already recorded.
 
 ### Added
 - **A screen connected while SAI is open** gets the pen right away. If SAI does not pick up the new
@@ -24,9 +36,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
   for pressure there.* The Setup tab's bridge row says the same.
 - **A self-check.** While the pen hovers over SAI, the DLL compares where it thinks the pen is with
   where Wine's cursor is. If they stay apart, it follows the cursor and says so in the log, so a
-  layout nothing else anticipated still cannot put ink in the wrong place.
+  layout nothing else anticipated still cannot put ink in the wrong place. Moments when Wine's
+  cursor is frozen (the pen hovering over another screen, where Wine is not told where it is) are
+  left out, so moving between screens does not set it off.
 - `tools/multimon/`: a fake second display, a fake pen and a log-based check of every screen
   layout, so this can be tested without a monitor or a tablet.
+- **Tip for two screens: map the pen to one of them.** With Wacom's *Map to all displays*, the
+  tablet is spread over every screen, so each gets only part of it and the pen feels coarse and
+  imprecise. *Mapping → Select one display*, plus *Display toggle* to switch, keeps the whole
+  tablet on the screen you draw on.
 
 ## [0.3.6] — 2026-11-05
 
