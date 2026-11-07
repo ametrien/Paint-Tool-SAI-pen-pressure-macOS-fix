@@ -7,13 +7,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
 
 ### Added
 - **Sharp text on Retina screens** ([#39](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/39)),
-  on by default. Wine draws Windows programs at half the resolution of a Retina screen and macOS
-  stretches them to fill it, so SAI's text was soft, and Chinese and Japanese text smeared. Now
-  Wine draws SAI at the screen's full resolution and Windows text size is set to 200%, so SAI
-  keeps its size. It turns on the first time SAI starts after updating. If SAI looks too small or
-  too big, set *Window › Scaling of User Interface* to *Auto*. To turn it off (for an ordinary,
-  non-Retina monitor, say), untick *Sharp text on Retina screens* in Advanced; that puts back the
-  text size you had before.
+  a switch in Advanced, off by default. Wine draws Windows programs at half the resolution of a
+  Retina screen and macOS stretches them, so SAI's text is soft. With the switch on, SAI is drawn
+  at full resolution with Windows text size at 200%. **Better quality, but strokes will most
+  likely show up slower.** If SAI looks too small or too big, set *Window › Scaling of User
+  Interface* to *Auto*. Turning it off puts back the text size you had before.
 - **SAI restarts safely for it.** The switch only takes effect when SAI starts. If SAI is open,
   the app asks first and says to save your drawings. *Close and reopen SAI* closes it the way its
   own close button does, then opens it again. *Later* applies it at the next start.

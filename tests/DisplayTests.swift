@@ -94,13 +94,20 @@ struct DisplayTests {
         expect(on.allSatisfy { $0.first == "reg" && $0[1] == "add" && $0.last == "/f" },
                "reg: every command is a forced reg add (no prompt waiting for an answer)")
 
-        // --- on by default, and what happens before SAI starts -----------------
-        expect(DisplayCore.wanted(stored: nil), "default: nothing stored means Retina on")
-        expect(!DisplayCore.wanted(stored: false) && DisplayCore.wanted(stored: true),
+        // --- off by default, and what happens before SAI starts ----------------
+        // It makes SAI a few times slower, so nobody gets it without asking.
+        expect(DisplayCore.wanted(stored: nil) == nil, "default: nothing stored means hands off")
+        expect(DisplayCore.wanted(stored: false) == false && DisplayCore.wanted(stored: true) == true,
                "default: an explicit off or on is kept")
+        // THE TRAP: never set here must not switch off a RetinaMode someone
+        // turned on by hand, nor turn it on for someone who never asked.
+        expect(DisplayCore.plan(wantOn: nil, wineOn: true)
+               == DisplayCore.Plan(write: nil, rememberDPI: false, restartWine: false)
+               && DisplayCore.plan(wantOn: nil, wineOn: false).write == nil,
+               "plan: never set here leaves Wine alone, on or off")
         let first = DisplayCore.plan(wantOn: true, wineOn: false)
         expect(first.write == true && first.rememberDPI && first.restartWine,
-               "plan: first launch after updating turns it on, keeps the old DPI, restarts Wine")
+               "plan: switching on keeps the old DPI and restarts Wine")
         let stay = DisplayCore.plan(wantOn: true, wineOn: true)
         expect(stay.write == true && !stay.restartWine, "plan: already on is written again, no restart")
         let toOff = DisplayCore.plan(wantOn: false, wineOn: true)
