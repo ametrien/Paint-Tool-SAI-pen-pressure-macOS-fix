@@ -94,6 +94,24 @@ struct DisplayTests {
         expect(on.allSatisfy { $0.first == "reg" && $0[1] == "add" && $0.last == "/f" },
                "reg: every command is a forced reg add (no prompt waiting for an answer)")
 
+        // --- on by default, and what happens before SAI starts -----------------
+        expect(DisplayCore.wanted(stored: nil), "default: nothing stored means Retina on")
+        expect(!DisplayCore.wanted(stored: false) && DisplayCore.wanted(stored: true),
+               "default: an explicit off or on is kept")
+        let first = DisplayCore.plan(wantOn: true, wineOn: false)
+        expect(first.write == true && first.rememberDPI && first.restartWine,
+               "plan: first launch after updating turns it on, keeps the old DPI, restarts Wine")
+        let stay = DisplayCore.plan(wantOn: true, wineOn: true)
+        expect(stay.write == true && !stay.restartWine, "plan: already on is written again, no restart")
+        let toOff = DisplayCore.plan(wantOn: false, wineOn: true)
+        expect(toOff.write == false && toOff.restartWine && !toOff.rememberDPI,
+               "plan: switching off writes off once and restarts Wine")
+        // THE TRAP: off and already off must write NOTHING, or every launch
+        // would put the old DPI back over one changed later in winecfg.
+        expect(DisplayCore.plan(wantOn: false, wineOn: false)
+               == DisplayCore.Plan(write: nil, rememberDPI: false, restartWine: false),
+               "plan: off while Wine is off leaves the registry alone")
+
         // --- sai2.ini -----------------------------------------------------------
         // As SAI ships it: BOM, UTF-16LE, CRLF, a comment that mentions lang.
         let shipped = "[Locale]\r\nlang = en\r\n\r\n\r\n[PenTablet]\r\n\t; lang = ja is not a setting\r\n\tAvoidWacomBug = no\r\n"

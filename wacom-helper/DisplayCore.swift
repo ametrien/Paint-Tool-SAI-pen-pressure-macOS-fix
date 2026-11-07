@@ -1,8 +1,9 @@
 // DisplayCore.swift — sharp text on Retina screens (issue #39) and SAI's UI
 // language, as pure data.
 //
-// An opt-in switch in Advanced, off unless someone turns it on. What is known
-// and what is not:
+// A switch in Advanced, ON BY DEFAULT: most Macs have a Retina screen. Off is
+// for an ordinary monitor, or anyone who prefers it. What is known and what
+// is not:
 //
 //   Known: Wine's Mac driver draws Windows apps at 1x unless RetinaMode is on,
 //   and macOS then stretches the window 2x. Latin text survives that; CJK text,
@@ -112,6 +113,35 @@ enum DisplayCore {
     static func dpiToRestore(saved: Int?) -> Int {
         if let s = saved, validDPI.contains(s) { return s }
         return windowsDefaultDPI
+    }
+
+    /// ON BY DEFAULT: nothing stored means on. Off is a choice someone made in
+    /// Advanced, and it is remembered as such.
+    static func wanted(stored: Bool?) -> Bool { stored ?? true }
+
+    /// What to do before SAI starts, given what is wanted and what Wine has.
+    struct Plan: Equatable {
+        /// Write the on (true) or off (false) values; nil writes nothing.
+        var write: Bool?
+        /// Keep the current DPI as "before" (only when nothing is kept yet).
+        var rememberDPI: Bool
+        /// RetinaMode changes, so Wine must start fresh before SAI.
+        var restartWine: Bool
+    }
+
+    /// THE TRAP for "on by default": an "off" must not write anything while
+    /// Wine is already off. Writing the remembered DPI on every launch would
+    /// undo a text size changed later in winecfg, every time SAI opens. Only
+    /// the switch from on to off puts the old size back.
+    static func plan(wantOn: Bool, wineOn: Bool) -> Plan {
+        switch (wantOn, wineOn) {
+        case (true, false):  return Plan(write: true, rememberDPI: true, restartWine: true)
+        // Already on: write again (cheap, and it puts 200% back if something
+        // reset it), keep "before" if this is a prefix set to y by hand.
+        case (true, true):   return Plan(write: true, rememberDPI: true, restartWine: false)
+        case (false, true):  return Plan(write: false, rememberDPI: false, restartWine: true)
+        case (false, false): return Plan(write: nil, rememberDPI: false, restartWine: false)
+        }
     }
 
     /// The `wine reg add` arguments for one state. All three values every
