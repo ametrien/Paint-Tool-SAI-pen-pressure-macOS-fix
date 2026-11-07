@@ -224,7 +224,7 @@ func saiProcessRunning() -> Bool {
 }
 func pollUntilSAICloses() {
     let t = Timer(timeInterval: 2.0, repeats: true) { timer in
-        if !saiWindowIsOpen() { timer.invalidate(); endRecordingAndExit() }
+        if !saiWindowIsOpen() { timer.invalidate(); endRecordingAndExit(relaunch: takeReopenRequest()) }
     }
     RunLoop.main.add(t, forMode: .common)
 }
@@ -284,6 +284,7 @@ func launchSAIApp() {
     }
     writeMaxPressureForDLL()      // must land before the DLL loads
     applyWineShortcutRemap(g_wine)          // Keys tab -> Wine (every launch; idempotent)
+    prepareDisplaySettingsForLaunch(g_wine) // Advanced › Display: Retina, DPI, SAI language
     // Last session's status file must not be read as this session's. The app
     // also treats an old timestamp as "not running", but a wrong "the bridge is
     // live" is the single answer this must never give, so it gets two guards.
@@ -319,7 +320,7 @@ func launchSAIApp() {
         // window is still on screen, and in the 1.5 seconds below one can be.
         // So the exit stops whatever is running THEN, not only what ran before.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            if !saiWindowIsOpen() { endRecordingAndExit() }
+            if !saiWindowIsOpen() { endRecordingAndExit(relaunch: takeReopenRequest()) }
             else { pollUntilSAICloses() }
         }
     }

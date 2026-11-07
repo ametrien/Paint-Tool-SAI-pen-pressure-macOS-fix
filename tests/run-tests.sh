@@ -64,6 +64,13 @@ swiftc -o "$WORK/keys-tests" "$REPO/wacom-helper/KeysCore.swift" "$REPO/tests/Ke
 "$WORK/keys-tests"
 
 echo ""
+echo "== Swift core (DisplayCore.swift) =="
+# Sharp text on Retina (#39). Turning it off must give back the DPI from
+# before; a second "on" must not remember our own 200% as the person's choice.
+swiftc -o "$WORK/display-tests" "$REPO/wacom-helper/DisplayCore.swift" "$REPO/tests/DisplayTests.swift"
+"$WORK/display-tests"
+
+echo ""
 echo "== Swift core (EncoderCore.swift) =="
 swiftc -o "$WORK/encoder-tests" "$REPO/timelapse-encoder/EncoderCore.swift" "$REPO/tests/EncoderTests.swift"
 "$WORK/encoder-tests"
@@ -674,7 +681,7 @@ else
 fi
 # And the exit that actually left the orphan behind is one of them.
 awk '/^func pollUntilSAICloses/,/^}/' "$REPO/wacom-helper/SAIProcess.swift" \
-  | grep -q "endRecordingAndExit()" \
+  | grep -q "endRecordingAndExit(" \
   && echo "  ok   exits: quitting because SAI closed is one of them" \
   || { echo "  FAIL exits: pollUntilSAICloses no longer ends the recording"; exit 1; }
 echo "All exit tests passed."
