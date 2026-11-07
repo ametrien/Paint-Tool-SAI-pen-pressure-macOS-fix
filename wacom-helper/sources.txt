@@ -26,4 +26,6 @@ wacom-helper/LibraryStore.swift
 wacom-helper/LibraryUI.swift
 wacom-helper/KeysCore.swift
 wacom-helper/KeysUI.swift
+wacom-helper/DisplayCore.swift
+wacom-helper/DisplayUI.swift
 timelapse-encoder/LibraryCore.swift
