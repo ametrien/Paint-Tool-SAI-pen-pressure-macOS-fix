@@ -22,7 +22,7 @@ import AppKit
 
 // MARK: - settings files (Application Support, like every other setting)
 
-/// "on" or "off". Missing means on: Retina is the default (DisplayCore.wanted).
+/// "on" or "off". Missing means never set here: Wine is left alone.
 func retinaSettingFile() -> String { appSupport() + "/retina-mode.txt" }
 /// The DPI from before Retina went on, to put back when it goes off.
 func retinaPrevDPIFile() -> String { appSupport() + "/retina-prev-dpi.txt" }
@@ -127,8 +127,7 @@ func applySAILanguage() {
 /// that would close it without saving. So it only happens when no sai2.exe
 /// process exists at all, not merely when no SAI window is on screen.
 func prepareDisplaySettingsForLaunch(_ wine: String) {
-    // A switch clicked earlier, or the first launch after updating (Retina is
-    // on by default and Wine still has it off).
+    // A switch clicked earlier, or one Wine has not caught up with yet.
     let modeChanges = retinaPlan().restartWine
     if FileManager.default.fileExists(atPath: wineRestartPendingFile()) || modeChanges, !saiProcessRunning() {
         // RetinaMode is read when Wine's processes start, and the desktop
@@ -192,9 +191,8 @@ extension SetupController {
         retinaCheck = NSButton(checkboxWithTitle: "Sharp text on Retina screens",
                                target: self, action: #selector(retinaToggled))
         box.addArrangedSubview(retinaCheck)
-        let hint = lbl("On by default. SAI is drawn at full Retina resolution with Windows text size at 200%. "
-                       + "If SAI looks too small or too big, set Window › Scaling of User Interface to Auto. "
-                       + "Turn it off for an ordinary (non-Retina) monitor.",
+        let hint = lbl("Better quality, but strokes will most likely show up slower. Off by default. "
+                       + "If SAI looks too small or too big, set Window › Scaling of User Interface to Auto.",
                        10, color: .tertiaryLabelColor)
         hint.preferredMaxLayoutWidth = rowWidth
         hint.lineBreakMode = .byWordWrapping
@@ -236,7 +234,7 @@ extension SetupController {
     /// prefix has now.
     func refreshDisplaySection() {
         guard retinaCheck != nil else { return }
-        retinaCheck.state = DisplayCore.wanted(stored: storedRetinaSetting()) ? .on : .off
+        retinaCheck.state = (storedRetinaSetting() ?? retinaModeInWine()) ? .on : .off
         if saiLangPopup != nil {      // nil while the language menu is hidden
             let choice = storedSAILanguageChoice() ?? SAILanguageChoice.defaultChoice
             let i = saiLangPopup.indexOfItem(withRepresentedObject: choice)

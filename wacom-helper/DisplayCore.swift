@@ -1,9 +1,9 @@
 // DisplayCore.swift — sharp text on Retina screens (issue #39) and SAI's UI
 // language, as pure data.
 //
-// A switch in Advanced, ON BY DEFAULT: most Macs have a Retina screen. Off is
-// for an ordinary monitor, or anyone who prefers it. What is known and what
-// is not:
+// A switch in Advanced, OFF BY DEFAULT: it makes SAI a few times slower
+// (seen in testing on an M3 Pro), because SAI then draws four times the
+// pixels. What is known and what is not:
 //
 //   Known: Wine's Mac driver draws Windows apps at 1x unless RetinaMode is on,
 //   and macOS then stretches the window 2x. Latin text survives that; CJK text,
@@ -115,9 +115,10 @@ enum DisplayCore {
         return windowsDefaultDPI
     }
 
-    /// ON BY DEFAULT: nothing stored means on. Off is a choice someone made in
-    /// Advanced, and it is remembered as such.
-    static func wanted(stored: Bool?) -> Bool { stored ?? true }
+    /// OFF BY DEFAULT, and more than off: nothing stored means the app leaves
+    /// Wine alone. Someone who turned RetinaMode on by hand (the workaround
+    /// for #39) keeps it; the switch then shows what Wine has.
+    static func wanted(stored: Bool?) -> Bool? { stored }
 
     /// What to do before SAI starts, given what is wanted and what Wine has.
     struct Plan: Equatable {
@@ -129,11 +130,14 @@ enum DisplayCore {
         var restartWine: Bool
     }
 
-    /// THE TRAP for "on by default": an "off" must not write anything while
+    /// THE TRAP: an "off" must not write anything while
     /// Wine is already off. Writing the remembered DPI on every launch would
     /// undo a text size changed later in winecfg, every time SAI opens. Only
     /// the switch from on to off puts the old size back.
-    static func plan(wantOn: Bool, wineOn: Bool) -> Plan {
+    static func plan(wantOn: Bool?, wineOn: Bool) -> Plan {
+        guard let wantOn = wantOn else {           // never set here: hands off
+            return Plan(write: nil, rememberDPI: false, restartWine: false)
+        }
         switch (wantOn, wineOn) {
         case (true, false):  return Plan(write: true, rememberDPI: true, restartWine: true)
         // Already on: write again (cheap, and it puts 200% back if something
