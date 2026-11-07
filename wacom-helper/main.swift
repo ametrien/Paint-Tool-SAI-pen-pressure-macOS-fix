@@ -1491,6 +1491,12 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     /// Set when a key changes while SAI is open; cleared once SAI has closed,
     /// because the next start picks the change up on its own.
     var keysNeedSAIRestart = false
+    // Advanced › Display (test), DisplayUI.swift: Retina mode and SAI's language.
+    var retinaCheck: NSButton!
+    var saiLangPopup: NSPopUpButton!
+    var displayRestartNote: NSTextField!
+    /// Like keysNeedSAIRestart, for the Display settings.
+    var displayNeedsSAIRestart = false
     var libStore: LibraryStore?
     var settingsTab: NSStackView!
     var settingsScratch: PenScratchView!
@@ -1637,6 +1643,11 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         // is being interacted with (plain .default timers can stall).
         let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in self?.refresh() }
         RunLoop.main.add(t, forMode: .common)
+        // Reopened by Advanced › Display's "Close and reopen SAI": start SAI
+        // again, as Launch would. A second later so the window is up first.
+        if consumeRelaunchSAIMarker() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.launchTapped() }
+        }
 
         // AUTO-ACTIVATE: when the Wine app comes to the foreground, force its
         // windows to become key. Under Wine on macOS the window often comes back
@@ -2122,6 +2133,10 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
             i.target = self; i.toolTip = tip
             more.menu?.addItem(i)
         }
+        item("Show app in Finder", #selector(revealThisApp),
+             "Open the folder this app is in, with the app selected.")
+        item("Show SAI folder", #selector(openSAIInWine),
+             "Open the copy of SAI that runs, inside Wine.")
         item("Update SAI…", #selector(updateSAITapped),
              "Point at a newer SAI folder. Keeps your licence, brushes and preferences.")
         more.menu?.addItem(.separator())
@@ -2163,6 +2178,12 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
             lbl("Paths become ~/… instead of /Users/you/… . Turn it off only if a full path is the problem.",
                 10, color: .tertiaryLabelColor))
         devUpdateRows = [autoUpdateCheck]
+        // Here and not on its own tab: a test for issue #39, not a release feature yet.
+        // Shown without Developer mode too: the person with blurry text is not
+        // the person digging through logs.
+        let display = buildDisplaySection()
+        devSection.addArrangedSubview(display)
+        devUpdateRows.append(display)
         // Folders first — "where did my SAI actually go?" is the question the
         // whole copy-into-the-prefix model raises, so answer it with a button.
         let devFolders = NSStackView(); devFolders.orientation = .horizontal; devFolders.spacing = 6
@@ -2488,6 +2509,9 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         // reason to do that once a second behind a tab nobody is looking at.
         if (tabView?.selectedTabViewItem?.identifier as? String) == "Keys" {
             refreshKeysRestartNote()
+        }
+        if (tabView?.selectedTabViewItem?.identifier as? String) == "Advanced" {
+            refreshDisplayRestartNote()
         }
         if (tabView?.selectedTabViewItem?.identifier as? String) == "Recording" {
             refreshRecordingTab()

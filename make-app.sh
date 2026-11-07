@@ -5,8 +5,13 @@
 set -e
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
-APP="$REPO/dist/SAI Pen Pressure.app"
-BUNDLE_ID="app.saipenpressure.mac"
+# A test build sets both of these so macOS treats it as a SEPARATE app. With the
+# release's name and bundle id, Input Monitoring and "open SAI Pen Pressure"
+# resolve to whichever copy macOS knows first (usually /Applications), and the
+# test build loops on a permission it can never get.
+APP_NAME="${SAIPP_APP_NAME:-SAI Pen Pressure}"
+APP="$REPO/dist/$APP_NAME.app"
+BUNDLE_ID="${SAIPP_BUNDLE_ID:-app.saipenpressure.mac}"
 # One source of truth for the version: the latest git tag (v0.1.0 -> 0.1.0).
 # Override with SAIPP_VERSION; falls back to 0.0.0-dev outside a tagged repo.
 VERSION="${SAIPP_VERSION:-$(git -C "$REPO" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')}"
@@ -99,8 +104,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>SAI Pen Pressure</string>
-  <key>CFBundleDisplayName</key><string>SAI Pen Pressure</string>
+  <key>CFBundleName</key><string>$APP_NAME</string>
+  <key>CFBundleDisplayName</key><string>$APP_NAME</string>
   <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
   <key>CFBundleVersion</key><string>$VERSION</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>

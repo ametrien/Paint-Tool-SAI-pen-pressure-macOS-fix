@@ -709,7 +709,11 @@ extension SetupController {
         // app build. Guide the user to grant it, open the right Settings pane,
         // and reopen the app (macOS applies the grant on a fresh launch).
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
-        _ = osa("display dialog \"Couldn't read the tablet yet.\n\nIn System Settings → Privacy & Security → Input Monitoring, turn ON 'SAI Pen Pressure', then reopen this app.\" buttons {\"Reopen now\"} default button \"Reopen now\" with icon caution")
+        // The name from the bundle, not a literal: a test build has its own
+        // name and its own row in Input Monitoring, and pointing at the
+        // release's row sent someone round in circles.
+        let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "SAI Pen Pressure"
+        _ = osa("display dialog \"Couldn't read the tablet yet.\n\nIn System Settings → Privacy & Security → Input Monitoring, turn ON '\(name)', then reopen this app.\" buttons {\"Reopen now\"} default button \"Reopen now\" with icon caution")
         // An SAI window left open from before starts the live encoder (see
         // refresh()), so there can be one running even here.
         endRecordingAndExit(relaunch: true)

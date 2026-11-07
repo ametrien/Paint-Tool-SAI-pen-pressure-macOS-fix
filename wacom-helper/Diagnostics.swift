@@ -87,6 +87,12 @@ extension SetupController {
     // Finder window with sai2.exe selected and left you guessing what you were
     // looking at.
     @objc func openSAIInWine()   { openFolder(prefixSAIDir) }     // the copy that RUNS
+    /// The folder this .app sits in, with it selected. With a test build and a
+    /// release side by side, "which one is this?" is answered by where it is.
+    @objc func revealThisApp() {
+        let p = Bundle.main.bundlePath
+        NSWorkspace.shared.selectFile(p, inFileViewerRootedAtPath: (p as NSString).deletingLastPathComponent)
+    }
     /// Reveal the certificate itself, so "where did it actually go?" is one click.
     @objc func revealLicense() {
         guard let name = installedLicenseName(), let dir = licenseLocations().first else {
