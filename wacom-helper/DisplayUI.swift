@@ -22,8 +22,7 @@ import AppKit
 
 // MARK: - settings files (Application Support, like every other setting)
 
-/// "on" or "off". Missing means this app has never touched RetinaMode, so a
-/// value someone set by hand (the #39 workaround) is left alone.
+/// "on" or "off". Missing means on: Retina is the default (DisplayCore.wanted).
 func retinaSettingFile() -> String { appSupport() + "/retina-mode.txt" }
 /// The DPI from before Retina went on, to put back when it goes off.
 func retinaPrevDPIFile() -> String { appSupport() + "/retina-prev-dpi.txt" }
@@ -72,20 +71,32 @@ func saiLanguageInIni() -> String? {
 
 // MARK: - getting the settings into Wine and SAI
 
-/// Write RetinaMode and the DPI into the prefix. Only when this app owns the
-/// setting (the file exists). "off" is written once and then forgotten, so a
-/// DPI changed later in winecfg is not overwritten on every launch.
+/// What has to happen in Wine for the switch's current state.
+func retinaPlan() -> DisplayCore.Plan {
+    DisplayCore.plan(wantOn: DisplayCore.wanted(stored: storedRetinaSetting()), wineOn: retinaModeInWine())
+}
+
+/// Write RetinaMode and the DPI into the prefix, as retinaPlan() says. The
+/// DPI from before is remembered here, the first time Retina goes on, which
+/// for most people is the first launch after updating, not a click.
+///
+/// The "before" DPI is kept after switching off too: user.reg can lag a
+/// moment behind a write, so the same switch can be applied twice, and the
+/// second time must still find the right value to put back.
 func applyRetinaToWine(_ wine: String) {
-    guard let on = storedRetinaSetting(), !wine.isEmpty,
-          FileManager.default.fileExists(atPath: appPrefix) else { return }
+    guard !wine.isEmpty, FileManager.default.fileExists(atPath: "\(appPrefix)/user.reg") else { return }
+    let plan = retinaPlan()
+    guard let on = plan.write else { return }
     let saved = readTrimmed(retinaPrevDPIFile()).flatMap { Int($0) }
+    if plan.rememberDPI {
+        let keep = DisplayCore.dpiToRemember(
+            alreadySaved: saved,
+            current: DisplayCore.currentDPI(userReg: prefixUserReg(), systemReg: prefixSystemReg()))
+        try? "\(keep)".write(toFile: retinaPrevDPIFile(), atomically: true, encoding: .utf8)
+    }
     let env = ["WINEPREFIX": appPrefix, "WINEDEBUG": "-all"]
     for args in DisplayCore.regCommands(retinaOn: on, dpiWhenOff: DisplayCore.dpiToRestore(saved: saved)) {
         runProc(wine, args, env: env)
-    }
-    if !on {
-        try? FileManager.default.removeItem(atPath: retinaSettingFile())
-        try? FileManager.default.removeItem(atPath: retinaPrevDPIFile())
     }
 }
 
@@ -116,7 +127,10 @@ func applySAILanguage() {
 /// that would close it without saving. So it only happens when no sai2.exe
 /// process exists at all, not merely when no SAI window is on screen.
 func prepareDisplaySettingsForLaunch(_ wine: String) {
-    if FileManager.default.fileExists(atPath: wineRestartPendingFile()), !saiProcessRunning() {
+    // A switch clicked earlier, or the first launch after updating (Retina is
+    // on by default and Wine still has it off).
+    let modeChanges = retinaPlan().restartWine
+    if FileManager.default.fileExists(atPath: wineRestartPendingFile()) || modeChanges, !saiProcessRunning() {
         // RetinaMode is read when Wine's processes start, and the desktop
         // process can outlive SAI by a few seconds. A fresh Wine is the only
         // way to be sure the new mode is the one SAI gets.
@@ -178,8 +192,9 @@ extension SetupController {
         retinaCheck = NSButton(checkboxWithTitle: "Sharp text on Retina screens",
                                target: self, action: #selector(retinaToggled))
         box.addArrangedSubview(retinaCheck)
-        let hint = lbl("SAI is drawn at full Retina resolution and Windows text size is set to 200%. "
-                       + "If SAI looks too small or too big, set Window › Scaling of User Interface to Auto.",
+        let hint = lbl("On by default. SAI is drawn at full Retina resolution with Windows text size at 200%. "
+                       + "If SAI looks too small or too big, set Window › Scaling of User Interface to Auto. "
+                       + "Turn it off for an ordinary (non-Retina) monitor.",
                        10, color: .tertiaryLabelColor)
         hint.preferredMaxLayoutWidth = rowWidth
         hint.lineBreakMode = .byWordWrapping
@@ -221,7 +236,7 @@ extension SetupController {
     /// prefix has now.
     func refreshDisplaySection() {
         guard retinaCheck != nil else { return }
-        retinaCheck.state = (storedRetinaSetting() ?? retinaModeInWine()) ? .on : .off
+        retinaCheck.state = DisplayCore.wanted(stored: storedRetinaSetting()) ? .on : .off
         if saiLangPopup != nil {      // nil while the language menu is hidden
             let choice = storedSAILanguageChoice() ?? SAILanguageChoice.defaultChoice
             let i = saiLangPopup.indexOfItem(withRepresentedObject: choice)
@@ -250,15 +265,7 @@ extension SetupController {
     @objc func retinaToggled() {
         let on = retinaCheck.state == .on
         confirmDisplayChange(revert: { [weak self] in self?.refreshDisplaySection() }) {
-            if on {
-                // Remember the DPI from before, once (see DisplayCore's trap).
-                let saved = (try? String(contentsOfFile: retinaPrevDPIFile(), encoding: .utf8))
-                    .flatMap { Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
-                let keep = DisplayCore.dpiToRemember(
-                    alreadySaved: saved,
-                    current: DisplayCore.currentDPI(userReg: prefixUserReg(), systemReg: prefixSystemReg()))
-                try? "\(keep)".write(toFile: retinaPrevDPIFile(), atomically: true, encoding: .utf8)
-            }
+            // The DPI from before is remembered in applyRetinaToWine().
             try? (on ? "on" : "off").write(toFile: retinaSettingFile(), atomically: true, encoding: .utf8)
             try? "".write(toFile: wineRestartPendingFile(), atomically: true, encoding: .utf8)
             // Into Wine straight away, like the Keys tab, so SAI started any
