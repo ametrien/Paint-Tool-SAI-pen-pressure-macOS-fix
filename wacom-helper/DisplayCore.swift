@@ -115,10 +115,18 @@ enum DisplayCore {
         return windowsDefaultDPI
     }
 
-    /// OFF BY DEFAULT, and more than off: nothing stored means the app leaves
-    /// Wine alone. Someone who turned RetinaMode on by hand (the workaround
-    /// for #39) keeps it; the switch then shows what Wine has.
-    static func wanted(stored: Bool?) -> Bool? { stored }
+    /// ON BY DEFAULT ONLY WHERE IT DOES NOT LAG (0.3.9). Nothing stored and a
+    /// Wine with the fix for the Retina lag (our patched driver, or Wine 11.22+)
+    /// means on. Nothing stored and no fix means hands off, as in 0.3.8: off
+    /// for most, and someone who turned RetinaMode on by hand keeps it. An
+    /// explicit choice in Advanced always wins.
+    ///
+    /// THE TRAP: never default to on without the fix. That was the 0.3.8 that
+    /// was pulled: sharp text, but SAI's main thread 68% busy while drawing.
+    static func wanted(stored: Bool?, wineHasFix: Bool = false) -> Bool? {
+        if let s = stored { return s }
+        return wineHasFix ? true : nil
+    }
 
     /// What to do before SAI starts, given what is wanted and what Wine has.
     struct Plan: Equatable {

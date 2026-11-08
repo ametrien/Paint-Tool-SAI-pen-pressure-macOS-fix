@@ -56,6 +56,11 @@
 #define TL_DEFAULT_TARGET  1024          /* longest side of a recorded frame  */
 #define TL_DEFAULT_DEBOUNCE 150          /* ms of zero pressure = stroke end  */
 #define TL_SETTLE_MS       120           /* let SAI finish compositing        */
+#define TL_DEFAULT_QUIET   1000          /* ms the pen must rest before a capture */
+#define TL_DEFAULT_MAX_WAIT 10000        /* nonstop drawing: a frame between
+                                            strokes at least this often       */
+#define TL_VERIFY_FIRST    5             /* first captures read every tile    */
+#define TL_VERIFY_EVERY    10            /* then every Nth capture does       */
 #define TL_DEFAULT_BUDGET_MB 2048        /* frames on disk before thinning    */
 
 /* Frame header, v2. 112 bytes, naturally aligned, little-endian.
@@ -104,6 +109,18 @@ static uint8_t       *g_tl_tile  = NULL;
 static size_t         g_tl_tile_cap  = 0;
 static const TLC_LAYOUT *g_tl_layout = &TLC_LAYOUT_2026_07_27;
 
+/* Capture only when the pen rests (RECORDING-SPEED-PLAN.md, package 2).
+ * Written by the producer thread and SAI's UI thread, read by tl_thread. */
+static volatile LONG  g_tl_last_activity = 0;   /* GetTickCount() of the last press */
+static volatile LONG  g_tl_pen_down = 0;
+static uint32_t       g_tl_quiet_ms = TL_DEFAULT_QUIET;
+static uint32_t       g_tl_max_wait_ms = TL_DEFAULT_MAX_WAIT;
+
+/* Reading only changed tiles (package 4). */
+static TLC_TILECACHE  g_tl_cache;
+static unsigned long  g_tl_captures = 0;
+static int            g_tl_ptrs_unreliable = 0;
+
 /* Statics that track the CURRENT canvas rather than the list head. Derived
  * alongside session_offset; the exact semantics ("active" vs "most recently
  * opened") were never pinned down, so this is used as a HINT only — validated
@@ -112,19 +129,23 @@ static const TLC_LAYOUT *g_tl_layout = &TLC_LAYOUT_2026_07_27;
 
 /* --- validated read ------------------------------------------------------ */
 
-/* One-entry cache. Reading a canvas walks hundreds of tiles that all live in
- * the same region, so re-querying per read is pure overhead. */
-static uintptr_t g_tl_ok_lo = 0, g_tl_ok_hi = 0;
+/* Areas already confirmed readable (package 3). The old one-entry cache kept
+ * missing, because tile pointers and tile pixels live in different blocks, so
+ * nearly every read asked Wine again. Cleared at the start of every capture:
+ * see the trap in tl_capture_once. */
+static TLC_REGIONS    g_tl_regions;
+static unsigned long  g_tl_vq_calls = 0;        /* VirtualQuery calls this capture */
 
 static int tl_range_readable(uintptr_t addr, size_t len) {
     MEMORY_BASIC_INFORMATION mbi;
     uintptr_t p = addr, end = addr + len;
 
-    if (addr >= g_tl_ok_lo && end <= g_tl_ok_hi) return 1;
+    if (tlc_regions_covers(&g_tl_regions, (uint64_t)addr, len)) return 1;
 
     while (p < end) {
         DWORD prot;
         uintptr_t region_end;
+        g_tl_vq_calls++;
         if (VirtualQuery((LPCVOID)p, &mbi, sizeof mbi) != sizeof mbi) return 0;
         if (mbi.State != MEM_COMMIT) return 0;
         if (mbi.Protect & PAGE_GUARD) return 0;
@@ -135,8 +156,7 @@ static int tl_range_readable(uintptr_t addr, size_t len) {
             return 0;
         region_end = (uintptr_t)mbi.BaseAddress + mbi.RegionSize;
         if (region_end <= p) return 0;            /* no forward progress      */
-        if (p == addr && region_end >= end) { g_tl_ok_lo = (uintptr_t)mbi.BaseAddress;
-                                              g_tl_ok_hi = region_end; }
+        tlc_regions_add(&g_tl_regions, (uint64_t)(uintptr_t)mbi.BaseAddress, (uint64_t)region_end);
         p = region_end;
     }
     return 1;
@@ -333,13 +353,51 @@ static void tl_scan_existing(void) {
 
 /* --- capture ------------------------------------------------------------- */
 
-static void tl_capture_once(void) {
+/* Milliseconds between two QueryPerformanceCounter readings. */
+static double tl_ms(LARGE_INTEGER a, LARGE_INTEGER b) {
+    static LARGE_INTEGER f;
+    if (!f.QuadPart) QueryPerformanceFrequency(&f);
+    return f.QuadPart ? (double)(b.QuadPart - a.QuadPart) * 1000.0 / (double)f.QuadPart : 0.0;
+}
+
+/* Grow the per-tile arrays of g_tl_cache. Growing empties the cache, so the
+ * next read is full. */
+static int tl_ensure_cache(uint32_t n) {
+    uint64_t *p, *h;
+    if (g_tl_cache.cap >= n && g_tl_cache.ptr && g_tl_cache.hash) return 1;
+    if (n > TLC_MAX_TILES) return 0;
+    p = (uint64_t *)realloc(g_tl_cache.ptr, (size_t)n * 8u);
+    if (!p) return 0;
+    g_tl_cache.ptr = p;
+    h = (uint64_t *)realloc(g_tl_cache.hash, (size_t)n * 8u);
+    if (!h) return 0;
+    g_tl_cache.hash = h;
+    g_tl_cache.cap = n;
+    g_tl_cache.ntiles = 0;
+    return 1;
+}
+
+static void tl_capture_once(DWORD waited_ms) {
     uint64_t canvas, hash;
     TLC_TILEMAP tm;
+    TLC_READSTATS st;
+    LARGE_INTEGER t0, t1, t2, t3;
     uint32_t w = 0, h = 0;
-    int level;
+    int level, verify;
+    const char *result = "failed";
 
     if (g_tl_disabled) return;
+
+    /* THE TRAP: forget every remembered-readable area before reading. SAI
+     * frees memory between captures, and a stale "readable" answer would
+     * memcpy from freed memory. tl_veh only logs, so that fault would take SAI
+     * down with the drawing unsaved. Cleared here, an answer is at most one
+     * capture old. (The old one-entry cache was never cleared.) */
+    tlc_regions_clear(&g_tl_regions);
+    g_tl_vq_calls = 0;
+    memset(&st, 0, sizeof st);
+    QueryPerformanceCounter(&t0);
+    t1 = t2 = t3 = t0;
 
     canvas = tl_target_canvas();
     if (!canvas) return;                     /* nothing open; not an error    */
@@ -354,36 +412,73 @@ static void tl_capture_once(void) {
         tl_disable("frame too large to buffer");
         return;
     }
-    if (!tlc_read_level(tl_read, NULL, g_tl_layout, canvas, level,
-                        g_tl_frame, g_tl_frame_cap, g_tl_tile, g_tl_tile_cap, &w, &h)) {
+    if (!tl_ensure_cache(tm.count_x * tm.count_y)) {
+        tl_disable("tile cache too large");
+        return;
+    }
+
+    /* Skipping unchanged tiles trusts that SAI gives a changed tile a new
+     * block. Check that by reading every tile on the first captures and then
+     * every Nth one; once it is ever wrong, read every tile for the session. */
+    verify = g_tl_ptrs_unreliable || g_tl_captures < TL_VERIFY_FIRST ||
+             (g_tl_captures % TL_VERIFY_EVERY) == 0;
+    g_tl_captures++;
+
+    if (!tlc_read_level_incremental(tl_read, NULL, g_tl_layout, canvas, level,
+                                    g_tl_frame, g_tl_frame_cap, g_tl_tile, g_tl_tile_cap,
+                                    &g_tl_cache, verify, &w, &h, &st)) {
         log_line("tl: level read failed (canvas closed mid-read?)");
-        return;                              /* transient; do not latch off   */
+        QueryPerformanceCounter(&t3);
+        t1 = t2 = t3;
+        goto done;                           /* transient; do not latch off   */
+    }
+    QueryPerformanceCounter(&t1);
+    if (st.inplace_changes && !g_tl_ptrs_unreliable) {
+        g_tl_ptrs_unreliable = 1;
+        log_line("tl: SAI changed %u tile(s) in place; reading every tile from now on",
+                 st.inplace_changes);
     }
 
     /* Undo, pan, zoom and toolbar clicks all end a "stroke" without changing a
-     * pixel. Dropping them here keeps them out of the video AND off the disk. */
+     * pixel. Dropping them here keeps them out of the video AND off the disk.
+     * The fingerprint is the hash of the per-tile hashes, so it costs nothing
+     * extra and a new block holding the same pixels is still "no change". */
     {
     uint64_t *slot = tlc_hash_slot(g_tl_seen, TL_MAX_TRACKED, canvas);
     char cname[64];
     if (!tlc_canvas_name(tl_read, NULL, g_tl_layout, canvas, cname, sizeof cname))
         cname[0] = 0;
-    hash = tlc_hash(g_tl_frame, (size_t)w * h * 4u);
+    hash = st.frame_hash;
+    QueryPerformanceCounter(&t2);
     if (hash == *slot) {
         /* Logged, not silent: "why did I get fewer frames than strokes?" is
          * otherwise unanswerable, and the answer is usually that the trigger
          * was a toolbar click rather than a lost stroke. */
         log_line("tl: no pixel change (%s) — skipped", g_tl_trigger ? "mouse" : "pen");
-        return;
+        result = "nochange";
+        t3 = t2;
+        goto done;
     }
     *slot = hash;
 
     g_tl_bytes += (uint64_t)sizeof(TL_FRAME_HDR) + (uint64_t)w * h * 4u;
     tl_enforce_budget();
-    if (tl_write_frame(g_tl_frame, w, h, canvas, cname))
+    if (tl_write_frame(g_tl_frame, w, h, canvas, cname)) {
+        result = "written";
         log_line("tl: frame %llu  %ux%u  level=%d  (%s)  \"%s\"",
                  (unsigned long long)g_tl_seq, w, h, level,
                  g_tl_trigger ? "mouse" : "pen", cname);
     }
+    QueryPerformanceCounter(&t3);
+    }
+
+done:
+    /* One line per capture, so the cost of each step is measured, not guessed
+     * (package 1). waited = time from the trigger to the capture. */
+    log_line("tl: capture waited=%lums read=%.1fms hash=%.1fms write=%.1fms total=%.1fms "
+             "tiles=%u/%u vq=%lu verify=%d result=%s",
+             (unsigned long)waited_ms, tl_ms(t0, t1), tl_ms(t1, t2), tl_ms(t2, t3), tl_ms(t0, t3),
+             st.tiles_read, st.tiles_total, g_tl_vq_calls, verify, result);
 }
 
 /* WT_TIMELAPSE_INTERVAL=<ms>: capture on a timer instead of waiting for a
@@ -396,14 +491,34 @@ static uint32_t g_tl_interval = 0;
 static DWORD WINAPI tl_thread(LPVOID arg) {
     (void)arg;
     for (;;) {
+        DWORD pending_since;
         DWORD w = WaitForSingleObject(g_tl_evt, g_tl_interval ? g_tl_interval : INFINITE);
         if (w != WAIT_OBJECT_0 && w != WAIT_TIMEOUT) break;
         if (g_tl_disabled) break;
-        /* SAI composites the finished stroke into the tile map slightly after
-         * the pen leaves the surface; reading immediately can catch the frame
-         * before the last dab lands. */
-        Sleep(TL_SETTLE_MS);
-        tl_capture_once();
+        if (w == WAIT_TIMEOUT) {             /* WT_TIMELAPSE_INTERVAL test aid */
+            Sleep(TL_SETTLE_MS);
+            tl_capture_once(0);
+            continue;
+        }
+        /* Wait until the pen rests. A capture running during a stroke made
+         * SAI fall behind the pen (8% of points merged with recording on,
+         * 0.5% off). The rest is at least TL_SETTLE_MS, which also gives SAI
+         * time to finish compositing the last dab. */
+        pending_since = GetTickCount();
+        for (;;) {
+            uint32_t rem;
+            if (g_tl_disabled) return 0;
+            rem = tlc_capture_wait((uint32_t)GetTickCount(), (uint32_t)g_tl_last_activity,
+                                   (uint32_t)pending_since, (int)g_tl_pen_down,
+                                   g_tl_quiet_ms, g_tl_max_wait_ms);
+            if (!rem) break;
+            Sleep(rem);
+        }
+        /* Triggers that arrived while we waited are covered by this capture,
+         * which reads the canvas after all of them. Clear the auto-reset event
+         * so they do not cause a second, pointless capture straight after. */
+        WaitForSingleObject(g_tl_evt, 0);
+        tl_capture_once(GetTickCount() - pending_since);
     }
     return 0;
 }
@@ -451,6 +566,15 @@ static DWORD WINAPI tl_probe_thread(LPVOID arg) {
  * tl_thread so a slow read can never stall pressure delivery. */
 static void tl_on_pressure(int press) {
     if (!g_tl_on || g_tl_probe || g_tl_disabled) return;
+    /* Only a press is activity. Hover samples and the ~10 Hz idle tick both
+     * arrive here with pressure 0; counting them would mean the pen never
+     * rests. Hot path: one tick read and one store. */
+    if (press > 0) {
+        InterlockedExchange(&g_tl_last_activity, (LONG)GetTickCount());
+        g_tl_pen_down = 1;
+    } else {
+        g_tl_pen_down = 0;
+    }
     if (tlc_stroke_update(&g_tl_stroke, press, (uint32_t)GetTickCount64())) {
         g_tl_trigger = 0;
         SetEvent(g_tl_evt);
@@ -473,6 +597,7 @@ static void tl_on_pressure(int press) {
  * paths. The dedup hash collapses that to one frame. */
 static void tl_on_mouse_up(void) {
     if (!g_tl_on || g_tl_probe || g_tl_disabled) return;
+    InterlockedExchange(&g_tl_last_activity, (LONG)GetTickCount());  /* mouse/trackpad users */
     g_tl_trigger = 1;
     SetEvent(g_tl_evt);
 }
@@ -507,6 +632,16 @@ static void tl_startup(void) {
         if (v >= 0 && v <= 5000) g_tl_stroke.debounce_ms = (uint32_t)v;
     }
 
+    if ((e = getenv("WT_TIMELAPSE_QUIET_MS")) != NULL) {
+        long v = strtol(e, NULL, 10);
+        if (v >= 0 && v <= 10000) g_tl_quiet_ms = (uint32_t)v;
+    }
+    if (g_tl_quiet_ms < TL_SETTLE_MS) g_tl_quiet_ms = TL_SETTLE_MS;
+    if ((e = getenv("WT_TIMELAPSE_MAX_WAIT_MS")) != NULL) {
+        long v = strtol(e, NULL, 10);
+        if (v >= 1000 && v <= 120000) g_tl_max_wait_ms = (uint32_t)v;
+    }
+
     if ((e = getenv("WT_TIMELAPSE_BUDGET_MB")) != NULL) {
         long v = strtol(e, NULL, 10);
         if (v >= 64 && v <= 200000) g_tl_budget = (uint64_t)v << 20;
@@ -519,14 +654,21 @@ static void tl_startup(void) {
     if (!g_tl_evt) { log_line("tl: CreateEvent failed"); return; }
     g_tl_thread = CreateThread(NULL, 0, tl_thread, NULL, 0, NULL);
     if (!g_tl_thread) { log_line("tl: CreateThread failed"); return; }
+    /* Below SAI, so SAI wins when both want the processor (package 5).
+     * Not IDLE: a resting pen should still get its frame promptly. Whether
+     * Wine on macOS turns this into a real priority is logged, not assumed. */
+    {
+    BOOL low = SetThreadPriority(g_tl_thread, THREAD_PRIORITY_LOWEST);
 
     g_tl_on = 1;
     log_line("tl: recording enabled  base=%#llx target=%upx debounce=%ums interval=%ums "
-             "budget=%lluMB existing=%lluMB -> %s",
+             "quiet=%ums max_wait=%ums priority=%s budget=%lluMB existing=%lluMB -> %s",
              (unsigned long long)g_tl_image_base, g_tl_target,
              g_tl_stroke.debounce_ms, g_tl_interval,
+             g_tl_quiet_ms, g_tl_max_wait_ms, low ? "lowest" : "unchanged",
              (unsigned long long)(g_tl_budget >> 20),
              (unsigned long long)(g_tl_bytes >> 20), TL_FRAMEDIR);
+    }
 }
 
 #endif /* TIMELAPSE_WIN_H */

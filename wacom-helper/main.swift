@@ -1468,6 +1468,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     // stacking them meant scrolling past all three to reach any one of them.
     var tabView: NSTabView!
     var recordingTab: NSStackView!
+    var recEveryStrokeCheck: NSButton!
     var recFramesLabel: NSTextField!
     var recCheck: NSButton!
     var recMakeBtn: NSButton!
@@ -1497,6 +1498,11 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     var displayRestartNote: NSTextField!
     /// Like keysNeedSAIRestart, for the Display settings.
     var displayNeedsSAIRestart = false
+    // Advanced › Wine (WineUI.swift).
+    var wineStatusLabel: NSTextField!
+    var wineActionBtn: NSButton!
+    /// Run once after an in-app Wine install succeeds (Update Wine).
+    var afterWineInstall: (() -> Void)?
     var libStore: LibraryStore?
     var settingsTab: NSStackView!
     var settingsScratch: PenScratchView!
@@ -2184,6 +2190,9 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         let display = buildDisplaySection()
         devSection.addArrangedSubview(display)
         devUpdateRows.append(display)
+        let wineBox = buildWineSection()
+        devSection.addArrangedSubview(wineBox)
+        devUpdateRows.append(wineBox)
         // Folders first — "where did my SAI actually go?" is the question the
         // whole copy-into-the-prefix model raises, so answer it with a button.
         let devFolders = NSStackView(); devFolders.orientation = .horizontal; devFolders.spacing = 6
