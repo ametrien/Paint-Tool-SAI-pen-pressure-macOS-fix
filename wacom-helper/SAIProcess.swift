@@ -305,6 +305,9 @@ func launchSAIApp() {
     // only take effect on the next launch — which is why the dialog that offers
     // it says to restart SAI.
     if e["WT_DEBUG"] == nil, dllLoggingEnabled() { e["WT_DEBUG"] = "1" }
+    // Recording tab's "every stroke": no rest before a capture. The DLL raises
+    // 0 to its settle time, so SAI still finishes the stroke first.
+    if e["WT_TIMELAPSE_QUIET_MS"] == nil, timelapseEveryStroke() { e["WT_TIMELAPSE_QUIET_MS"] = "0" }
     p.environment = e
     startLiveEncoder()
     p.terminationHandler = { _ in

@@ -71,6 +71,13 @@ swiftc -o "$WORK/display-tests" "$REPO/wacom-helper/DisplayCore.swift" "$REPO/te
 "$WORK/display-tests"
 
 echo ""
+echo "== Swift core (WinePatchCore.swift) =="
+# Swapping Wine's Mac driver (issue #39). The backup must only ever hold the
+# original, and no Wine but the exact known build may be touched.
+swiftc -o "$WORK/winepatch-tests" "$REPO/wacom-helper/WinePatchCore.swift" "$REPO/wacom-helper/WineStatusCore.swift" "$REPO/tests/WinePatchTests.swift"
+"$WORK/winepatch-tests"
+
+echo ""
 echo "== Swift core (EncoderCore.swift) =="
 swiftc -o "$WORK/encoder-tests" "$REPO/timelapse-encoder/EncoderCore.swift" "$REPO/tests/EncoderTests.swift"
 "$WORK/encoder-tests"

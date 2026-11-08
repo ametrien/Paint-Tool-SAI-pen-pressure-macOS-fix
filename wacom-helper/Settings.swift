@@ -25,6 +25,21 @@ func timelapseOffMarker() -> String { appSupport() + "/timelapse-off.txt" }
 func timelapseRecordingEnabled() -> Bool {
     !FileManager.default.fileExists(atPath: timelapseOffMarker())
 }
+/// Recording tab: take a frame right after every stroke, as before 0.3.9?
+///
+/// Off by default. By default the DLL waits until the pen has rested for a
+/// second, because a capture running during a stroke made SAI fall behind
+/// the pen (8% of pen points merged with Retina on, 0.4% with the wait). The
+/// cost of waiting: quick strokes land in one frame together. This brings
+/// back one frame per stroke for people who want that more than speed.
+/// Read when SAI starts (WT_TIMELAPSE_QUIET_MS), like the rest of recording.
+func timelapseEveryStrokeMarker() -> String { appSupport() + "/timelapse-every-stroke.txt" }
+func timelapseEveryStroke() -> Bool { FileManager.default.fileExists(atPath: timelapseEveryStrokeMarker()) }
+func setTimelapseEveryStroke(_ on: Bool) {
+    if on { try? "1".write(toFile: timelapseEveryStrokeMarker(), atomically: true, encoding: .utf8) }
+    else { try? FileManager.default.removeItem(atPath: timelapseEveryStrokeMarker()) }
+}
+
 /// Advanced tab: install updates without being asked?
 ///
 /// Off by default, and not because of the download. Every build is signed

@@ -145,6 +145,36 @@ static uint64_t build_canvas(FAKE *f, uint64_t at, const char *name,
     return at;
 }
 
+/* --- helpers for the recording-speed tests --------------------------------- */
+
+/* Counts reads, so a test can tell a skipped tile (no pixel read) from a read one. */
+typedef struct { FAKE *f; unsigned long reads; } COUNTING;
+static int counting_read(void *ctx, uint64_t addr, void *dst, size_t len) {
+    COUNTING *c = (COUNTING *)ctx;
+    c->reads++;
+    return fake_read(c->f, addr, dst, len);
+}
+static uint64_t get64(FAKE *f, uint64_t addr) {
+    uint64_t v = 0;
+    fake_read(f, addr, &v, 8);
+    return v;
+}
+/* Address of the pointer to tile (tx, ty) at level 0. */
+static uint64_t tile_slot(FAKE *f, uint64_t canvas, uint32_t tx, uint32_t ty) {
+    TLC_TILEMAP tm;
+    if (!tlc_tilemap_read(fake_read, f, &TLC_LAYOUT_2026_07_27, canvas, 0, &tm)) return 0;
+    return get64(f, tm.tree + (uint64_t)ty * 8) + (uint64_t)tx * 8;
+}
+/* A new tile block filled with `color`, the way SAI makes a changed copy. */
+static uint64_t new_block(FAKE *f, uint64_t *heap, uint32_t tile, int color) {
+    uint64_t px = *heap;
+    *heap += (uint64_t)tile * tile * 4;
+    fake_bounds(f, px, (size_t)tile * tile * 4, "new_block");
+    memset(f->buf + (px - FAKE_ORIGIN), color, (size_t)tile * tile * 4);
+    return px;
+}
+static uint32_t lcg(uint32_t *s) { *s = *s * 1664525u + 1013904223u; return *s >> 8; }
+
 int main(void) {
     const TLC_LAYOUT *L = &TLC_LAYOUT_2026_07_27;
     FAKE f;
@@ -397,6 +427,229 @@ int main(void) {
         c = tlc_hash_slot(slots, 4, 0x9999);
         EXPECT(*c == 0, "slots: an evicted slot starts with no remembered hash");
         EXPECT(tlc_hash_slot(slots, 4, 0x9999) == c, "slots: the evicting canvas keeps its slot");
+    }
+
+    /* --- capture scheduling: only when the pen rests --------------------- */
+    {
+        uint32_t t, last = 0, pending = 0, n_cap = 0, cap_at[16];
+        int down, is_pending = 0, ok_never_mid = 1;
+
+        EXPECT(tlc_capture_wait(2000, 1000, 1000, 0, 1000, 10000) == 0, "rest: exactly quiet_ms -> capture");
+        EXPECT(tlc_capture_wait(1999, 1000, 1000, 0, 1000, 10000) == 1, "rest: 1 ms short -> wait 1 ms");
+        EXPECT(tlc_capture_wait(1500, 1000, 900, 0, 1000, 10000) == 500, "rest: waits the exact remainder");
+        EXPECT(tlc_capture_wait(1500, 1400, 1000, 0, 1000, 10000) == 900,
+               "rest: activity during the wait pushes the capture back");
+        /* THE TRAP: a capture during a stroke is the lag being removed. */
+        EXPECT(tlc_capture_wait(50000, 0, 0, 1, 1000, 10000) == TLC_CAPTURE_POLL_MS,
+               "rest: never captures while the pen presses, even past max_wait");
+        EXPECT(tlc_capture_wait(12000, 11900, 1000, 0, 1000, 10000) == 0,
+               "rest: past max_wait with the pen up -> capture between strokes");
+        EXPECT(tlc_capture_wait(200, 0xFFFFFF00u, 0xFFFFFF00u, 0, 1000, 10000) == 544,
+               "rest: tick counter wrap measures 456 ms of rest");
+        EXPECT(tlc_capture_wait(900, 0xFFFFFF00u, 0xFFFFFF00u, 0, 1000, 10000) == 0,
+               "rest: tick counter wrap reaches a full rest");
+        EXPECT(tlc_capture_wait(1000, 1005, 1000, 0, 1000, 10000) == 1000,
+               "rest: activity stamped just after 'now' counts as no rest yet");
+
+        /* Replay: 5 s of quick strokes (200 ms down, 100 ms up), then a rest. */
+        for (t = 0; t <= 7000; t += 10) {
+            down = t < 5000 && (t % 300) < 200;
+            if (down) last = t;
+            if (!down && t < 5000 && (t % 300) == 200 && !is_pending) { is_pending = 1; pending = t; }
+            if (is_pending && tlc_capture_wait(t, last, pending, down, 1000, 10000) == 0) {
+                if (down) ok_never_mid = 0;
+                if (n_cap < 16) cap_at[n_cap] = t;
+                n_cap++; is_pending = 0;
+            }
+        }
+        EXPECT(n_cap == 1 && cap_at[0] == 5990,
+               "replay: quick scribbles get ONE capture, 1 s after the last stroke");
+
+        /* Replay: 30 s of nonstop strokes with only 100 ms gaps. */
+        n_cap = 0; is_pending = 0; last = 0;
+        for (t = 0; t <= 30000; t += 10) {
+            down = (t % 300) < 200;
+            if (down) last = t;
+            if (!down && (t % 300) == 200 && !is_pending) { is_pending = 1; pending = t; }
+            if (is_pending && tlc_capture_wait(t, last, pending, down, 1000, 10000) == 0) {
+                if (down) ok_never_mid = 0;
+                if (n_cap < 16) cap_at[n_cap] = t;
+                n_cap++; is_pending = 0;
+            }
+        }
+        EXPECT(n_cap >= 2 && n_cap <= 3, "replay: nonstop drawing still gets a frame about every 10 s");
+        EXPECT(n_cap >= 2 && cap_at[1] - cap_at[0] >= 10000, "replay: forced frames are at least max_wait apart");
+        EXPECT(ok_never_mid, "replay: no capture ever happens while the pen presses");
+    }
+
+    /* --- remembered readable memory --------------------------------------- */
+    {
+        TLC_REGIONS r;
+        uint32_t i;
+        tlc_regions_clear(&r);
+        tlc_regions_add(&r, 0x1000, 0x2000);
+        EXPECT(tlc_regions_covers(&r, 0x1000, 0x1000), "regions: a read filling the area exactly is covered");
+        EXPECT(tlc_regions_covers(&r, 0x1800, 0x10), "regions: a read inside is covered");
+        /* THE TRAP: the end is exclusive. One byte past is memory nobody checked. */
+        EXPECT(!tlc_regions_covers(&r, 0x1ff9, 8), "regions: one byte past the end is not covered");
+        EXPECT(!tlc_regions_covers(&r, 0xfff, 8), "regions: one byte before the start is not covered");
+        tlc_regions_add(&r, 0x2000, 0x3000);
+        EXPECT(!tlc_regions_covers(&r, 0x1ffc, 8),
+               "regions: a read straddling two areas is not covered (asks Wine again)");
+        EXPECT(!tlc_regions_covers(&r, 0x1800, 0), "regions: an empty read is not covered");
+        tlc_regions_add(&r, 0xFFFFFFFFFFFFF000ULL, 0xFFFFFFFFFFFFFFFFULL);
+        EXPECT(!tlc_regions_covers(&r, 0xFFFFFFFFFFFFFFF0ULL, 0x20),
+               "regions: a read wrapping past the top of memory is not covered");
+        tlc_regions_clear(&r);
+        tlc_regions_add(&r, 0x5000, 0x5000);
+        tlc_regions_add(&r, 0x6000, 0x5000);
+        EXPECT(r.n == 0, "regions: empty and inverted areas are ignored");
+        tlc_regions_add(&r, 0x5000, 0x6000);
+        tlc_regions_add(&r, 0x5000, 0x6000);
+        EXPECT(r.n == 1, "regions: duplicates are stored once");
+        for (i = 1; i <= TLC_REGION_SLOTS; i++) tlc_regions_add(&r, 0x10000ULL * i, 0x10000ULL * i + 0x100);
+        EXPECT(!tlc_regions_covers(&r, 0x5000, 8), "regions: when full, the oldest area is replaced");
+        EXPECT(tlc_regions_covers(&r, 0x10000ULL * TLC_REGION_SLOTS, 8), "regions: the newest area is kept");
+        tlc_regions_clear(&r);
+        EXPECT(!tlc_regions_covers(&r, 0x10000ULL * TLC_REGION_SLOTS, 8), "regions: clear forgets everything");
+    }
+
+    /* --- reading only changed tiles --------------------------------------- */
+    {
+        static uint8_t dst[300 * 140 * 4], ref[300 * 140 * 4], scratch[256 * 256 * 4];
+        uint64_t ptrs[64], hashes[64];
+        TLC_TILECACHE tc;
+        TLC_READSTATS st;
+        COUNTING cnt;
+        uint64_t c3, slot, prev_hash, oldpx;
+        uint32_t w = 0, h = 0, rw, rh, seed = 12345, step;
+        unsigned long full_reads;
+        int ok, sweep_ok = 1;
+        const size_t fb = 100 * 70 * 4;
+
+        memset(&tc, 0, sizeof tc);
+        tc.ptr = ptrs; tc.hash = hashes; tc.cap = 64;
+        cnt.f = &f; cnt.reads = 0;
+        c3 = heap; heap += 0x2000;
+        build_canvas(&f, c3, "Inc", 100, 70, 32, -1, -1, &heap);   /* 4 x 3 tiles, partial edges */
+
+#define FRESH() tlc_read_level(fake_read, &f, L, c3, 0, ref, sizeof ref, scratch, sizeof scratch, &rw, &rh)
+#define INC(v)  tlc_read_level_incremental(counting_read, &cnt, L, c3, 0, dst, sizeof dst, \
+                                           scratch, sizeof scratch, &tc, (v), &w, &h, &st)
+
+        cnt.reads = 0;
+        ok = INC(0) && FRESH();
+        full_reads = cnt.reads;
+        EXPECT(ok && st.full && st.tiles_read == 12 && w == 100 && h == 70,
+               "tiles: the first read is full");
+        EXPECT(ok && !memcmp(dst, ref, fb), "tiles: a full read matches tlc_read_level byte for byte");
+        prev_hash = st.frame_hash;
+
+        cnt.reads = 0;
+        ok = INC(0);
+        EXPECT(ok && !st.full && st.tiles_read == 0 && st.tiles_skipped == 12,
+               "tiles: nothing changed -> no tile is read");
+        EXPECT(cnt.reads == full_reads - 12, "tiles: only the map and the tile pointers were read");
+        EXPECT(st.frame_hash == prev_hash && !memcmp(dst, ref, fb), "tiles: same picture, same fingerprint");
+
+        /* SAI's copy-on-write: tile (1,1) gets a new block with new pixels. */
+        slot = tile_slot(&f, c3, 1, 1);
+        put64(&f, slot, new_block(&f, &heap, 32, 0x77));
+        ok = INC(0) && FRESH();
+        EXPECT(ok && st.tiles_read == 1, "tiles: a changed tile is the only one read");
+        EXPECT(ok && !memcmp(dst, ref, fb), "tiles: the frame shows the change");
+        EXPECT(st.frame_hash != prev_hash, "tiles: the fingerprint changes with the picture");
+        prev_hash = st.frame_hash;
+
+        /* New block, same pixels: read, but not a new frame. */
+        slot = tile_slot(&f, c3, 2, 1);
+        oldpx = get64(&f, slot);
+        {
+            uint64_t px = new_block(&f, &heap, 32, 0);
+            memcpy(f.buf + (px - FAKE_ORIGIN), f.buf + (oldpx - FAKE_ORIGIN), 32 * 32 * 4);
+            put64(&f, slot, px);
+        }
+        ok = INC(0);
+        EXPECT(ok && st.tiles_read == 1 && st.frame_hash == prev_hash,
+               "tiles: a new block with the same pixels is not a change");
+
+        /* THE TRAP the verify pass exists for: a block changed in place. */
+        slot = tile_slot(&f, c3, 0, 0);
+        oldpx = get64(&f, slot);
+        memset(f.buf + (oldpx - FAKE_ORIGIN), 0x55, 32 * 32 * 4);
+        ok = INC(0);
+        EXPECT(ok && st.tiles_read == 0 && dst[0] != 0x55,
+               "tiles: without verify, an in-place change is missed (why verify exists)");
+        ok = INC(1) && FRESH();
+        EXPECT(ok && st.inplace_changes == 1 && !memcmp(dst, ref, fb),
+               "tiles: verify reads every tile, counts the in-place change and fixes the frame");
+        prev_hash = st.frame_hash;
+
+        /* Holes: a tile disappears (white), then comes back. */
+        slot = tile_slot(&f, c3, 3, 2);
+        oldpx = get64(&f, slot);
+        put64(&f, slot, 0);
+        ok = INC(0) && FRESH();
+        EXPECT(ok && !memcmp(dst, ref, fb) && dst[(69 * 100 + 99) * 4] == 0xff,
+               "tiles: a tile that disappears turns white");
+        put64(&f, slot, oldpx);
+        ok = INC(0) && FRESH();
+        EXPECT(ok && !memcmp(dst, ref, fb), "tiles: a tile that comes back shows again");
+
+        /* Padding: invisible bytes of the partial edge tile (3,0) change. */
+        slot = tile_slot(&f, c3, 3, 0);
+        oldpx = get64(&f, slot);
+        prev_hash = st.frame_hash;
+        {
+            uint64_t px = new_block(&f, &heap, 32, 0);
+            uint32_t r;
+            memcpy(f.buf + (px - FAKE_ORIGIN), f.buf + (oldpx - FAKE_ORIGIN), 32 * 32 * 4);
+            for (r = 0; r < 32; r++)   /* only x >= 4 is past the canvas edge */
+                memset(f.buf + (px - FAKE_ORIGIN) + (size_t)r * 32 * 4 + 4 * 4, 0xAB, 28 * 4);
+            put64(&f, slot, px);
+        }
+        ok = INC(0);
+        EXPECT(ok && st.frame_hash == prev_hash,
+               "tiles: garbage past the canvas edge is not a change");
+
+        /* Canvas, level and size changes force a full read. */
+        ok = tlc_read_level_incremental(fake_read, &f, L, c1, 0, dst, sizeof dst, scratch,
+                                        sizeof scratch, &tc, 0, &w, &h, &st);
+        EXPECT(ok && st.full, "tiles: switching canvas reads everything");
+        ok = INC(0);
+        EXPECT(ok && st.full, "tiles: switching back reads everything again");
+        ok = tlc_read_level_incremental(fake_read, &f, L, c3, 1, dst, sizeof dst, scratch,
+                                        sizeof scratch, &tc, 0, &w, &h, &st);
+        EXPECT(ok && st.full, "tiles: switching level reads everything");
+
+        /* Failure halfway: the cache must not survive it. */
+        ok = INC(0);
+        slot = tile_slot(&f, c3, 2, 2);
+        oldpx = get64(&f, slot);
+        put64(&f, slot, 0x900000000ULL);           /* outside the fake memory */
+        EXPECT(!INC(0) && tc.ntiles == 0, "tiles: a failed read empties the cache");
+        put64(&f, slot, oldpx);
+        ok = INC(0) && FRESH();
+        EXPECT(ok && st.full && !memcmp(dst, ref, fb), "tiles: the read after a failure is full and correct");
+
+        /* Sweep: 200 random copy-on-write changes, hole toggles and same-pixel
+         * swaps. After every step the frame must equal a fresh full read. */
+        for (step = 0; step < 200; step++) {
+            uint32_t tx = lcg(&seed) % 4, ty = lcg(&seed) % 3, op = lcg(&seed) % 3;
+            slot = tile_slot(&f, c3, tx, ty);
+            oldpx = get64(&f, slot);
+            if (op == 0) put64(&f, slot, new_block(&f, &heap, 32, (int)(lcg(&seed) & 0xff)));
+            else if (op == 1) put64(&f, slot, oldpx ? 0 : new_block(&f, &heap, 32, 0x33));
+            else if (oldpx) {
+                uint64_t px = new_block(&f, &heap, 32, 0);
+                memcpy(f.buf + (px - FAKE_ORIGIN), f.buf + (oldpx - FAKE_ORIGIN), 32 * 32 * 4);
+                put64(&f, slot, px);
+            }
+            if (!INC(0) || !FRESH() || memcmp(dst, ref, fb)) { sweep_ok = 0; break; }
+        }
+        EXPECT(sweep_ok, "tiles: 200 random changes, the frame always matches a full read");
+#undef FRESH
+#undef INC
     }
 
     free(f.buf);

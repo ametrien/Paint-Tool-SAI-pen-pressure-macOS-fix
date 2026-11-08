@@ -431,4 +431,215 @@ static int tlc_stroke_update(TLC_STROKE *s, int pressure, uint32_t now_ms) {
     return 0;
 }
 
+/* ===========================================================================
+ * RECORDING SPEED (RECORDING-SPEED-PLAN.md). Measured with Retina on: SAI fell
+ * behind on 8% of pen points with recording on and 0.5% with it off. The
+ * pieces below make a capture wait for the pen to rest, ask Wine about memory
+ * far less often, and read only the tiles that changed.
+ * ========================================================================= */
+
+/* --- capture scheduling (package 2) -------------------------------------- */
+
+#define TLC_CAPTURE_POLL_MS 50   /* re-check interval while the pen presses */
+
+/* Milliseconds to wait before capturing, or 0 to capture now. All inputs are
+ * GetTickCount() values; differences are unsigned, so the 49.7-day wrap is
+ * harmless.
+ *
+ * THE TRAP: never return 0 while the pen presses, not even past max_wait_ms.
+ * A capture that runs during a stroke is the lag this whole change removes.
+ * max_wait_ms only lets nonstop drawing get a frame at a moment BETWEEN
+ * strokes (pen up), without waiting for a full rest. */
+static uint32_t tlc_capture_wait(uint32_t now, uint32_t last_activity, uint32_t pending_since,
+                                 int pen_down, uint32_t quiet_ms, uint32_t max_wait_ms) {
+    uint32_t idle, waited, rem_quiet, rem_max;
+    if (pen_down) return TLC_CAPTURE_POLL_MS;
+    /* Activity stamped by another thread just after `now` was read would wrap
+     * to a huge idle time and look like a long rest. Treat it as "just now". */
+    idle   = ((int32_t)(now - last_activity) < 0) ? 0 : now - last_activity;
+    waited = ((int32_t)(now - pending_since) < 0) ? 0 : now - pending_since;
+    if (idle >= quiet_ms || waited >= max_wait_ms) return 0;
+    rem_quiet = quiet_ms - idle;
+    rem_max   = max_wait_ms - waited;
+    return rem_quiet < rem_max ? rem_quiet : rem_max;
+}
+
+/* --- remembered readable memory (package 3) ------------------------------ */
+
+#define TLC_REGION_SLOTS 32
+
+/* Memory areas already confirmed readable, so a read inside one needs no
+ * VirtualQuery. The Windows side clears this at the start of EVERY capture;
+ * see the trap at that call. */
+typedef struct {
+    uint64_t lo[TLC_REGION_SLOTS], hi[TLC_REGION_SLOTS];  /* [lo, hi) */
+    uint32_t n, next;
+} TLC_REGIONS;
+
+static void tlc_regions_clear(TLC_REGIONS *r) { r->n = 0; r->next = 0; }
+
+/* 1 only if all of [addr, addr+len) lies inside ONE remembered area. A read
+ * straddling two areas is not covered: it goes back to VirtualQuery, which
+ * is slower but never wrong. */
+static int tlc_regions_covers(const TLC_REGIONS *r, uint64_t addr, size_t len) {
+    uint64_t end;
+    uint32_t i;
+    if (!len) return 0;
+    if (addr > UINT64_MAX - (uint64_t)len) return 0;   /* no wrap past the top */
+    end = addr + (uint64_t)len;
+    for (i = 0; i < r->n; i++)
+        if (addr >= r->lo[i] && end <= r->hi[i]) return 1;
+    return 0;
+}
+
+/* Remember [lo, hi). Empty or inverted ranges and exact duplicates are
+ * ignored; when full, the oldest entry is replaced. */
+static void tlc_regions_add(TLC_REGIONS *r, uint64_t lo, uint64_t hi) {
+    uint32_t i;
+    if (lo >= hi) return;
+    for (i = 0; i < r->n; i++)
+        if (r->lo[i] == lo && r->hi[i] == hi) return;
+    if (r->n < TLC_REGION_SLOTS) {
+        r->lo[r->n] = lo; r->hi[r->n] = hi; r->n++;
+        return;
+    }
+    r->lo[r->next] = lo; r->hi[r->next] = hi;
+    r->next = (r->next + 1) % TLC_REGION_SLOTS;
+}
+
+/* --- reading only changed tiles (package 4) ------------------------------ */
+
+#define TLC_HASH_INIT 1469598103934665603ULL
+#define TLC_HOLE_HASH 0x686f6c65686f6c65ULL   /* stands for "no tile here" */
+
+/* FNV-1a, continuable, so a tile's visible rows can be hashed in place. */
+static uint64_t tlc_hash_update(uint64_t h, const uint8_t *p, size_t n) {
+    size_t i;
+    for (i = 0; i < n; i++) { h ^= p[i]; h *= 1099511628211ULL; }
+    return h;
+}
+
+/* What the last successful read of one canvas level saw, per tile. ptr and
+ * hash are caller-owned arrays of `cap` entries. ntiles == 0 means empty. */
+typedef struct {
+    uint64_t  canvas;
+    int       level;
+    uint32_t  width, height, tile_w, tile_h, count_x, count_y, ntiles;
+    uint64_t *ptr;    /* tile block address (0 = hole) */
+    uint64_t *hash;   /* hash of the tile's VISIBLE pixels */
+    uint32_t  cap;
+} TLC_TILECACHE;
+
+typedef struct {
+    uint32_t tiles_total, tiles_read, tiles_skipped, inplace_changes;
+    int      full;         /* every tile was read */
+    uint64_t frame_hash;   /* hash of the per-tile hashes: the dedup fingerprint */
+} TLC_READSTATS;
+
+/* Like tlc_read_level, but a tile whose block address is unchanged since the
+ * last read of the same canvas level is not read again: its pixels are still
+ * in `dst` from last time.
+ *
+ * This rests on a guess about SAI: that a changed tile gets a NEW block
+ * (copy-on-write for undo). If SAI ever changes a block in place, skipping by
+ * address would record a stale tile. `verify` reads every tile anyway and
+ * counts same-address tiles whose pixels changed in `inplace_changes`, so the
+ * caller can stop trusting addresses for the rest of the session.
+ *
+ * `dst` must be the same buffer, untouched since the last successful call. */
+static int tlc_read_level_incremental(TLC_READ_FN rd, void *ctx, const TLC_LAYOUT *L,
+                                      uint64_t canvas, int level,
+                                      uint8_t *dst, size_t dst_cap,
+                                      uint8_t *tile_scratch, size_t scratch_cap,
+                                      TLC_TILECACHE *cache, int verify,
+                                      uint32_t *out_w, uint32_t *out_h, TLC_READSTATS *st) {
+    TLC_TILEMAP tm;
+    uint32_t ty, tx, need_tile, n;
+    size_t need;
+    int full;
+
+    memset(st, 0, sizeof *st);
+    if (!tlc_tilemap_read(rd, ctx, L, canvas, level, &tm)) goto fail;
+    need = (size_t)tm.width * (size_t)tm.height * 4u;
+    if (need > dst_cap) goto fail;
+    need_tile = tm.tile_w * tm.tile_h * 4u;
+    if (need_tile > scratch_cap) goto fail;
+    n = tm.count_x * tm.count_y;
+    if (!cache->ptr || !cache->hash || n > cache->cap) goto fail;
+
+    full = !cache->ntiles || cache->canvas != canvas || cache->level != level ||
+           cache->width != tm.width || cache->height != tm.height ||
+           cache->tile_w != tm.tile_w || cache->tile_h != tm.tile_h ||
+           cache->count_x != tm.count_x || cache->count_y != tm.count_y;
+
+    /* THE TRAP: mark the cache empty BEFORE touching anything. If this read
+     * fails halfway, `dst` holds a mix of old and new tiles, and a cache that
+     * still claimed to describe it would let the next read skip tiles whose
+     * pixels were never written. Only a complete read sets ntiles again. */
+    cache->ntiles = 0;
+    st->full = full;
+    st->tiles_total = n;
+
+    for (ty = 0; ty < tm.count_y; ty++) {
+        uint64_t row = 0;
+        if (!tlc_u64(rd, ctx, tm.tree + (uint64_t)ty * 8, &row)) goto fail;
+
+        for (tx = 0; tx < tm.count_x; tx++) {
+            uint32_t i = ty * tm.count_x + tx;
+            uint64_t tile = 0, h;
+            uint32_t x0 = tx * tm.tile_w, y0 = ty * tm.tile_h;
+            uint32_t cw, chh, r;
+
+            if (x0 >= tm.width || y0 >= tm.height) {
+                cache->ptr[i] = 0; cache->hash[i] = TLC_HOLE_HASH;
+                continue;
+            }
+            cw  = tm.width  - x0; if (cw  > tm.tile_w) cw  = tm.tile_w;
+            chh = tm.height - y0; if (chh > tm.tile_h) chh = tm.tile_h;
+
+            /* Same rule as tlc_read_level: an unreadable or zero tile
+             * pointer is a hole, drawn white. */
+            if (!row || !tlc_u64(rd, ctx, row + (uint64_t)tx * 8, &tile)) tile = 0;
+
+            if (!tile) {
+                if (!full && cache->ptr[i] == 0) { st->tiles_skipped++; continue; }
+                for (r = 0; r < chh; r++)
+                    memset(dst + (((size_t)(y0 + r) * tm.width) + x0) * 4,
+                           0xff, (size_t)cw * 4);
+                cache->ptr[i] = 0; cache->hash[i] = TLC_HOLE_HASH;
+                continue;
+            }
+            if (!full && !verify && tile == cache->ptr[i]) { st->tiles_skipped++; continue; }
+
+            if (!rd(ctx, tile, tile_scratch, need_tile)) goto fail;
+            /* Hash only what is visible. A partial edge tile's padding past
+             * the canvas edge can hold anything; hashing it would make every
+             * capture look changed. */
+            h = TLC_HASH_INIT;
+            for (r = 0; r < chh; r++) {
+                const uint8_t *src = tile_scratch + (size_t)r * tm.tile_w * 4;
+                memcpy(dst + (((size_t)(y0 + r) * tm.width) + x0) * 4, src, (size_t)cw * 4);
+                h = tlc_hash_update(h, src, (size_t)cw * 4);
+            }
+            st->tiles_read++;
+            if (!full && tile == cache->ptr[i] && h != cache->hash[i]) st->inplace_changes++;
+            cache->ptr[i] = tile; cache->hash[i] = h;
+        }
+    }
+
+    st->frame_hash = tlc_hash_update(TLC_HASH_INIT, (const uint8_t *)cache->hash, (size_t)n * 8u);
+    cache->canvas = canvas; cache->level = level;
+    cache->width = tm.width; cache->height = tm.height;
+    cache->tile_w = tm.tile_w; cache->tile_h = tm.tile_h;
+    cache->count_x = tm.count_x; cache->count_y = tm.count_y;
+    cache->ntiles = n;
+    if (out_w) *out_w = tm.width;
+    if (out_h) *out_h = tm.height;
+    return 1;
+
+fail:
+    cache->ntiles = 0;
+    return 0;
+}
+
 #endif /* TIMELAPSE_CORE_H */

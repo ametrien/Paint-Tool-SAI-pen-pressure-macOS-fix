@@ -68,6 +68,9 @@ chmod +x "$APP/Contents/MacOS/SAIPenPressure"
 
 # our DLL + the Wine installer live in Resources
 cp "$REPO/wintab-src/wintab32.dll"  "$APP/Contents/Resources/wintab32.dll"
+# Wine's Mac driver with the IOSurface fix, for Wine Staging 11.16 only
+# (issue #39). Source and licence: wine-patch/.
+cp "$REPO/wine-patch/winemac-iosurface-11.16.so" "$APP/Contents/Resources/winemac-iosurface-11.16.so"
 # The bridge probe: a WinTab client the app runs under Wine to test the SAI
 # side of the bridge with SAI closed. Shipped rather than built on demand for
 # the same reason as the DLL — the user has no mingw.
