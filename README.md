@@ -133,6 +133,17 @@ the translation layer's.
 You bring your own copy of **PaintTool SAI Ver.2** and, if you want to save your work, a licence
 from SYSTEMAX. Everything else the app handles.
 
+### Sharp text on Retina screens, without lag
+
+1. **Make sure your Wine has the fix.** Open **Advanced › Wine** in the app:
+   - Wine Staging **11.16 with our patch** (press **Add patch**, or **Update Wine for sharper, faster drawing**), or
+   - Wine **11.22 or newer**, once it is released.
+2. **Turn on Advanced › Display › Sharp text on Retina screens.** With the fix in place it is usually already on.
+3. **In SAI, set Window › Scaling of User Interface to 200%.** If you turn sharp text off again, set it back to 100%.
+
+Why the fix is needed: [issue #39](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/39) and
+[RETINA-LAG-FINDINGS.md](RETINA-LAG-FINDINGS.md).
+
 → **[Full install guide](https://ametrien.github.io/Paint-Tool-SAI-pen-pressure-macOS-fix/install)**, including the manual command-line route
 → **[Troubleshooting](https://ametrien.github.io/Paint-Tool-SAI-pen-pressure-macOS-fix/troubleshooting)**, organised by how to tell which problem you have
 → **[How it works](https://ametrien.github.io/Paint-Tool-SAI-pen-pressure-macOS-fix/how-it-works)**, if you want the architecture
