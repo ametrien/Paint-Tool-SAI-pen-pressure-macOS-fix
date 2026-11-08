@@ -34,6 +34,16 @@ extension SetupController {
         recCheck.toolTip = "Undo shows up in the video at your next stroke, not the moment you press it."
         recordingTab.setCustomSpacing(14, after: recordingTab.arrangedSubviews.last!)
         recordingTab.addArrangedSubview(recCheck)
+        recEveryStrokeCheck = NSButton(checkboxWithTitle: "Record every stroke separately",
+                                       target: self, action: #selector(recEveryStrokeToggle))
+        recordingTab.addArrangedSubview(recEveryStrokeCheck)
+        let everyHint = lbl("More detail in the video, but drawing may feel slower. "
+                            + "Off: a frame is taken once the pen rests for a second.",
+                            10, color: .tertiaryLabelColor)
+        everyHint.preferredMaxLayoutWidth = rowWidth
+        everyHint.lineBreakMode = .byWordWrapping
+        everyHint.usesSingleLineMode = false
+        recordingTab.addArrangedSubview(everyHint)
         // Only while it matters: a change made with SAI closed simply applies.
         recApplyHint = lbl("SAI is open: this applies the next time it starts.", 11, color: .systemOrange)
         recApplyHint.isHidden = true
@@ -123,6 +133,7 @@ extension SetupController {
     func refreshRecordingTab() {
         guard recCheck != nil else { return }
         recCheck.state = timelapseOn ? .on : .off
+        recEveryStrokeCheck?.state = timelapseEveryStroke() ? .on : .off
         // Frames are encoded away within a second of being captured, so the
         // raw count is near zero while recording. What has been captured lives
         // in the segments, and counting only frames made a working recording
@@ -199,6 +210,11 @@ extension SetupController {
         guard let p = try? String(contentsOfFile: appSupport() + "/timelapse-last.txt",
                                   encoding: .utf8) else { return }
         showPreview(p.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+    @objc func recEveryStrokeToggle() {
+        setTimelapseEveryStroke(recEveryStrokeCheck.state == .on)
+        recApplyPending = saiProcessRunning()
+        refreshRecordingTab()
     }
     @objc func recToggle() {
         timelapseOn = (recCheck.state == .on)

@@ -73,7 +73,8 @@ func saiLanguageInIni() -> String? {
 
 /// What has to happen in Wine for the switch's current state.
 func retinaPlan() -> DisplayCore.Plan {
-    DisplayCore.plan(wantOn: DisplayCore.wanted(stored: storedRetinaSetting()), wineOn: retinaModeInWine())
+    DisplayCore.plan(wantOn: DisplayCore.wanted(stored: storedRetinaSetting(), wineHasFix: wineHasRetinaFix()),
+                     wineOn: retinaModeInWine())
 }
 
 /// Write RetinaMode and the DPI into the prefix, as retinaPlan() says. The
@@ -127,6 +128,14 @@ func applySAILanguage() {
 /// that would close it without saving. So it only happens when no sai2.exe
 /// process exists at all, not merely when no SAI window is on screen.
 func prepareDisplaySettingsForLaunch(_ wine: String) {
+    // Our IOSurface Mac driver (removes the CPU re-draw that made drawing lag,
+    // issue #39, WinePatch*.swift) unless the user removed it in Advanced ›
+    // Wine. Only while no SAI runs, and Wine restarts after a swap so every
+    // Wine process uses the same driver.
+    if !saiProcessRunning(),
+       syncWineMacDriver(wine, wantPatched: winePatchWanted()) {
+        stopWineForPrefix(wine)
+    }
     // A switch clicked earlier, or one Wine has not caught up with yet.
     let modeChanges = retinaPlan().restartWine
     if FileManager.default.fileExists(atPath: wineRestartPendingFile()) || modeChanges, !saiProcessRunning() {
@@ -234,7 +243,8 @@ extension SetupController {
     /// prefix has now.
     func refreshDisplaySection() {
         guard retinaCheck != nil else { return }
-        retinaCheck.state = (storedRetinaSetting() ?? retinaModeInWine()) ? .on : .off
+        retinaCheck.state = (DisplayCore.wanted(stored: storedRetinaSetting(), wineHasFix: wineHasRetinaFix())
+                             ?? retinaModeInWine()) ? .on : .off
         if saiLangPopup != nil {      // nil while the language menu is hidden
             let choice = storedSAILanguageChoice() ?? SAILanguageChoice.defaultChoice
             let i = saiLangPopup.indexOfItem(withRepresentedObject: choice)

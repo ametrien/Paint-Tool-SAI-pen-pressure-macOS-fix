@@ -96,7 +96,14 @@ struct DisplayTests {
 
         // --- off by default, and what happens before SAI starts ----------------
         // It makes SAI a few times slower, so nobody gets it without asking.
-        expect(DisplayCore.wanted(stored: nil) == nil, "default: nothing stored means hands off")
+        expect(DisplayCore.wanted(stored: nil) == nil, "default: nothing stored and no fix means hands off")
+        expect(DisplayCore.wanted(stored: nil, wineHasFix: true) == true,
+               "default: nothing stored and Wine has the fix means on (0.3.9)")
+        // THE TRAP: the pulled 0.3.8 turned it on without the fix.
+        expect(DisplayCore.wanted(stored: nil, wineHasFix: false) != true,
+               "default: never on by default without the fix")
+        expect(DisplayCore.wanted(stored: false, wineHasFix: true) == false,
+               "default: an explicit off wins even with the fix")
         expect(DisplayCore.wanted(stored: false) == false && DisplayCore.wanted(stored: true) == true,
                "default: an explicit off or on is kept")
         // THE TRAP: never set here must not switch off a RetinaMode someone
