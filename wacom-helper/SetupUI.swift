@@ -394,7 +394,10 @@ extension SetupController {
             }
         }
     }
-    @objc func installWineInApp() {
+    @objc func installWineInApp() { installWineInApp(url: nil) }
+
+    /// `url`: a specific Gcenx build (Advanced › Update Wine); nil = the newest.
+    func installWineInApp(url: String?) {
         guard wineProc == nil else { return }
         guard let sh = Bundle.main.resourcePath.map({ "\($0)/install-wine.sh" }),
               FileManager.default.fileExists(atPath: sh) else {
@@ -409,6 +412,11 @@ extension SetupController {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/bash")
         p.arguments = [sh]
+        if let url = url {
+            var env = ProcessInfo.processInfo.environment
+            env["WINE_URL"] = url
+            p.environment = env
+        }
         let pipe = Pipe()
         p.standardOutput = pipe; p.standardError = pipe
         wineOutBuf = ""
@@ -431,6 +439,8 @@ extension SetupController {
                 self.wineProc = nil
                 let ok = wineBin() != nil
                 self.wineLabel.stringValue = ok ? "Wine installed ✅" : "Wine install failed. Try the Terminal fallback."
+                if ok { self.afterWineInstall?() }
+                self.afterWineInstall = nil
                 self.wineBar.value = ok ? 1 : 0
                 self.refresh()
                 if !ok {

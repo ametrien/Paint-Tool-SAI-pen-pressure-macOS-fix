@@ -3,6 +3,35 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](https://semver.org/).
 
+## [0.3.9] — unreleased
+
+### Fixed
+- **Drawing with "Sharp text on Retina screens" no longer lags**
+  ([#39](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/39)). The lag came
+  from how Wine 11.16 shows windows on a Mac: on every update macOS had to re-draw and colour-convert
+  the whole SAI window on the processor. Wine has fixed this upstream (expected in Wine 11.22). Until
+  then, the app swaps in Wine's Mac driver with that fix backported, but only for
+  the exact Wine Staging 11.16 build it was made for; any other Wine is left alone. Source and
+  licence: `wine-patch/`.
+- **Advanced › Wine** shows which Wine is installed and whether it has the fix: built in (Wine 11.22
+  or newer), added by our patch (Wine Staging 11.16), or missing. *Remove patch* / *Add patch* switch
+  our patch off and on. *Update Wine for sharper, faster drawing* installs the newest Wine Staging
+  with the fix built in, or Wine Staging 11.16 with our patch while there is none yet. It asks first,
+  needs SAI closed, says plainly when it installs an older Wine (11.16) than the one you have, and moves the old Wine to the Trash.
+- **Timelapse recording is lighter while drawing.** A frame is taken once the pen rests for a second
+  instead of right after every stroke, far fewer memory checks are made, and the capture runs at a
+  lower priority. Each capture now takes a few milliseconds.
+
+### Changed
+- **Sharp text on Retina screens is on by default again, where it does not lag:** when the Wine has
+  the fix (our patch on Wine Staging 11.16, or Wine 11.22 and newer). With any other Wine it stays
+  off as in 0.3.8. A choice made in Advanced always wins. If SAI then looks too small or too big,
+  set *Window › Scaling of User Interface* in SAI.
+
+### Added
+- **Recording › Record every stroke separately**, off by default: a frame right after each stroke,
+  as before. More detail in the video, but drawing may feel slower.
+
 ## [0.3.8] — 2026-11-07
 
 ### Added
