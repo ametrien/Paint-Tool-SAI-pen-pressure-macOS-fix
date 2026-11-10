@@ -3,7 +3,28 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](https://semver.org/).
 
-## [0.3.9] — unreleased
+## [0.3.10] — 2026-11-10
+
+### Fixed
+- **A new install gets a Wine that draws smoothly with sharp text.** Setup's *Install Wine* took
+  the newest Wine there was. Right now that is Wine 11.21, which does not have the fix for the
+  Retina drawing lag ([#39](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/39))
+  and cannot take our patch, so a new user started with sharp text off and was then offered an
+  older Wine in Advanced. Setup now installs what *Update Wine* installs: the newest Wine with
+  the fix built in, or Wine Staging 11.16 with our patch while there is none yet. The Terminal
+  route installs the same one.
+- **Wine 12.0 release candidates count as Wine with the fix.** Wine's yearly release first comes
+  out as `12.0-rc1`. The app could not read that version, so it would have said drawing can lag
+  and offered to go back to Wine 11.16. Rebuilt Wine packages (tags like `11.22_1`) are read too.
+
+- **Updating no longer gives up when GitHub has a hiccup.** GitHub sometimes answers with
+  "error 503" for a few seconds. One such answer made *Update now* fail, and made the check for
+  updates stop without a word until the app was restarted. Both now try again up to three more
+  times (after 2, 5 and 10 seconds). If that is not enough, the version row says *Couldn't check
+  for updates* with **Check again** and **Releases page**, and a failed download offers
+  **Try again** next to *Open releases page*.
+
+## [0.3.9] — 2026-11-08
 
 ### Fixed
 - **Drawing with "Sharp text on Retina screens" no longer lags**

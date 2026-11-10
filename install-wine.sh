@@ -2,7 +2,13 @@
 # Download & install Gcenx "Wine Staging" for macOS into /Applications.
 # Used by SAI Pen Pressure.app when Wine is missing, and runnable on its own.
 #
-# Pick a specific build instead of the latest:  WINE_URL="https://…/wine-staging-…-osx64.tar.xz" ./install-wine.sh
+# The app always says which build to install, through WINE_URL: the newest Wine
+# that has the fix for the Retina drawing lag, or Wine Staging 11.16, which it
+# then patches (wacom-helper/WineStatusCore.swift). Run by hand with no
+# WINE_URL, this takes the newest build, which may have no fix; the app's
+# Advanced › Wine then offers the right one.
+#
+# Pick a specific build:  WINE_URL="https://…/wine-staging-…-osx64.tar.xz" ./install-wine.sh
 set -euo pipefail
 
 DEST="/Applications/Wine Staging.app"
