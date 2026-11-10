@@ -46,6 +46,17 @@ func fetchGcenxStagingReleases() -> [(tag: String, url: String)] {
     }
 }
 
+/// The build the last wineInstallTarget() call chose, for the Terminal route.
+var g_wineInstallURL: String?
+
+/// Which Wine to install: asks Gcenx's release list, then WineStatusCore
+/// decides. Goes to the network, so call it off the main thread.
+func wineInstallTarget() -> (version: WineVersion, url: String, patch: Bool) {
+    let t = WineStatusCore.updateTarget(releases: fetchGcenxStagingReleases())
+    g_wineInstallURL = t.url
+    return t
+}
+
 extension SetupController {
 
     func buildWineSection() -> NSStackView {
@@ -135,7 +146,7 @@ extension SetupController {
         wineActionBtn.isEnabled = false
         wineStatusLabel.stringValue = "Looking for the newest Wine…"
         DispatchQueue.global(qos: .userInitiated).async {
-            let target = WineStatusCore.updateTarget(releases: fetchGcenxStagingReleases())
+            let target = wineInstallTarget()
             let current = wineBin().flatMap(wineVersionString).flatMap(WineVersion.parse)
             DispatchQueue.main.async { self.confirmAndInstall(target, current: current) }
         }

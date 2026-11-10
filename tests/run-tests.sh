@@ -257,6 +257,65 @@ else
   echo "  ok   update: and cleans up after itself"
 fi
 
+# GitHub sometimes answers the update check or the download with 503 for a few
+# seconds. That used to end the check silently and fail "Update now" on the
+# spot. Here a real local server gives those answers and the real request code
+# (fetchWithRetry) is run against it, with the waits shortened.
+FSRV="$UPDW/fetch"; mkdir -p "$FSRV"
+python3 - "$FSRV" <<'PY' &
+import http.server, sys, os, collections
+d = sys.argv[1]
+hits = collections.Counter()
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_GET(self):
+        hits[self.path] += 1
+        n = hits[self.path]
+        with open(os.path.join(d, "hits" + self.path.replace("/", "-")), "w") as f: f.write(str(n))
+        if   self.path == "/flaky":   code = 503 if n <= 2 else 200   # two bad answers, then the file
+        elif self.path == "/down":    code = 503                      # never recovers
+        elif self.path == "/missing": code = 404
+        elif self.path == "/limited": code = 403
+        else:                         code = 200
+        body = b"HELLO" if code == 200 else b"nope"
+        self.send_response(code); self.send_header("Content-Length", str(len(body))); self.end_headers()
+        self.wfile.write(body)
+s = http.server.HTTPServer(("127.0.0.1", 0), H)
+with open(os.path.join(d, "port.tmp"), "w") as f: f.write(str(s.server_address[1]))
+os.rename(os.path.join(d, "port.tmp"), os.path.join(d, "port"))
+s.serve_forever()
+PY
+FSRV_PID=$!
+WATCHERS="${WATCHERS:-} $FSRV_PID"   # the EXIT trap at the top stops it if we fail early
+ucheck() { if [ "$2" = "$3" ]; then echo "  ok   $1"; else echo "  FAIL $1 (got '$2', want '$3')"; ufail=1; fi; }
+for _ in $(seq 1 50); do [ -f "$FSRV/port" ] && break; osascript -e 'delay 0.1' >/dev/null 2>&1 || true; done
+FPORT="$(cat "$FSRV/port" 2>/dev/null || true)"
+if [ -z "$FPORT" ]; then echo "  FAIL fetch: the local test server did not start"; exit 1; fi
+fetch() { SAIPP_CONFIG_DIR="$UPDW/cfg" SAIPP_SELFTEST_FETCH_URL="http://127.0.0.1:$FPORT/$1" "$WORK/helper-upd"; }
+
+out=$(fetch flaky)
+uwant "fetch: two 503s and then the file: it arrives"      "$out" "status=200 attempts=3"
+uwant "fetch: and it is the file, not an error page"        "$out" "body=HELLO"
+uwant "fetch: the caller is told about each new try"        "$out" "retries=2"
+out=$(fetch down)
+uwant "fetch: a server that stays down is given up on after 4 tries" "$out" "status=503 attempts=4"
+uwant "fetch: with nothing passed off as the file"          "$out" "body="$'\n'
+uwant "fetch: and words a person can read"                  "$out" "says=GitHub is having trouble right now (error 503)"
+ucheck "fetch: exactly 4 requests reached the server, not more" "$(cat "$FSRV/hits-down")" "4"
+out=$(fetch missing)
+uwant "fetch: a 404 is not tried again"                     "$out" "status=404 attempts=1"
+out=$(fetch limited)
+uwant "fetch: 'too many requests' is not hammered"          "$out" "status=403 attempts=1"
+ucheck "fetch: one request only for a 403"                   "$(cat "$FSRV/hits-limited")" "1"
+out=$(fetch fine)
+uwant "fetch: a good answer needs one try"                  "$out" "status=200 attempts=1 retries=0 body=HELLO"
+kill "$FSRV_PID" 2>/dev/null || true
+wait "$FSRV_PID" 2>/dev/null || true
+# Nobody listening at all: no answer, tried again, then given up on.
+out=$(fetch gone)
+uwant "fetch: no answer at all is tried 4 times"            "$out" "status=none attempts=4"
+uwant "fetch: and points at the connection"                 "$out" "says=no answer from GitHub"
+
 [ "$ufail" = 0 ] || exit 1
 echo "All update tests passed."
 
