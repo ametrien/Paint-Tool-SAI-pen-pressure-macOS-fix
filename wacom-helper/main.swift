@@ -368,6 +368,18 @@ if let zip = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_UPDATE_ZIP"] {
     }
 }
 
+// The update's web requests against a real (local) server: does a 503 get
+// another try, and does a 404 not. Prints what happened; tests/run-tests.sh
+// serves the answers and reads this.
+if let u = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_FETCH_URL"], let url = URL(string: u) {
+    var retries = 0
+    let r = fetchWithRetry(url, timeout: 5, delays: [0.05, 0.05, 0.05], onRetry: { _, _ in retries += 1 })
+    let body = r.data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+    print("status=\(r.status.map(String.init) ?? "none") attempts=\(r.attempts) retries=\(retries) body=\(body)")
+    print("says=\(updateFailureText(status: r.status))")
+    exit(0)
+}
+
 // The report redaction is only a safeguard if it is on for someone who never
 // went looking for it, so the DEFAULT is the thing worth asserting.
 if ProcessInfo.processInfo.environment["SAIPP_SELFTEST_REPORT"] != nil {
@@ -1170,7 +1182,13 @@ func installWineViaTerminal() {
     guard let sh = Bundle.main.resourcePath.map({ "\($0)/install-wine.sh" }), FileManager.default.fileExists(atPath: sh) else {
         NSWorkspace.shared.open(URL(string: "https://github.com/Gcenx/macOS_Wine_builds/releases")!); return
     }
-    _ = osa("tell application \"Terminal\" to do script \"bash '\(sh)'\"")
+    // The same build the in-app install picks, not "the newest" (see
+    // WineStatusCore.updateTarget). Reuses the choice the in-app install just
+    // made, when there is one, so the fallback after a failed install does not
+    // wait on the network again on the main thread.
+    let url = g_wineInstallURL ?? wineInstallTarget().url
+    let cmd = WineStatusCore.installCommand(script: sh, url: url)
+    _ = osa("tell application \"Terminal\" to do script \"\(cmd)\"")
     _ = osa("tell application \"Terminal\" to activate")
 }
 func saiReady() -> Bool { savedSAIPath() != nil }
@@ -1501,8 +1519,10 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     // Advanced › Wine (WineUI.swift).
     var wineStatusLabel: NSTextField!
     var wineActionBtn: NSButton!
-    /// Run once after an in-app Wine install succeeds (Update Wine).
+    /// Run once after an in-app Wine install succeeds (Install Wine, Update Wine).
     var afterWineInstall: (() -> Void)?
+    /// Setup is looking up which Wine to install (a second click must wait).
+    var wineChoosing = false
     var libStore: LibraryStore?
     var settingsTab: NSStackView!
     var settingsScratch: PenScratchView!
@@ -1912,6 +1932,8 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     var latestNotes: String = ""
     var latestZipURL: String?        // the asset the in-app update installs
     var autoUpdateTried = false      // once per launch, whatever the answer
+    var updateChecking = false       // a check is on its way
+    var updateCheckFailed = false    // the last check got no answer: the row offers "Check again"
     let repoSlug = "ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix"
 
 

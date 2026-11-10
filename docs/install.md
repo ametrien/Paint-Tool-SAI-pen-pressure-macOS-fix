@@ -136,7 +136,9 @@ steps, or who are working on the project itself.
 
 1. **Install Wine.** Download `wine-staging-*-osx64.tar.xz` (or the `.app`) from the
    [Gcenx releases](https://github.com/Gcenx/macOS_Wine_builds/releases) and put
-   **Wine Staging.app** in `/Applications`.
+   **Wine Staging.app** in `/Applications`. Any build runs SAI. For sharp text on a Retina
+   screen without lag, take **11.16** (the app adds its patch to exactly that build) until a Wine
+   with the fix built in is out, expected to be 11.22.
 
 2. **Download & unzip SAI Ver.2** from systemax. Note the folder that contains `sai2.exe`.
 

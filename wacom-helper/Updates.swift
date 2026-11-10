@@ -1,8 +1,8 @@
-// Updates.swift — noticing that a newer release exists, and pointing at it.
+// Updates.swift — noticing that a newer release exists, and installing it.
 //
-// Moved out of main.swift unchanged. Deliberately just a check and a link: the
-// app does not update itself, because an app that replaces its own binary while
-// holding an Input Monitoring grant is how that grant gets silently revoked.
+// The check and the download both try again when GitHub does not answer (the
+// rules are in UpdateCore.swift), and when that is not enough the row says so
+// and offers "Check again" and the releases page.
 
 import AppKit
 import Foundation
@@ -33,6 +33,41 @@ func unpackUpdate(zip: String, into dir: String) -> Result<UpdatePackage, Update
     return .success(UpdatePackage(appPath: appPath, version: v, bundleID: id))
 }
 
+/// One web request, tried again while updateRetryDelay says so. Waits for the
+/// answer, so call it OFF the main thread. `status` is nil when there was no
+/// answer at all; `data` is set only for a 2xx answer.
+///
+/// `delays` is a parameter for the self-test, which cannot sit through 17 s.
+func fetchWithRetry(_ url: URL, accept: String? = nil, timeout: TimeInterval,
+                    delays: [Double] = updateRetryDelays,
+                    onRetry: ((_ nextAttempt: Int, _ status: Int?) -> Void)? = nil)
+    -> (data: Data?, status: Int?, attempts: Int) {
+    var attempt = 0
+    while true {
+        attempt += 1
+        var req = URLRequest(url: url)
+        req.timeoutInterval = timeout
+        // A cached 503 must not be served back to the retry.
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        if let a = accept { req.setValue(a, forHTTPHeaderField: "Accept") }
+        var data: Data?, status: Int?
+        let done = DispatchSemaphore(value: 0)
+        URLSession.shared.dataTask(with: req) { d, resp, err in
+            status = err == nil ? (resp as? HTTPURLResponse)?.statusCode : nil
+            data = d
+            done.signal()
+        }.resume()
+        done.wait()
+        if updateFetchOutcome(status: status) == .ok { return (data, status, attempt) }
+        guard let wait = updateRetryDelay(afterAttempt: attempt, status: status, delays: delays) else {
+            return (nil, status, attempt)
+        }
+        wlog("update: try \(attempt) got \(status.map(String.init) ?? "no answer"), again in \(wait)s")
+        onRetry?(attempt + 1, status)
+        Thread.sleep(forTimeInterval: wait)
+    }
+}
+
 extension SetupController {
 
     func currentVersion() -> String {
@@ -50,32 +85,64 @@ extension SetupController {
         }
         return false
     }
-    // Ask GitHub for the newest release. Read-only, anonymous, ~1 request per
-    // launch; silently does nothing if offline.
-    func checkForUpdates() {
-        guard let url = URL(string: "https://api.github.com/repos/\(repoSlug)/releases/latest") else { return }
-        var req = URLRequest(url: url)
-        req.timeoutInterval = 8
-        req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
-            guard let self = self, let d = data,
-                  let j = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any],
-                  let tag = j["tag_name"] as? String else { return }
-            let notes = (j["body"] as? String) ?? ""
-            // The zip, not the dmg: ditto expands it with the signature intact,
-            // while a dmg would have to be mounted, copied out and detached —
-            // three more things to leave behind on a failure.
-            let assets = (j["assets"] as? [[String: Any]]) ?? []
-            let zip = assets.first { ($0["name"] as? String)?.hasSuffix(".zip") == true }?["browser_download_url"] as? String
+    // Ask GitHub for the newest release. Read-only, anonymous, one request per
+    // launch (a few more if GitHub does not answer the first time).
+    //
+    // A check that fails is SHOWN, with "Check again" and the releases page. It
+    // used to end silently, which looked exactly like "up to date" with the
+    // label missing, and the only way to check again was to restart the app.
+    @objc func checkForUpdates() {
+        guard !updateChecking,
+              let url = URL(string: "https://api.github.com/repos/\(repoSlug)/releases/latest") else { return }
+        updateChecking = true
+        if updateCheckFailed, updateLabel != nil {
+            updateLabel.stringValue = "· Checking…"
+            updateLabel.textColor = .tertiaryLabelColor
+            updateBtn.isEnabled = false
+        }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let r = fetchWithRetry(url, accept: "application/vnd.github+json", timeout: 8)
+            let j = r.data.flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] }
             DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.updateChecking = false
+                guard let j = j, let tag = j["tag_name"] as? String else {
+                    self.showUpdateCheckFailed(status: r.status, attempts: r.attempts)
+                    return
+                }
+                let notes = (j["body"] as? String) ?? ""
+                // The zip, not the dmg: ditto expands it with the signature intact,
+                // while a dmg would have to be mounted, copied out and detached —
+                // three more things to leave behind on a failure.
+                let assets = (j["assets"] as? [[String: Any]]) ?? []
+                let zip = assets.first { ($0["name"] as? String)?.hasSuffix(".zip") == true }?["browser_download_url"] as? String
                 self.latestZipURL = zip
                 self.showUpdateStatus(tag: tag, notes: notes)
             }
-        }.resume()
+        }
+    }
+    /// The check did not get an answer. The two buttons of the update row take
+    /// on other jobs until a check works: "Check again" and "Releases page".
+    func showUpdateCheckFailed(status: Int?, attempts: Int) {
+        wlog("update: check failed after \(attempts) tries, \(status.map { "error \($0)" } ?? "no answer")")
+        updateCheckFailed = true
+        guard updateLabel != nil else { return }
+        updateLabel.stringValue = "· Couldn't check for updates"
+        updateLabel.toolTip = updateFailureText(status: status) + "."
+        updateLabel.textColor = .secondaryLabelColor
+        updateBtn.title = "Check again"
+        updateBtn.isEnabled = true
+        updateBtn.isHidden = false
+        notesBtn.title = "Releases page"
+        notesBtn.isHidden = false
     }
     func showUpdateStatus(tag: String, notes: String) {
         latestTag = tag; latestNotes = notes
         guard updateLabel != nil else { return }
+        updateCheckFailed = false
+        updateBtn.title = "Update now"
+        updateBtn.isEnabled = true
+        notesBtn.title = "What's new"
         if isNewer(tag, than: currentVersion()) {
             // Keep the label SHORT — a release-notes teaser here overflowed the
             // row. The first meaningful line goes in the tooltip instead (with
@@ -201,6 +268,8 @@ extension SetupController {
 
     /// The whole update: download, check, swap, come back.
     @objc func updateNowTapped() {
+        // The same button is "Check again" while the last check has no answer.
+        if updateCheckFailed { wlog("update: Check again pressed"); checkForUpdates(); return }
         wlog("update: Update now pressed")
         subtitle.stringValue = "Checking the update…"
         installUpdate(auto: false)
@@ -256,8 +325,17 @@ extension SetupController {
                 DispatchQueue.main.async { self.updateFailed("that download isn't coming from this project's releases", auto: auto) }
                 return
             }
-            guard let data = try? Data(contentsOf: url), (try? data.write(to: URL(fileURLWithPath: zipPath))) != nil else {
-                DispatchQueue.main.async { self.updateFailed("the download didn't finish", auto: auto) }
+            // GitHub now and then answers a download with 503 for a few
+            // seconds. One such answer used to fail the whole update.
+            let got = fetchWithRetry(url, timeout: 30, onRetry: { n, _ in
+                DispatchQueue.main.async { self.subtitle.stringValue = "Downloading \(tag)… (try \(n))" }
+            })
+            guard let data = got.data else {
+                DispatchQueue.main.async { self.updateFailed(updateFailureText(status: got.status), auto: auto, canRetry: true) }
+                return
+            }
+            guard (try? data.write(to: URL(fileURLWithPath: zipPath))) != nil else {
+                DispatchQueue.main.async { self.updateFailed("couldn't save the download", auto: auto) }
                 return
             }
             let unpacked = unpackUpdate(zip: zipPath, into: "\(work)/x")
@@ -303,14 +381,18 @@ extension SetupController {
         }
     }
 
-    func updateFailed(_ why: String, auto: Bool) {
+    /// `canRetry`: the download did not arrive, so "Try again" is worth offering.
+    func updateFailed(_ why: String, auto: Bool, canRetry: Bool = false) {
         wlog("update: failed — \(why)")
         updateBtn.isEnabled = true
         subtitle.stringValue = "Update failed: \(why)"
         guard !auto else { return }
         NSApp.activate(ignoringOtherApps: true)
-        let c = osa("button returned of (display dialog \"Update failed: \(why).\n\nYou can always download it by hand from the releases page — nothing of yours is involved either way.\" buttons {\"OK\", \"Open releases page\"} default button \"Open releases page\" with icon caution)")
+        let buttons = canRetry ? "{\"Close\", \"Open releases page\", \"Try again\"}" : "{\"OK\", \"Open releases page\"}"
+        let dflt = canRetry ? "Try again" : "Open releases page"
+        let c = osa("button returned of (display dialog \"Update failed: \(why).\n\nYou can always download it by hand from the releases page. Nothing of yours is involved either way.\" buttons \(buttons) default button \"\(dflt)\" with icon caution)")
         if c == "Open releases page" { openReleasePage() }
+        if c == "Try again" { installUpdate(auto: false) }
     }
 
     /// Called once at launch. Says what an update cost, at the moment it costs
