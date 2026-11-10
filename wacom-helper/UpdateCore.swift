@@ -86,3 +86,55 @@ func readUpdateMarker(_ text: String?, ourPath: String, ageSeconds: Double,
     if who.isEmpty || who == ourPath { return .ours(from: from) }
     return ageSeconds > abandonedAfter ? .abandoned : .theirs
 }
+
+// ---------------------------------------------------------------------------
+// When GitHub does not answer
+//
+// The check and the download are plain web requests, and GitHub sometimes
+// answers them with "503 Service Unavailable" for a few seconds. Before this,
+// one such answer was the end of it: the check stayed silent until the next
+// launch, and "Update now" failed on the spot.
+// ---------------------------------------------------------------------------
+
+enum UpdateFetchOutcome: Equatable {
+    case ok        // got it
+    case retry     // a passing problem on their side or on the way: try again
+    case giveUp    // trying again right away will not change the answer
+}
+
+/// What one answer means. `status` is the HTTP status, nil when there was no
+/// answer at all (offline, timed out, connection dropped).
+///
+/// THE TRAP: 403 and 429 are GitHub saying "too many requests, wait". Asking
+/// again a few seconds later is exactly what not to do, and 404 will not turn
+/// into a file. Only "no answer" and the 5xx family are worth another try.
+func updateFetchOutcome(status: Int?) -> UpdateFetchOutcome {
+    guard let s = status else { return .retry }
+    if (200..<300).contains(s) { return .ok }
+    if s == 408 || (500..<600).contains(s) { return .retry }
+    return .giveUp
+}
+
+/// Waits before the 2nd, 3rd and 4th try, in seconds. Four tries in all, about
+/// 17 s at most: long enough for a hiccup, short enough to still be watching.
+let updateRetryDelays: [Double] = [2, 5, 10]
+
+/// How long to wait before trying again after try number `attempt` (1-based)
+/// ended with `status`. nil means stop: it worked, it cannot work, or the
+/// tries are used up.
+func updateRetryDelay(afterAttempt attempt: Int, status: Int?,
+                      delays: [Double] = updateRetryDelays) -> Double? {
+    guard updateFetchOutcome(status: status) == .retry,
+          attempt >= 1, attempt <= delays.count else { return nil }
+    return delays[attempt - 1]
+}
+
+/// Why it did not work, for a person. Ends without a full stop: callers put it
+/// into their own sentence.
+func updateFailureText(status: Int?) -> String {
+    guard let s = status else { return "no answer from GitHub. Check your internet connection" }
+    if (200..<300).contains(s) { return "GitHub's answer could not be read" }
+    if s == 403 || s == 429 { return "GitHub asks to wait a little before trying again (error \(s))" }
+    if (500..<600).contains(s) { return "GitHub is having trouble right now (error \(s))" }
+    return "GitHub answered with error \(s)"
+}

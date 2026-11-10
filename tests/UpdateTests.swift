@@ -80,6 +80,44 @@ struct UpdateTests {
         expect(readUpdateMarker("0.0.1\n/Users/x/Desktop/Copy.app", ourPath: me, ageSeconds: 7200) == .abandoned,
                "marker: ...but not forever")
 
+        // --- when GitHub does not answer ----------------------------------------
+        // THE TRAP: one 503 used to be the end of it. The check stayed silent
+        // until the next launch and "Update now" failed on the spot.
+        let o = updateFetchOutcome
+        expect(o(200) == .ok && o(204) == .ok, "fetch: a 2xx answer is the file")
+        expect(o(503) == .retry, "fetch: 503 Service Unavailable is tried again")
+        expect(o(500) == .retry && o(502) == .retry && o(504) == .retry && o(599) == .retry,
+               "fetch: the whole 5xx family is tried again")
+        expect(o(nil) == .retry, "fetch: no answer at all (offline, timeout) is tried again")
+        expect(o(408) == .retry, "fetch: a request timeout is tried again")
+        // THE TRAP, the other way: asking again makes these worse or changes nothing.
+        expect(o(403) == .giveUp && o(429) == .giveUp, "fetch: 'too many requests' is NOT hammered again")
+        expect(o(404) == .giveUp && o(401) == .giveUp && o(400) == .giveUp, "fetch: a 4xx will not turn into a file")
+        expect(o(301) == .giveUp && o(199) == .giveUp && o(600) == .giveUp, "fetch: anything else is not guessed at")
+
+        expect(updateRetryDelays == [2, 5, 10], "retry: waits of 2, 5 and 10 s, four tries in all")
+        expect(updateRetryDelay(afterAttempt: 1, status: 503) == 2, "retry: after the 1st try, wait 2 s")
+        expect(updateRetryDelay(afterAttempt: 2, status: 503) == 5, "retry: after the 2nd, 5 s")
+        expect(updateRetryDelay(afterAttempt: 3, status: nil) == 10, "retry: after the 3rd, 10 s")
+        expect(updateRetryDelay(afterAttempt: 4, status: 503) == nil, "retry: the 4th try is the last, no endless loop")
+        expect(updateRetryDelay(afterAttempt: 99, status: 503) == nil && updateRetryDelay(afterAttempt: 0, status: 503) == nil,
+               "retry: a try number out of range stops")
+        expect(updateRetryDelay(afterAttempt: 1, status: 200) == nil, "retry: nothing to wait for once it worked")
+        expect(updateRetryDelay(afterAttempt: 1, status: 404) == nil && updateRetryDelay(afterAttempt: 1, status: 403) == nil,
+               "retry: no second try for an answer that will not change")
+        expect(updateRetryDelay(afterAttempt: 1, status: 503, delays: []) == nil, "retry: no waits given, no retry")
+
+        let f = updateFailureText
+        expect(f(503).contains("error 503") && f(503).contains("trouble"), "words: a 503 is named, with its number")
+        expect(f(nil).contains("internet"), "words: no answer points at the connection")
+        expect(f(403).contains("wait") && f(429).contains("wait"), "words: a rate limit says to wait")
+        expect(f(404).contains("error 404"), "words: any other error keeps its number")
+        expect(!f(200).contains("error"), "words: a 200 that could not be read is not called an error 200")
+        for st: Int? in [nil, 200, 403, 404, 429, 500, 503] {
+            let t = f(st)
+            expect(!t.contains("\u{2014}") && !t.hasSuffix("."), "words: no dash, no full stop (\(st.map(String.init) ?? "nil"))")
+        }
+
         print(failures == 0 ? "UpdateCore: all passed" : "UpdateCore: \(failures) FAILED")
         exit(failures == 0 ? 0 : 1)
     }

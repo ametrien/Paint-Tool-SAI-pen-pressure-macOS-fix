@@ -394,13 +394,40 @@ extension SetupController {
             }
         }
     }
-    @objc func installWineInApp() { installWineInApp(url: nil) }
+    /// Setup's "Install Wine". Picks the build first (wineInstallTarget), then
+    /// installs it and, for 11.16, adds our patch, unless the user removed the
+    /// patch earlier. The launch would add it too; doing it here means
+    /// Advanced › Wine is right from the start.
+    @objc func installWineInApp() {
+        guard wineProc == nil, !wineChoosing else { return }
+        wineChoosing = true
+        wineRow.isHidden = false
+        wineBar.value = 0
+        wineLabel.stringValue = "Finding the right Wine…"
+        applyLayout()
+        DispatchQueue.global(qos: .userInitiated).async {
+            let t = wineInstallTarget()
+            DispatchQueue.main.async {
+                self.wineChoosing = false
+                wlog("wine install: Wine Staging \(t.version.text)\(t.patch ? " plus our patch" : ", fix built in")")
+                self.afterWineInstall = { [weak self] in
+                    if t.patch, winePatchWanted(), let wine = wineBin() {
+                        syncWineMacDriver(wine, wantPatched: true)
+                    }
+                    self?.refreshWineSection()
+                }
+                self.installWineInApp(url: t.url)
+            }
+        }
+    }
 
-    /// `url`: a specific Gcenx build (Advanced › Update Wine); nil = the newest.
+    /// `url`: the Gcenx build to install. nil leaves the choice to
+    /// install-wine.sh, which takes the newest: only for running it by hand.
     func installWineInApp(url: String?) {
         guard wineProc == nil else { return }
         guard let sh = Bundle.main.resourcePath.map({ "\($0)/install-wine.sh" }),
               FileManager.default.fileExists(atPath: sh) else {
+            wineRow.isHidden = true; applyLayout()
             installWineViaTerminal(); return
         }
         markWineInstalledByUs()
