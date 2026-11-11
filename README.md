@@ -26,7 +26,7 @@ The result: pressure-sensitive strokes that taper with how hard you press.
 Six tabs, one window.
 
 <p align="center">
-  <a href="docs/assets/screenshots/all-tabs.png"><img src="docs/assets/screenshots/all-tabs.png" alt="All six tabs side by side. Top row: Setup, with Launch and Wake SAI; Pen, with pressure levels, pen feel and a live test; Keys, with what each Option and Command key sends. Bottom row: Recording, with the timelapse switch and save folder; Videos, one video per drawing; Advanced, with developer mode, logs and a health check." width="100%"></a>
+  <a href="docs/assets/screenshots/all-tabs.png"><img src="docs/assets/screenshots/all-tabs.png" alt="All six tabs side by side. Top row: Setup, with Launch and Wake SAI; Pen, with pressure levels, pen feel presets, the curve and two more feel sliders, and a live test; Keys, with what each Option and Command key sends. Bottom row: Recording, with the timelapse switch and save folder; Videos, one video per drawing; Advanced, with developer mode, automatic updates, sharp text on Retina screens and the Wine in use." width="100%"></a>
 </p>
 <p align="center"><sub>Full size:
   <a href="docs/assets/screenshots/setup.png">Setup</a> ·
@@ -39,12 +39,14 @@ Six tabs, one window.
 **Setup** gets SAI running and tells you which of the four prerequisites are missing.
 **More → Update SAI…** swaps in a newer SAI build without touching your licence, brushes or preferences —
 useful because Ver.2 is a rolling preview.
-**Pen** is pressure levels, pen feel and the response curve, and a live test that shows what is
-being sent alongside what is actually arriving on SAI's side of the bridge.
+**Pen** is pressure levels and pen feel: presets named by what you are doing (Inking, Painting, Light hand…),
+the response curve, *Ignore light touch* and *Full width at*, and up to three profiles of your own.
+A live test shows what is being sent alongside what is actually arriving on SAI's side of the bridge.
 **Keys** sets what each ⌘ and ⌥ key sends to SAI (⌥ is Alt, for the eyedropper), with a box to try keys in.
 **Recording** is the canvas timelapse.
 **Videos** lists one video per drawing, and keeps adding to it when you come back to that drawing.
-**Advanced** is where updates install themselves if you want them to, and where the logs, a diagnostics dump and a health check live.
+**Advanced** is where updates install themselves if you want them to, where sharp text on Retina screens and the
+Wine in use are set, and, in developer mode, where the logs, a diagnostics dump and a health check live.
 
 ---
 
@@ -70,7 +72,7 @@ being sent alongside what is actually arriving on SAI's side of the bridge.
 
 **Drawing**
 
-- **Real pen pressure** in SAI, with adjustable levels (up to 8192) and pen feel
+- **Real pen pressure** in SAI, with adjustable levels (up to 8192), pen feel presets and your own profiles
 - **Mouse and trackpad still paint normally** — no need to unplug anything
 - Works over **Bluetooth as well as USB** (USB samples faster, which shows on quick strokes)
 - Works across **multiple monitors**
