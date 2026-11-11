@@ -34,6 +34,63 @@ struct CoreTests {
         expect(PressureCore.curved(0.5) < 0.5, "curve: firm needs more press")
         expect(PressureCore.curved(1.0) == 1.0, "curve: firm still reaches full")
         PressureCore.pressureGamma = 1.0
+
+        // pen feel: ignore light touch (floor) and full width at (fullAt)
+        let F = PressureCore.feel
+        func near(_ a: Double, _ b: Double) -> Bool { abs(a - b) < 1e-9 }
+        expect(F(0.37, 1.0, 0.0, 1.0) == 0.37, "feel: all defaults change nothing")
+        expect(F(0.05, 1.0, 0.05, 1.0) == 0 && F(0.03, 1.0, 0.05, 1.0) == 0,
+               "feel: at or below the floor sends nothing (no stray dot)")
+        expect(F(0.0501, 1.0, 0.05, 1.0) > 0 && F(0.0501, 1.0, 0.05, 1.0) < 0.001,
+               "feel: just above the floor starts from zero, no jump")
+        expect(F(0.85, 1.0, 0.0, 0.85) == 1 && F(0.95, 1.0, 0.0, 0.85) == 1,
+               "feel: at or past fullAt is a full-width stroke")
+        expect(near(F(0.425, 1.0, 0.0, 0.85), 0.5), "feel: halfway to fullAt is half width")
+        expect(near(F(0.525, 1.0, 0.05, 1.0), 0.5), "feel: the range above the floor is stretched back to 0...1")
+        expect(F(1.0, 1.35, 0.03, 1.0) == 1 && F(0.0, 0.75, 0.0, 0.85) == 0,
+               "feel: full press stays full, no press stays none, whatever the settings")
+        // THE TRAP: the window is cut out FIRST, then gamma bends it. The other
+        // way round, the floor would eat a different share of the stroke for
+        // every gamma, and the sliders would no longer mean what they say.
+        expect(near(F(0.525, 2.0, 0.05, 1.0), 0.25), "feel: gamma applies AFTER the floor/fullAt window")
+        expect(near(F(0.425, 0.5, 0.0, 0.85), 0.5.squareRoot()), "feel: gamma applies AFTER fullAt too")
+        // Corrupt settings must never kill the pen or divide by zero.
+        expect(F(0.4, 1.0, 0.6, 0.5) == 0.4 && F(0.4, 1.0, 0.5, 0.5) == 0.4,
+               "feel: a floor at or above fullAt passes the pen through")
+        expect(F(-0.2, 1.0, 0.0, 1.0) == 0 && F(1.4, 1.0, 0.0, 1.0) == 1, "feel: input outside 0...1 is clamped")
+        // The curve goes down to 0. At 0 the pen has no pressure: lifted sends
+        // nothing, any touch sends full. The floor still works on top of it.
+        expect(F(0.0, 0.0, 0.0, 1.0) == 0 && F(0.001, 0.0, 0.0, 1.0) == 1 && F(0.5, 0.0, 0.0, 1.0) == 1,
+               "feel: gamma 0 is no pressure (no touch = 0, any touch = full)")
+        expect(F(0.04, 0.0, 0.05, 1.0) == 0 && F(0.06, 0.0, 0.05, 1.0) == 1,
+               "feel: gamma 0 still ignores touches below the floor")
+        expect(F(0.1, 0.1, 0.0, 1.0) > F(0.1, 0.4, 0.0, 1.0) && F(0.1, 0.1, 0.0, 1.0) < 1,
+               "feel: below the old 0.4 limit is softer still, but still has pressure")
+        // THE TRAP: pow(x, negative) is above 1, i.e. more than full pressure on
+        // the wire. A damaged file is clamped on load, but feel() holds it too.
+        expect(F(0.5, -1.0, 0.0, 1.0) == 1 && F(0.01, -3.0, 0.0, 1.0) == 1,
+               "feel: a negative gamma never sends more than full")
+        // Invariant sweep over the whole slider range and then some: the output
+        // stays inside 0...1 and never goes DOWN as you press harder.
+        var inRange = true, rising = true
+        for g in stride(from: -0.5, through: 3.0, by: 0.05) {
+            for (fl, fa) in [(0.0, 1.0), (0.05, 1.0), (0.0, 0.6), (0.3, 0.5)] {
+                var prev = -1.0
+                for i in 0...200 {
+                    let y = F(Double(i) / 200, g, fl, fa)
+                    if !(y >= 0 && y <= 1) { inRange = false }
+                    if y < prev { rising = false }
+                    prev = y
+                }
+            }
+        }
+        expect(inRange, "feel sweep: every gamma from -0.5 to 3 keeps the output inside 0...1")
+        expect(rising, "feel sweep: pressing harder never gives a thinner stroke")
+        // curved() is the live path and must be exactly feel() with the stored knobs.
+        PressureCore.pressureGamma = 1.2; PressureCore.feelFloor = 0.05; PressureCore.feelFullAt = 0.9
+        expect(PressureCore.curved(0.6) == F(0.6, 1.2, 0.05, 0.9), "feel: the pen path uses all three knobs")
+        expect(PressureCore.curved(0.04) == 0, "feel: the pen path honours the floor")
+        PressureCore.pressureGamma = 1.0; PressureCore.feelFloor = 0.0; PressureCore.feelFullAt = 1.0
         expect(PressureCore.clampPressure(4096) == 1023, "clamp: overshoot -> 1023")
 
         // --- mapToVirtual ------------------------------------------------------------
