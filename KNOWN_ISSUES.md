@@ -163,6 +163,53 @@ does is visible in the DLL log: look for `SAI re-read its context`.
 
 ---
 
+## 4. Wine runs under Rosetta, and Rosetta ends with macOS 28
+
+**Symptom.** Since macOS 26.4, macOS may show a notification when Wine starts, saying support
+for Intel-based apps is ending. Nothing is broken yet: SAI, pressure and recording work as before.
+
+**Why.** The Wine this app installs (Gcenx's Wine Staging) is an Intel (x86_64) build, so on an
+Apple Silicon Mac it runs through Rosetta. Apple's notice of 1 September 2026 says *macOS 27* is
+the *"Final release to support Rosetta"*, and Intel-only apps stop running on Apple Silicon after
+it, so from **macOS 28, expected in autumn 2027**. Apple keeps part of Rosetta for *"older,
+unmaintained gaming titles that rely on Intel-based frameworks"*; whether Wine counts is not said,
+so this project does not rely on it.
+
+**What it does and does not affect.**
+
+| | |
+|---|---|
+| The app itself | not affected: it is a universal binary, native on Apple Silicon |
+| `wintab32.dll`, the timelapse reader, SAI | Windows code running *inside* Wine; Rosetta never sees it, so it lives or dies with Wine |
+| Wine | **stops starting on macOS 28.** Gcenx publishes only `osx64` builds so far (checked 2026-11-11, up to 11.21) |
+| Intel Macs | not affected, but cannot install macOS 27 or later anyway |
+
+**The way out: an Apple Silicon Wine with FEX.** Wine built for Apple Silicon, with the FEX
+emulator translating Windows' x86 code (SAI, and our DLL with it) instead of Rosetta. It exists
+but is new: WineHQ said in August 2026 that the macOS pieces for native ARM64 Wine are in place,
+CodeWeavers' CrossOver 27 preview (July 2026) runs on it, and community builds exist. None is yet a
+build this app can install for everyone.
+
+**Plan.**
+
+1. **Watch for an Apple Silicon build** from Gcenx or WineHQ. Wine with the Retina fix built in
+   (11.22 or later) is the base; our Retina patch is not needed there.
+2. **Test the bridge under it** before switching anyone: pressure (both bars of *Test pen*), the
+   wake, the timelapse reading SAI's memory, the pen-port retry, and above all drawing speed,
+   since SAI itself would run through FEX rather than Rosetta.
+3. **Switch Setup over.** *Install Wine* and *Update Wine* pick `osx64` builds today
+   (`install-wine.sh`, `WineUI.swift`, `WineStatusCore.swift`); they would pick the Apple Silicon
+   build instead, and Advanced › Wine would say which one is in use.
+4. **If it is not ready in time:** staying on macOS 27 keeps everything working. Running the
+   bridge inside CrossOver 27 is another possible route, untested.
+
+*Copy problem report* already prints the Wine binary's architecture next to the Mac's chip
+(`Wine: wine-11.16 (Staging) [x86_64]`), so a report shows at a glance which Wine is in use.
+
+Tracked in [#30](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/30).
+
+---
+
 ## Non-bugs (expected — please don't report these)
 
 - **Boxy fast curves over Bluetooth** (~130 Hz report rate) — use a USB data cable (~200 Hz).

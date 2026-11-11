@@ -261,9 +261,11 @@ how much disk it uses
 - **Some small panel icons stay tiny at 200% scaling.** They are fixed-size bitmaps inside SAI;
   only SYSTEMAX can change them
   ([#45](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/45)).
-- **Wine is an Intel build.** Gcenx's Wine Staging runs under Rosetta on Apple Silicon, and macOS
-  already warns that support for Intel apps is ending. When Rosetta goes, this needs a Wine for
-  Apple Silicon that can still run SAI's x86 code, which does not exist yet
+- **Wine is an Intel build.** Gcenx's Wine Staging runs under Rosetta on Apple Silicon, and Apple
+  ends Rosetta for apps with **macOS 28** (expected autumn 2027). The app itself is native and not
+  affected; Wine has to move to an Apple Silicon build that runs SAI's x86 code through the FEX
+  emulator. Those exist in preview; the plan is in
+  [KNOWN_ISSUES](KNOWN_ISSUES.md#4-wine-runs-under-rosetta-and-rosetta-ends-with-macos-28)
   ([#30](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/30)).
 
 **[KNOWN_ISSUES.md](KNOWN_ISSUES.md)** has the full explanation of each, what was tried, and
