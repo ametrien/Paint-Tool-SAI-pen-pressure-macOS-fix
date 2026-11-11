@@ -131,10 +131,50 @@ Note that upgrading is enough: since **v0.1.11** the bundled DLL is refreshed on
 Before that, installing a new version left the old DLL in place, so a DLL-side fix could reach
 you only if you happened to reinstall.
 
+## SAI goes inactive, or quick short strokes go missing
+
+**Update to 0.3.11.** Up to 0.3.10, the *Test pen* button could leave a small stand-in for SAI
+running inside Wine after the test, even after the app quit. While it ran it held the connection
+the pen samples arrive on, so SAI fell back to a slower path that only keeps the newest sample and
+lost quick strokes. It also kept taking the foreground away from SAI, so SAI looked inactive.
+0.3.11 stops any leftover before starting SAI and whenever the app quits, and SAI takes the pen
+connection back within a second.
+
+**How to tell**, on any version, with the *Test pen* button not running:
+
+```bash
+ps -x -ww -o pid,etime,command | grep -i wtprobe | grep -v grep
+```
+
+Any line it prints is a leftover. Stop it, then quit and reopen SAI:
+
+```bash
+pkill -f wtprobe.exe
+```
+
 ## SAI stops responding to clicks after switching apps
 
-A Wine focus bug, not a pressure one. Press **⌃⌥⌘Space**, or use **Wake SAI** in the setup
-window or the menu-bar icon. Recent versions also auto-recover on returning to SAI.
+A Wine focus bug, not a pressure one. The app wakes SAI by itself when you come back to it
+(*Auto-wake* on the Setup tab). If it still sticks, press **⌃⌥⌘Space**, or use **Wake SAI** in
+the setup window or the pen icon in the menu bar.
+
+## Drawing lags with Sharp text on Retina screens
+
+Your Wine is missing the fix. Open **Advanced › Wine**: it says whether the fix is there. If not,
+quit SAI and press **Update Wine for sharper, faster drawing** (or **Add patch** on Wine Staging
+11.16). Until then, turning sharp text off brings back the old speed.
+
+## SAI looks too big or too small, or its panels sit in odd places
+
+Usually after switching sharp text on or off. In SAI, set **Window › Scaling of User Interface**
+to **200%** with sharp text and **100%** without, then **quit and reopen SAI**: it lays its
+panels out when it starts.
+
+## Some of SAI's panel icons are tiny
+
+The buttons above the layer list and the layer's pencil icon stay small at 200%. They are
+fixed-size pictures inside SAI, the same with sharp text on or off, and only SYSTEMAX can change
+them ([issue #45](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/45)).
 
 ## Alt does nothing — the eyedropper won't come up
 
@@ -153,8 +193,9 @@ a hand edit is replaced by whatever the Keys tab says.
 
 ## Two cursors — the macOS arrow sits on top of SAI's brush cursor
 
-Known, intermittent at launch, [issue #20](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/20).
-Cosmetic — drawing is unaffected. Moving the pen usually clears it.
+Known and intermittent, [issue #20](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/20):
+mostly at launch, and possibly after switching screens. Cosmetic; drawing is unaffected. Moving
+the pen usually clears it.
 
 ## Something else — collect diagnostics
 

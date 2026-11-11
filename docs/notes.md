@@ -136,20 +136,49 @@ works.
 Generalisable: **a foothold inside the target process is worth more than a permission.** Canvas
 rotation could follow the same route.
 
+## The test that outlived itself
+
+The *Test pen* button runs `wtprobe.exe`, a stand-in for SAI that loads the same `wintab32.dll`,
+so both halves of the bridge can be watched with SAI closed. Two assumptions about it were wrong.
+
+**"It ends when the test ends."** It was started for an hour and stopped by *Stop Test* or
+*Launch*. Quitting the app, a crash, or SAI closing left it running inside Wine. While it ran it
+held the one UDP port the pen arrives on, so SAI fell back to reading a file that holds only the
+newest sample, and quick strokes vanished.
+
+**"It has no window, so the wake does nothing there."** The wake reaches outside its own process:
+it takes the Windows foreground for the host's window. The probe's window is never shown, so the
+DLL fell back to its own hidden one, and every wake took the foreground away from SAI. The log
+showed two processes taking turns, ending *STILL LOST*. From the outside it looked like SAI going
+inactive for no reason.
+
+Fixed in 0.3.11 at every layer: the DLL decides by its host's file name never to wake inside the
+probe, retries the port every second instead of once at load, and the app stops leftover probes
+before SAI starts and on every way out. Tests start a real fake probe that ignores its closed pipe
+and check with `ps` that nothing survives. The lesson is the second assumption: *a process with no
+visible window can still change what is in front.*
+
+## A menu rebuilt under the pointer
+
+The pen feel dropdown, before it shipped, rebuilt its menu on every refresh of the setup window.
+That refresh runs once a second in the run loop's *common* modes, which keep firing while a menu is
+open. So a menu the user had open was replaced, and the item they then picked belonged to a menu
+the popup no longer had. Picking a preset did nothing. The menu is now rebuilt only when its
+contents change, and a test replays the lost pick against a real popup.
+
 ## Still unsolved
 
 Kept visible rather than quietly dropped.
 
-**The menu-bar icon.** It is created successfully — `isVisible=true`, a real frame — but lands at
-x=1321 on a 1352pt screen, underneath the system clock, while a minimal test application on the
-same machine lands correctly around x=863. Five theories tested and disproven: a dark emoji
-glyph, a missing `autosaveName`, ad-hoc signing, a full menu bar (125pt free, 31pt needed), and a
-stale persisted position. The next step is a bisect of the launch sequence, not a sixth theory.
+**The menu-bar icon** was closed in July as not fixable from here, after ten theories: it was
+created with a real frame but placed under the system clock, out of reach. By November, on
+macOS 26.6.2, it appears in the normal place. Why that changed was never established.
 
 **The second cursor.** The macOS arrow sometimes remains over SAI's brush cursor. One cause was
 found and fixed — entering proximity emitted nothing, so SAI was never told a pen had arrived
-until it moved. It still recurs intermittently. A captured log killed the leading theory: SAI
-opens its context before any packets are sent, so nothing is being lost to a startup race.
+until it moved. It still recurs intermittently, possibly after switching screens. A captured log
+killed the leading theory: SAI opens its context before any packets are sent, so nothing is being
+lost to a startup race.
 
 ---
 

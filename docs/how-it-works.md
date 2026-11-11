@@ -42,6 +42,13 @@ monitored events and fast strokes lost samples — you could see it as missing d
 Each sample goes over UDP to `127.0.0.1:47800`, with a file as fallback. UDP because a dropped
 packet matters less than a delayed one; a stale pressure value is worse than a missing frame.
 
+Only one program can hold that port, and it has to be SAI. The *Test pen* button runs a small
+stand-in (`wtprobe.exe`) that loads the same DLL; until 0.3.11 one that outlived its test kept
+the port, so SAI fell back to the file, which holds only the newest sample, and quick strokes were
+lost. Now SAI's DLL tries the port again every second, the app stops any stand-in before starting
+SAI and whenever it quits, and the DLL never runs the wake inside the stand-in, which used to pull
+the foreground away from SAI.
+
 ### The setup app
 
 Both of the above, plus Wine, the SAI folder, and licence handling, behind one window. It is
@@ -58,8 +65,9 @@ you zoom or pan while drawing.
 That is possible because of where the bridge already lives. `wintab32.dll` is loaded *inside*
 `sai2.exe`, so reading the canvas is an ordinary memory read rather than something requiring a
 debugger, a permission prompt, or a second process. Being the tablet driver also means a finished
-stroke is a fact we are told, not one guessed at from mouse movement — which is what makes "one
-frame per brush stroke" possible at all.
+stroke is a fact we are told, not one guessed at from mouse movement. By default a frame is taken
+once the pen has rested for a second, because reading the canvas mid-stroke made SAI fall behind
+the pen; *Record every stroke separately* takes one right after each stroke instead.
 
 SAI stores the canvas as a pyramid of 256×256 tiles, one level per zoom step. The reader walks the
 smallest level still larger than the target size, stitches the tiles into a single image, and hashes
@@ -132,15 +140,36 @@ therefore run at 1024 with nothing said anywhere — both halves of the bridge a
 number, so everything worked, just coarser. Since **v0.1.11** the last answer your hardware gave
 is remembered between launches, and the tablet is asked once more just before SAI starts.
 
-You can override this in **Settings → Pressure levels**, and it will warn you if you ask for more
+You can override this in the **Pen** tab's **Pressure levels**, and it will warn you if you ask for more
 levels than your tablet has. That warning is earned: asking a 4096-level tablet for 8192 doesn't
 invent detail, it spreads the same steps over twice the range, and sensor noise that used to be
 rounded away becomes visible as stroke width wobbling. It looks like the tool got worse, because
 it did.
 
-**Pen feel** applies a response curve before transmission, so it needs no restart. It stacks with
-your tablet driver's own curve and SAI's per-brush Min Size, which is why the default is linear —
-three curves multiplying together is how a pen ends up feeling broken in ways nobody can trace.
+**Pen feel** is applied on our side, before a sample is sent, so it needs no restart. It is three
+numbers. *Ignore light touch* and *Full width at* cut a window out of the pressure range first,
+and that window is stretched back to the full range; then the *curve* bends it. In that order,
+the window means the same thing whatever the curve. The presets and your profiles are just named
+sets of the three, and the plot in the Pen tab is drawn by the same function the pen goes
+through, so it cannot drift from what the pen does.
+
+All of it stacks with your tablet driver's own curve and SAI's per-brush Min Size, which is why
+*Normal* changes nothing: three curves multiplying together is how a pen ends up feeling broken
+in ways nobody can trace.
+
+## Sharp text on Retina screens
+
+With sharp text off, Wine tells SAI the screen has half its real resolution, and macOS stretches
+the result up: soft, but cheap. Sharp text tells Wine to use the real resolution and sets Windows'
+text size to 200%, so SAI keeps its size.
+
+That alone made drawing lag. For every change in SAI's window, even one brush dab, Wine's Mac
+driver handed macOS a fresh picture of the whole window, and macOS redrew and colour-converted it
+on the processor: four times the pixels, four times the work. Wine has since fixed this upstream
+by giving macOS a shared surface it can update in place. The app installs Wine Staging 11.16
+with that exact change backported, which took idle SAI from about 55% of a processor core to 9%.
+Wine 11.22 is expected to include it, and then no patch is needed. The full investigation is in
+[RETINA-LAG-FINDINGS.md](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/blob/main/RETINA-LAG-FINDINGS.md).
 
 ## Why a licence lands in two folders
 

@@ -36,8 +36,10 @@ First launch: **right-click → Open** (the one-time unsigned-developer bypass).
 
 ## 4. Wine, and your SAI folder
 
-The setup window installs Wine for you if it's missing, with a progress bar. Then point it at
-your SAI folder from step 2 — it usually finds it for you.
+The setup window installs Wine for you if it's missing, with a progress bar. It picks Wine
+Staging 11.16 with our fix for sharp text on Retina screens, or the newest Wine that has the fix
+built in once one is out. Then point it at your SAI folder from step 2; it usually finds it for
+you.
 
 ## Input Monitoring
 
@@ -81,6 +83,22 @@ If the `.slc` is already sitting in your SAI folder, you don't need to do anythi
 or reinstall — and the *SAI license* row will say so.
 
 *This project cannot supply, generate or activate a licence.*
+
+## 7. Sharp text on a Retina screen
+
+1. **Advanced › Wine** should say your Wine has the fix. A new install does. With an older one,
+   quit SAI and press **Update Wine for sharper, faster drawing**, or **Add patch** if you have
+   Wine Staging 11.16.
+2. **Advanced › Display › Sharp text on Retina screens** is then on by default.
+3. **In SAI, set Window › Scaling of User Interface to 200%**, then quit and reopen SAI so its
+   panels land where they should. If you turn sharp text off again, go back to 100% and restart
+   SAI once more.
+
+## 8. Pen feel, if you want it
+
+The **Pen** tab has presets (*Light hand*, *Inking*, *Painting*, *Heavy hand*) and sliders to
+adjust them. They apply instantly; try them with **Test pen** or straight in SAI. *Normal* sends
+exactly what your tablet reports.
 
 ## Updating to a new build
 
@@ -165,16 +183,13 @@ steps, or who are working on the project itself.
 ## Daily use
 
 
-**Double-click `Start SAI2 with pen pressure.command`** (the installer places one configured
-for your setup). It starts the pressure helper and SAI together, and stops the helper when you
-close SAI.
+**Double-click `Start SAI2 (my setup).command`**, which the installer writes into the repository
+folder, configured for your machine. It starts the pressure helper and SAI together, and stops
+the helper when you close SAI. You can move it anywhere.
 
-Or from a terminal:
-```bash
-WT_PRESSURE_FILE="$HOME/SAI2-pressure/drive_c/wt_pressure.txt" \
-  ./wacom-helper/wacom-pressure-helper &     # in a terminal with the permissions
-bash ./launch-sai2-pressure.sh
-```
+It carries **pressure only**. The menu-bar pen icon, *Wake SAI* (⌃⌥⌘Space), auto-wake, the
+setup window and the update check all live in the app, so for everyday drawing build it instead:
+`./make-app.sh`, then open `dist/SAI Pen Pressure.app`.
 
 **Kill switch** if anything ever misbehaves: `echo 0 > <prefix>/drive_c/wt_pressure.txt`, or
 just close SAI / quit the helper.
