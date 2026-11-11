@@ -5,17 +5,15 @@
 [![downloads](https://img.shields.io/github/downloads/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/total)](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/releases)
 [![license](https://img.shields.io/github/license/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix)](LICENSE)
 
-Run **PaintTool SAI Ver.2** on a Mac (via Wine) **with real Wacom pen pressure** — the one
-thing that normally doesn't survive the trip through Wine — and **[record a timelapse of your
-canvas](#credit)** while you draw.
+Run **PaintTool SAI Ver.2** on a Mac with **real pen pressure**, and record a **timelapse of your
+canvas** while you draw. Free and open source.
 
-macOS + Wine already run SAI and move the cursor fine, but Wine's Mac driver throws away pen
-**pressure**. This project adds it back with a tiny two-part bridge:
+- **[Get started](#get-started):** download, drag to Applications, follow the setup window.
+- **[What you get](#what-you-get):** pressure and pen feel, Mac shortcuts, sharp text on Retina screens, timelapse.
+- **[What it does not do](#what-it-does-not-do):** SAI and its licence are not included, pressure only, and the limits that belong to SAI or Wine.
+- **[Something not working?](#something-not-working):** troubleshooting, and one button that collects a problem report.
 
-- a **custom `wintab32.dll`** that speaks the WinTab tablet API to SAI (drop-in, no Wine rebuild), and
-- a small **native macOS helper** that reads your tablet's real pressure and feeds it to that DLL.
-
-The result: pressure-sensitive strokes that taper with how hard you press.
+📺 **[Watch the setup video](https://youtu.be/62mJwWQsEYI)**
 
 <p align="center">
   <img src="docs/assets/screenshots/pressure-in-sai.png" alt="A stroke drawn in PaintTool SAI with the AirBrush tool, thick where the pen was pressed hard and tapering to nothing at both ends" width="88%">
@@ -36,38 +34,12 @@ Six tabs, one window.
   <a href="docs/assets/screenshots/videos.png">Videos</a> ·
   <a href="docs/assets/screenshots/advanced.png">Advanced</a></sub></p>
 
-**Setup** gets SAI running and tells you which of the four prerequisites are missing.
-**More → Update SAI…** swaps in a newer SAI build without touching your licence, brushes or preferences —
-useful because Ver.2 is a rolling preview.
-**Pen** is pressure levels and pen feel: presets named by what you are doing (Inking, Painting, Light hand…),
-the response curve, *Ignore light touch* and *Full width at*, and up to three profiles of your own.
-A live test shows what is being sent alongside what is actually arriving on SAI's side of the bridge.
-**Keys** sets what each ⌘ and ⌥ key sends to SAI (⌥ is Alt, for the eyedropper), with a box to try keys in.
-**Recording** is the canvas timelapse.
-**Videos** lists one video per drawing, and keeps adding to it when you come back to that drawing.
-**Advanced** is where updates install themselves if you want them to, where sharp text on Retina screens and the
-Wine in use are set, and, in developer mode, where the logs, a diagnostics dump and a health check live.
-
----
-
-
-> **Status:** working. Position, pressure, hover tracking and mouse coexistence all work, plus
-> multi-monitor, sharp text on Retina screens and Mac-style ⌘ shortcuts. See
-> [What it does not do](#what-it-does-not-do).
->
-> **Tested configuration** (as of 0.3.11):
-> - Mac: **Apple M3 Pro**, **macOS Tahoe 26.6.2 (25G83)**
-> - Wine: **Wine Staging 11.16 (Gcenx) with the Retina patch**, the build Setup installs
-> - SAI: **PaintTool SAI Ver.2 (64-bit)**
-> - Tablet: **Wacom Intuos BT S (CTL-4100WL)**, over USB and Bluetooth
-> - Displays: **single screen**, **two screens mirrored** and **two screens extended**, including
->   screens connected while SAI is open
->
-> Other tablets, Macs and display setups are untested here. Users have reported it working on an
-> M5 MacBook Air with a USB Intuos S, and with an external LG UltraFine display. Reports are
-> welcome as issues (see [CONTRIBUTING](CONTRIBUTING.md)).
-
-📺 **Video walkthrough:** [watch the setup tutorial](https://youtu.be/62mJwWQsEYI)
+- **Setup:** launch SAI, see what is missing, and update SAI in place (*More › Update SAI…*).
+- **Pen:** pressure levels, pen feel presets, the curve and two more sliders, your own profiles, and a live test.
+- **Keys:** what each ⌘ and ⌥ key sends to SAI.
+- **Recording:** the canvas timelapse.
+- **Videos:** one video per drawing.
+- **Advanced:** updates, sharp text on Retina screens, the Wine in use, and logs in developer mode.
 
 ---
 
@@ -234,6 +206,32 @@ how much disk it uses
 
 **[KNOWN_ISSUES.md](KNOWN_ISSUES.md)** has the full explanation of each, what was tried, and
 what did not work.
+
+## Tested on
+
+As of 0.3.11:
+
+- Mac: **Apple M3 Pro**, **macOS Tahoe 26.6.2 (25G83)**
+- Wine: **Wine Staging 11.16 (Gcenx) with the Retina patch**, the build Setup installs
+- SAI: **PaintTool SAI Ver.2 (64-bit)**
+- Tablet: **Wacom Intuos BT S (CTL-4100WL)**, over USB and Bluetooth
+- Displays: one screen, two screens mirrored, and two screens extended, including a screen
+  connected while SAI is open
+
+Users have also reported it working on an M5 MacBook Air with a USB Intuos S, and with an external
+LG UltraFine display. Other tablets, Macs and display setups are untested; reports are welcome as
+issues (see [CONTRIBUTING](CONTRIBUTING.md)).
+
+## How it works, in short
+
+Wine already runs SAI on a Mac and moves the cursor, but its Mac driver throws pen **pressure**
+away. This project adds it back with a two-part bridge:
+
+- a **custom `wintab32.dll`** that speaks the WinTab tablet API to SAI, loaded by Wine in place of
+  its own (no Wine rebuild), and
+- a small **native macOS helper** that reads your tablet's real pressure and sends it to that DLL.
+
+→ **[How it works](https://ametrien.github.io/Paint-Tool-SAI-pen-pressure-macOS-fix/how-it-works)**, the full architecture
 
 ---
 
