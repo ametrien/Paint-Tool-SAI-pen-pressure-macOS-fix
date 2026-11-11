@@ -34,12 +34,71 @@ Six tabs, one window.
   <a href="docs/assets/screenshots/videos.png">Videos</a> ·
   <a href="docs/assets/screenshots/advanced.png">Advanced</a></sub></p>
 
-- **Setup:** launch SAI, see what is missing, and update SAI in place (*More › Update SAI…*).
-- **Pen:** pressure levels, pen feel presets, the curve and two more sliders, your own profiles, and a live test.
-- **Keys:** what each ⌘ and ⌥ key sends to SAI.
-- **Recording:** the canvas timelapse.
-- **Videos:** one video per drawing.
-- **Advanced:** updates, sharp text on Retina screens, the Wine in use, and logs in developer mode.
+### Setup
+
+Where you start SAI, and where installing happens.
+
+- **Launch SAI with Pressure** starts SAI with the bridge in place. **Wake SAI** and **Auto-wake**
+  bring SAI back when it stops reacting after you switch apps.
+- **Show all steps** lists what SAI needs: Wine, your SAI folder, SAI installed into Wine, the
+  pressure bridge, your licence (optional) and the Input Monitoring permission. Each has its own
+  fix button, and **Set up everything automatically** does them in order.
+- **More** has *Update SAI…* (a newer SAI build, keeping your licence, brushes and preferences),
+  *Reset everything & reinstall…* and *Uninstall…*.
+- **Copy problem report** puts everything an issue needs on your clipboard.
+
+It does not download SAI or a licence for you: you point it at a SAI folder you already have.
+
+### Pen
+
+How the pen feels in SAI. Pen feel changes apply instantly, without restarting SAI.
+
+- **Pressure levels:** *Auto* uses what your tablet reports; 1024 to 8192 can be set by hand.
+  SAI reads this when it starts, so quit and reopen SAI after changing it.
+- **Pen feel:** presets named by what you are doing (*Normal*, *Light hand*, *Inking*, *Painting*,
+  *Heavy hand*), and up to three profiles of your own, saved, renamed and deleted from the same menu.
+- **Pen feel curve**, **Ignore light touch** and **Full width at** fine-tune a preset. The small
+  plot shows the result.
+- **Test pen** shows two bars: what the app sends, and what actually arrives on SAI's side of the
+  bridge. If the first moves and the second stays flat, the app tells you what to press.
+
+It does not change SAI's own brush settings. Pen feel works on top of them, so a brush's
+*Min Size* still applies.
+
+### Keys
+
+What each ⌘ and ⌥ key sends to SAI: *Ctrl*, *Alt*, or *Option (types special characters)*, set
+separately for the left and right keys. By default ⌘ is Ctrl (⌘Z, ⌘S…) and ⌥ is Alt (the
+eyedropper). **Try a key** shows what a key press turns into, without sending anything to SAI.
+
+SAI reads these when it starts, so a change applies the next time SAI opens.
+
+### Recording
+
+The canvas timelapse. Tick **Record a timelapse while I draw**, choose where videos are saved, and
+draw. The video is made when SAI closes. **Record every stroke separately** gives more detail, at
+the cost of drawing feeling slower.
+
+It records the canvas, not the screen: no panels, no cursor, no zooming, and no sound. Changes
+apply the next time SAI starts.
+
+### Videos
+
+One video per drawing, even when you work on it over several evenings. Hover over a still to play
+it. **Export…** saves a copy at 30 seconds, 1 or 2 minutes, or full length; **More** renames,
+shows in Finder or deletes it.
+
+It does not edit videos beyond choosing their length.
+
+### Advanced
+
+- **Install updates automatically**, never while SAI is open.
+- **Display › Sharp text on Retina screens:** SAI at your screen's full resolution
+  ([details](#sharp-text-on-retina-screens-without-lag)).
+- **Wine:** the Wine in use, whether it has the fix for the Retina drawing lag, and buttons to add
+  the patch or update Wine.
+- **Developer mode** adds the logs, a health check, a diagnostics dump and shortcuts to SAI's
+  folders inside Wine.
 
 ---
 
