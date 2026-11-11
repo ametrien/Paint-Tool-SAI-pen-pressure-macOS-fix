@@ -50,7 +50,20 @@ jobs:
           DMG="dist/SAI-Pen-Pressure-${GITHUB_REF_NAME}.dmg"
           # One-line summary for the release = the annotated tag's message.
           # Cut releases with:  git tag -a vX.Y.Z -m "Short: what changed"
-          SUMMARY="$(git tag -l --format='%(contents:subject)' "$GITHUB_REF_NAME")"
+          #
+          # THE TRAP (v0.3.11): actions/checkout does not fetch the tag. It
+          # fetches the COMMIT into refs/tags/vX.Y.Z, so the annotated tag
+          # becomes a plain pointer and %(contents:subject) reads the commit's
+          # message ("Merge pull request #47 ...") instead of the summary.
+          # Fetch the real tag object first, and say so if it is still not an
+          # annotated tag rather than putting the wrong line on the release.
+          git fetch --force --no-tags --depth=1 origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          SUMMARY=""
+          if [ "$(git cat-file -t "$GITHUB_REF_NAME")" = "tag" ]; then
+            SUMMARY="$(git tag -l --format='%(contents:subject)' "$GITHUB_REF_NAME")"
+          else
+            echo "::warning::$GITHUB_REF_NAME is not an annotated tag, so the release gets no summary line. Cut releases with git tag -a."
+          fi
           gh release create "$GITHUB_REF_NAME" --generate-notes "$DMG" "$ZIP" \
             || gh release upload "$GITHUB_REF_NAME" "$DMG" "$ZIP" --clobber
           # Prepend the summary sentence above the auto-generated notes.
