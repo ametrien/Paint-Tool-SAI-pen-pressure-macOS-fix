@@ -169,3 +169,10 @@ does is visible in the DLL log: look for `SAI re-read its context`.
 - **Low pressure feels non-linear / jumpy** in the raw "Test Tablet Pressure" bar — that's the
   tablet's physical activation-force region; SAI applies its own pressure curve when drawing,
   so strokes feel smooth.
+- **Some small panel icons stay tiny at SAI's 200% UI scaling** (the buttons above the layer
+  list, the layer's pencil icon), with *Sharp text on Retina screens* on or off. They are
+  fixed-size bitmaps (15×15 px and smaller) built into `sai2.exe`, which SAI draws itself in
+  software; there is no larger art anywhere in SAI, and nothing in Wine or this app decides
+  their size. Sharp text only makes it easier to see, because the text gets crisp and the icons
+  cannot. Only SYSTEMAX can change it, with bigger icon art. Details and screenshots in
+  [#45](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/45).
