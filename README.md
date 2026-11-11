@@ -85,8 +85,9 @@ apply the next time SAI starts.
 ### Videos
 
 One video per drawing, even when you work on it over several evenings. Hover over a still to play
-it. **Export…** saves a copy at 30 seconds, 1 or 2 minutes, or full length; **More** renames,
-shows in Finder or deletes it.
+it. **Export…** saves a copy at 30 seconds, 1 or 2 minutes, or full length. **More** renames the
+drawing, lists its sessions (to take out one that was filed with the wrong drawing), rebuilds the
+video, or deletes it.
 
 It does not edit videos beyond choosing their length.
 
@@ -233,7 +234,9 @@ how much disk it uses
   clipboard, with your user name hidden by default.
 - **Windows or Linux.** For the timelapse there, use
   [art-timelapse](https://github.com/cromachina/art-timelapse) (see [credit](#credit)).
-- **Notarisation.** The app is signed but not notarised, hence the one-time right-click → Open.
+- **Notarisation.** Releases are ad-hoc signed and not notarised (that needs a paid Apple
+  Developer membership). Hence the one-time right-click → Open, and Input Monitoring has to be
+  granted again after each update.
 
 **Limits of the bridge**
 

@@ -22,17 +22,18 @@ This project is that translator.
 - [**How it works**](how-it-works.md) — the architecture, and the file-layout question that trips up nearly everyone.
 - [**Engineering notes**](notes.md) — decisions, mistakes, and the reasoning behind both.
 
-New in v0.3: [**canvas timelapse recording**](#canvas-timelapse) that spans sessions — a drawing you
-come back to over several evenings becomes **one video**, recognised by what the canvas looks like
-rather than by its name.
+**New in 0.3.11:** [pen feel presets and your own profiles](#pen-feel), and SAI no longer goes
+inactive or drops quick strokes because of a leftover pen test.
+Since 0.3.9: [**sharp text on Retina screens**](#sharp-text-on-retina-screens), without the lag.
+Since 0.3.0: [**canvas timelapse**](#canvas-timelapse) that spans sessions, one video per drawing.
 
 ## What you need
 
 | | |
 |---|---|
 | A Mac running macOS 12 or later | **Native on Apple Silicon** (M1, M2, M3 and later) and on Intel — the app ships as a universal binary, so there is nothing to choose at download time |
-| A tablet, with its macOS driver installed | Wacom, Huion, XP-Pen — anything macOS itself recognises |
-| [Wine Staging](https://github.com/Gcenx/macOS_Wine_builds/releases) | the app will install it for you, with a progress bar |
+| A tablet, with its macOS driver installed | tested with a Wacom Intuos; any tablet macOS itself recognises should work, but Huion, XP-Pen and others are untested |
+| [Wine Staging](https://github.com/Gcenx/macOS_Wine_builds/releases) | the app installs it for you, with a progress bar: 11.16 with our fix for sharp text, until a Wine with the fix built in is out |
 | [PaintTool SAI Ver.2](https://www.systemax.jp/en/sai/devdept.html) | the free technical preview |
 | A SAI licence | **only to save.** You can draw, and test pressure, without one |
 
@@ -45,6 +46,18 @@ It does not include SAI, and it cannot supply, generate or activate a licence. P
 commercial software by SYSTEMAX; this project has no affiliation with them and does exactly one
 thing with licences — copies a certificate **you already own** into the folder SAI reads, because
 that folder is not where anyone would guess.
+
+It also does not:
+
+- **change SAI.** Nothing patches `sai2.exe`; SAI loads the bridge through its own WinTab support.
+- **phone home.** No accounts, no analytics. The only network use is GitHub: checking for new
+  versions of the app and of Wine, and downloading them.
+- **forward tilt, rotation or the eraser.** Pressure only.
+- **run on Windows or Linux.** For a timelapse there, use
+  [art-timelapse](https://github.com/cromachina/art-timelapse).
+
+The full list, including the limits that belong to SAI or Wine, is in the
+[README](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix#what-it-does-not-do).
 
 The MIT licence in this repository covers the bridge code. Nothing else.
 
@@ -80,14 +93,46 @@ have, and delivered straight into SAI. Nothing is emulated, so nothing is slowed
 The recording row is a smaller thing, but it is the kind of smaller thing that decides an
 afternoon. Screen-recording a VM window gives you a video of *the application* — panels, cursor,
 and the camera lurching every time you zoom or pan. This project reads SAI's canvas out of memory
-instead, so the video is the artwork alone, one frame per brush stroke. See
-[Canvas timelapse](#canvas-timelapse) below.
+instead, so the video is the artwork alone. See [Canvas timelapse](#canvas-timelapse) below.
 
 The honest trade-off: a VM runs *real Windows*, so if something misbehaves it is SAI's fault, not
 the translation layer's. Here, some rough edges belong to Wine — the
 [known issues](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues) are
 explicit about which. In exchange you get no Windows licence, a fraction of the disk and memory,
 and a pen that behaves like a pen.
+
+## Pen feel
+
+How hard you have to press is a matter of taste, and of how the day is going for your hand. The
+**Pen** tab has presets named by what you are doing rather than by stiffness:
+
+| Preset | For |
+|---|---|
+| **Normal** | exactly what the tablet reports |
+| **Light hand** | full width without pressing hard, easy on the hand |
+| **Inking** | ignores the lightest touch, for clean line starts |
+| **Painting** | even strokes for soft blending |
+| **Heavy hand** | control for people who press hard |
+
+Each is a starting point. Three sliders adjust it: the **curve** (lower is softer, 0 means no
+pressure at all), **Ignore light touch**, and **Full width at**, for full width without pressing
+all the way. Save the result as one of up to three profiles of your own. Everything applies
+instantly, without restarting SAI, and it works on top of SAI's own brush settings rather than
+replacing them.
+
+## Sharp text on Retina screens
+
+Wine draws Windows programs at half the resolution of a Retina screen, and macOS stretches the
+picture up, so SAI looks soft: text, panels and the canvas alike. **Advanced › Display › Sharp
+text on Retina screens** has Wine draw SAI at the screen's real resolution instead.
+
+On its own that made drawing lag, because Wine then hands macOS four times as many pixels for
+every brush dab. Wine has fixed this upstream, and until a Wine release includes the fix, the app
+installs Wine Staging 11.16 with that exact change added, so sharp text costs nothing. In SAI, set
+**Window › Scaling of User Interface** to 200% with sharp text and 100% without, then restart SAI.
+
+A few of SAI's small panel icons stay small at 200%. They are fixed-size pictures inside SAI, and
+only its maker can change them.
 
 ## Canvas timelapse
 
@@ -100,16 +145,17 @@ and a pen that behaves like a pen.
   <em>Fifteen strokes played back — the canvas alone, nothing else in frame.</em>
 </p>
 
-Recording is built in and on by default. It captures **one frame per finished brush stroke**, so a
-long session becomes a couple of minutes of video.
+Recording is built in and on by default. It takes a frame **each time the pen rests**, so a long
+session becomes a couple of minutes of video. *Record every stroke separately* takes one right
+after every stroke instead, for more detail, at the cost of drawing feeling a little slower.
 
 The difference from screen recording is what it reads. Rather than photographing the window, it
 reads SAI's canvas directly out of memory — so the video shows the flat artwork with no panels, no
 cursor, and no camera movement when you zoom, pan or rotate while working. Because what is
 recorded is the *composited* canvas, layer opacity and blend modes appear exactly as you see them.
 
-Just draw. Closing SAI makes the video by itself; there is a **Make video…** button on the Recording
-tab if you want one early. Videos land in `~/Movies/SAI Timelapses`, one folder per drawing.
+Just draw. Closing SAI makes the video by itself; there is a **Make video now…** button on the
+Recording tab if you want one early. Videos land in `~/Movies/SAI Timelapses`, one folder per drawing.
 
 ### A drawing over several evenings is one video
 
