@@ -206,7 +206,7 @@ extension SetupController {
         // version call, so it happens off the main thread and the hint catches
         // up a moment after the tab opens.
         displayHint = lbl("Sharper SAI on a Retina screen. "
-                       + "If SAI looks too small or too big, set Window › Scaling of User Interface to Auto. "
+                       + "In SAI, set Window › Scaling of User Interface to 200% with sharp text and 100% without, then restart SAI. "
                        + "Some small panel icons stay small at 200%. That is SAI's own icon art.",
                        10, color: .tertiaryLabelColor)
         displayHint.preferredMaxLayoutWidth = rowWidth
@@ -221,7 +221,7 @@ extension SetupController {
                     ? "Sharper SAI on a Retina screen, with no slowdown: your Wine has the fix for it. On by default. "
                     : "Better quality, but strokes will most likely show up slower with this Wine. "
                       + "Advanced › Wine can fix that. Off by default. ")
-                    + "If SAI looks too small or too big, set Window › Scaling of User Interface to Auto. "
+                    + "In SAI, set Window › Scaling of User Interface to 200% with sharp text and 100% without, then restart SAI. "
                        + "Some small panel icons stay small at 200%. That is SAI's own icon art."
                 self.applyLayout()
             }

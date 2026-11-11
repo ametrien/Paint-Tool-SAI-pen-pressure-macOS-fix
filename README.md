@@ -51,18 +51,21 @@ Wine in use are set, and, in developer mode, where the logs, a diagnostics dump 
 ---
 
 
-> **Status:** working. Position + pressure + hover tracking + mouse coexistence all work, plus
-> multi-monitor and Mac-style Cmd shortcuts. See [Limitations](#limitations).
+> **Status:** working. Position, pressure, hover tracking and mouse coexistence all work, plus
+> multi-monitor, sharp text on Retina screens and Mac-style ⌘ shortcuts. See
+> [What it does not do](#what-it-does-not-do).
 >
-> **Tested configuration:**
+> **Tested configuration** (as of 0.3.11):
 > - Mac: **Apple M3 Pro**, **macOS Tahoe 26.6.2 (25G83)**
+> - Wine: **Wine Staging 11.16 (Gcenx) with the Retina patch**, the build Setup installs
 > - SAI: **PaintTool SAI Ver.2 (64-bit)**
 > - Tablet: **Wacom Intuos BT S (CTL-4100WL)**, over USB and Bluetooth
-> - Displays: **single screen**, **two screens in mirroring mode**, and (from the next release)
->   **two screens extended**, including screens connected while SAI is open
+> - Displays: **single screen**, **two screens mirrored** and **two screens extended**, including
+>   screens connected while SAI is open
 >
-> Other tablets / Macs / display setups are untested — reports welcome as issues (see
-> [CONTRIBUTING](CONTRIBUTING.md)).
+> Other tablets, Macs and display setups are untested here. Users have reported it working on an
+> M5 MacBook Air with a USB Intuos S, and with an external LG UltraFine display. Reports are
+> welcome as issues (see [CONTRIBUTING](CONTRIBUTING.md)).
 
 📺 **Video walkthrough:** [watch the setup tutorial](https://youtu.be/62mJwWQsEYI)
 
@@ -83,10 +86,11 @@ Wine in use are set, and, in developer mode, where the logs, a diagnostics dump 
 - **⌥ is Alt** (hold it for the eyedropper). Each key can be changed on the **Keys** tab, for example to keep one ⌥ for typing @ or €
 - **Pinch to zoom** and **two-finger scroll to pan** on the trackpad
 - **⌃⌥⌘Space** brings back a SAI window that has gone missing, and it can do that automatically when you switch back to SAI
+- **Sharp, full-resolution SAI on Retina screens**, without the drawing lag, with a Wine that has the fix (Setup installs one)
 
 **[Canvas timelapse](#credit)** *(v0.2.0+)*
 
-- **One frame per brush stroke** — hours of drawing become a couple of minutes
+- **A frame each time the pen rests**, or after every stroke if you turn that on — hours of drawing become a couple of minutes
 - Records the **canvas, not the screen**: no panels, no cursor, and no camera lurching when you zoom or pan
 - Layer opacity and blend modes come through; **several open canvases become one video each**
 - Pick a target length; it encodes as you draw, so it costs megabytes rather than gigabytes
@@ -96,7 +100,9 @@ Wine in use are set, and, in developer mode, where the logs, a diagnostics dump 
 - **One app, no terminal.** Wine is installed for you, with progress
 - Licence handling, including the two-folders trap that silently stops SAI saving
 - **Update SAI in place** when a new build lands, keeping your licence, brushes and preferences
+- **Updates itself** when you let it, from the GitHub releases, and never while SAI is open
 - Reset, reinstall or uninstall from the same window; logs and a health check when something is odd
+- **Copy problem report** collects what an issue needs in one paste, with your user name hidden
 
 ## Why not just run a virtual machine?
 
@@ -137,12 +143,15 @@ from SYSTEMAX. Everything else the app handles.
 
 ### Sharp text on Retina screens, without lag
 
-1. **Make sure your Wine has the fix.** Open **Advanced › Wine** in the app:
-   - Wine Staging **11.16 with our patch** (press **Add patch**, or **Update Wine for sharper, faster drawing**), or
-   - Wine **11.22 or newer**, once it is released.
-2. **Turn on Advanced › Display › Sharp text on Retina screens.** With the fix in place it is usually already on.
-3. **In SAI, set Window › Scaling of User Interface to 200%.** If you turn sharp text off again, set it back to 100%.
+1. **Check that your Wine has the fix** in **Advanced › Wine**. A new install gets one. If yours is older,
+   press **Update Wine for sharper, faster drawing** (quit SAI first), or **Add patch** if you have Wine Staging 11.16.
+   Wine **11.22 or newer** has the fix built in, once it is released.
+2. **Advanced › Display › Sharp text on Retina screens.** With the fix in place it is on by default.
+3. **In SAI, set Window › Scaling of User Interface to 200%**, then quit and reopen SAI so its panels land
+   where they should. If you turn sharp text off again, set it back to 100% and restart SAI once more.
 
+Some small panel icons stay small at 200%. That is SAI's own icon art
+([#45](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/45)).
 Why the fix is needed: [issue #39](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/39) and
 [RETINA-LAG-FINDINGS.md](RETINA-LAG-FINDINGS.md).
 
@@ -166,9 +175,10 @@ Why the fix is needed: [issue #39](https://github.com/ametrien/Paint-Tool-SAI-pe
   <a href="docs/assets/demo/timelapse-example.mp4">Watch the original video</a>
 </p>
 
-Recording is on by default. Draw, press **Make video…** — the result appears in the Recording tab
-and lands in `~/Movies/SAI Timelapses`. You do not have to quit SAI first; recording carries on
-afterwards.
+Recording is on by default. Draw; when you close SAI, the video is made and filed under the
+drawing's name in the **Videos** tab, in `~/Movies/SAI Timelapses`. Come back to the same drawing
+another day and it is added to the same video. **Make video now…** in the Recording tab makes one
+mid-session; recording carries on afterwards.
 
 It reads SAI's canvas out of memory rather than capturing the screen, so the video is the artwork
 alone: no panels, no cursor, and no camera movement when you zoom, pan or rotate while working.
@@ -179,20 +189,51 @@ how much disk it uses
 
 ---
 
-## Limitations
+## What it does not do
 
-- **SAI and its license are not included** — bring your own (legal requirement).
-- Tested with a **Wacom Intuos (CTL-4100)** on Apple Silicon. Other WinTab tablets with a
-  macOS driver *should* work (the helper reads standard tablet events) but are untested.
-- **Bluetooth report rate (~130 Hz)** makes fast curves boxy — use USB for ~200 Hz ([why](https://ametrien.github.io/Paint-Tool-SAI-pen-pressure-macOS-fix/troubleshooting#fast-curves-come-out-boxy)).
-- Tilt/rotation are not forwarded (the test tablet has none); pressure only.
+**Not included, by design**
+
+- **SAI and its licence.** Bring your own. This project cannot supply, generate or activate a
+  licence, and never will.
+- **Changes to SAI itself.** Nothing patches `sai2.exe`. The bridge is a `wintab32.dll` that SAI
+  loads through its own WinTab support, plus a helper that runs on macOS.
+- **Accounts, analytics, telemetry.** The app's only network use is GitHub: checking for new
+  versions of itself and of Wine, and downloading them. *Copy problem report* goes to your
+  clipboard, with your user name hidden by default.
+- **Windows or Linux.** For the timelapse there, use
+  [art-timelapse](https://github.com/cromachina/art-timelapse) (see [credit](#credit)).
+- **Notarisation.** The app is signed but not notarised, hence the one-time right-click → Open.
+
+**Limits of the bridge**
+
+- **Pressure only.** Tilt, rotation and the eraser end are not forwarded; the test tablet has
+  none of them.
+- **One tablet tested** (Wacom Intuos CTL-4100). Any tablet macOS itself recognises should work,
+  because the helper reads standard tablet events, but Huion, XP-Pen and others are untested.
+- **Bluetooth report rate (~130 Hz)** makes fast curves boxy; USB gives ~200 Hz
+  ([why](https://ametrien.github.io/Paint-Tool-SAI-pen-pressure-macOS-fix/troubleshooting#fast-curves-come-out-boxy)).
 - **A screen connected while SAI is open** may need SAI restarted before it gets pressure. Until
-  then the pen works there as a mouse, and the menu-bar icon says so ([#37](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/37)).
-- **SAI can freeze on input after app-switching** — press **⌃⌥⌘Space** (or the 🖊 menu-bar icon → *Wake SAI*) to instantly un-stick it.
+  then the pen works there as a mouse, and the menu-bar icon says so
+  ([#37](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/37)).
 
-The last two are caused by SAI and by Wine's macOS driver (not the pressure bridge). See
-**[KNOWN_ISSUES.md](KNOWN_ISSUES.md)** for the full explanation, what we tried, and what
-didn't work.
+**Limits that belong to SAI or Wine**, worked around where possible
+
+- **SAI can freeze on input after switching apps** (Wine's macOS driver). The app wakes it when
+  you come back; if it still sticks, press **⌃⌥⌘Space** or use the pen icon in the menu bar →
+  *Wake SAI*.
+- **The pen cannot click SAI's top menu row** (File, Edit, …): SAI drops the click once it knows a
+  pen is present. Use the trackpad or mouse for the menu
+  ([#1](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/1)).
+- **Some small panel icons stay tiny at 200% scaling.** They are fixed-size bitmaps inside SAI;
+  only SYSTEMAX can change them
+  ([#45](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/45)).
+- **Wine is an Intel build.** Gcenx's Wine Staging runs under Rosetta on Apple Silicon, and macOS
+  already warns that support for Intel apps is ending. When Rosetta goes, this needs a Wine for
+  Apple Silicon that can still run SAI's x86 code, which does not exist yet
+  ([#30](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/30)).
+
+**[KNOWN_ISSUES.md](KNOWN_ISSUES.md)** has the full explanation of each, what was tried, and
+what did not work.
 
 ---
 
@@ -226,18 +267,25 @@ what you meant. You're welcome to paste your original text underneath the transl
 
 ## Build from source (contributors)
 
-Only `wintab32.dll` is committed prebuilt (cross-compiling it needs mingw-w64). The Swift
-helper is built from source automatically by `install.sh` / `make-app.sh` — or by hand:
+`make-app.sh` builds everything into `dist/`: the helper and the timelapse encoder as universal
+binaries, from the file lists in `wacom-helper/sources.txt` and `timelapse-encoder/sources.txt`,
+and the app bundle around them. Only `wintab32.dll` and the test probe `wtprobe.exe` are committed
+prebuilt, because cross-compiling them needs mingw-w64. By hand:
 ```bash
-# custom wintab32.dll  (needs mingw-w64:  brew install mingw-w64)
+# wintab32.dll and the test probe  (brew install mingw-w64)
 cd wintab-src
+x86_64-w64-mingw32-windres wintab32.rc -O coff -o wintab32_res.o
 x86_64-w64-mingw32-gcc -shared -O2 -o wintab32.dll wintab32.c wintab32_res.o wintab32.def \
     -lgdi32 -luser32 -lws2_32 -municode
+x86_64-w64-mingw32-gcc -O2 -Wall -Wextra -o wtprobe.exe wtprobe.c -luser32
 
-# native helper  (needs Xcode command-line tools)
+# native helper  (Xcode command-line tools)
 cd ../wacom-helper
-swiftc -O -o wacom-pressure-helper main.swift PressureCore.swift
+swiftc -O -o wacom-pressure-helper $(bash ../tools/sources.sh helper)
 ```
+
+Tests: `bash tests/run-tests.sh` runs the C cores under AddressSanitizer and UBSanitizer, the
+Swift cores, and the end-to-end checks on a real filesystem. CI runs the same script on every push.
 
 Contributions welcome — especially testing on other tablets and Macs.
 
