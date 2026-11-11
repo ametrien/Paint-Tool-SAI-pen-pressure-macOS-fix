@@ -107,23 +107,53 @@ enum PressureCore {
     static func clampPressure(_ raw: Int) -> Int { max(0, min(maxPressure, raw)) }
 
     /// PEN FEEL — a response curve applied to the normalised 0…1 pressure
-    /// BEFORE it is scaled and sent. `out = in ^ gamma`.
+    /// BEFORE it is scaled and sent. Three knobs:
     ///
+    ///   gamma = 0  no pressure: any touch is a full-width stroke
     ///   gamma < 1  softer: a light touch already gives thick strokes
     ///   gamma = 1  linear, exactly what the tablet reports (default)
     ///   gamma > 1  firmer: you have to lean on it to get full width
+    ///   floor      input at or below this sends 0 (stray grazes make no dot)
+    ///   fullAt     input at or above this is a full-width stroke
     ///
     /// Applied on our side, so unlike the level count it needs no agreement with
     /// the DLL and takes effect without restarting SAI. Note this stacks with
     /// the Wacom driver's own curve and with SAI's per-brush Min Size — which is
-    /// why the default is 1.0: no surprises unless asked for.
+    /// why the defaults change nothing: no surprises unless asked for.
     static var pressureGamma = 1.0
+    static var feelFloor = 0.0
+    static var feelFullAt = 1.0
 
-    /// Endpoints are fixed points of the curve (0→0, 1→1), so only the shape
-    /// between them changes — full press always stays full press.
+    /// The whole mapping in one pure function, so the live plot draws EXACTLY
+    /// what the pen sends (they went through one definition even when it was
+    /// only a gamma; keep it that way).
+    ///
+    /// Order matters: the floor and full-at window is cut out FIRST and the
+    /// remaining range is stretched back to 0…1, THEN gamma shapes it. The
+    /// other way round, gamma would bend a range that is partly dead, and the
+    /// floor would eat a different amount of the stroke for every gamma.
+    ///
+    /// Nonsense parameters (floor at or above fullAt, from a corrupt settings
+    /// file) fall back to linear rather than divide by zero.
+    static func feel(_ normalised: Double, gamma: Double, floor: Double, fullAt: Double) -> Double {
+        let n = max(0, min(1, normalised))
+        var x = n
+        if floor > 0 || fullAt < 1 {
+            guard floor < fullAt else { return n }      // corrupt: pass through
+            if n <= floor { return 0 }
+            x = min(1, (n - floor) / (fullAt - floor))
+        }
+        guard gamma != 1.0, x > 0, x < 1 else { return x }
+        // A negative gamma would send MORE than full pressure (pow > 1).
+        // clamped() keeps it out of the settings, but this is the last stop
+        // before the wire, so it is held here too.
+        return pow(x, max(0, gamma))
+    }
+
+    /// Endpoints are fixed points of the curve (0→0, 1→1 at fullAt), so a full
+    /// press always stays a full press.
     static func curved(_ normalised: Double) -> Double {
-        guard pressureGamma != 1.0, normalised > 0, normalised < 1 else { return normalised }
-        return pow(normalised, pressureGamma)
+        feel(normalised, gamma: pressureGamma, floor: feelFloor, fullAt: feelFullAt)
     }
 
     /// Minimum pressure change worth sending, in wire units.

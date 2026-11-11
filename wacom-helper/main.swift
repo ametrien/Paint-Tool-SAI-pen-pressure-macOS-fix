@@ -69,7 +69,7 @@ let noHover = ProcessInfo.processInfo.environment["WT_NO_HOVER"] != nil
 // Load the stored pressure resolution before anything samples the pen.
 // Unset -> 1023, the long-standing default.
 let _pmaxInit: Void = { PressureCore.maxPressure = savedMaxPressure()
-                        PressureCore.pressureGamma = savedGamma() }()
+                        applyFeel(savedFeel()) }()
 let isAppMode = CommandLine.arguments.contains("--app") || Bundle.main.bundlePath.hasSuffix(".app")
 // Wine prefix the app manages. Override with SAI_PREFIX (e.g. to test from
 // scratch in a throwaway location without touching a real setup).
@@ -169,6 +169,12 @@ func detectTabletFullScale() -> Int? { detectTablet()?.fullScale ?? nil }
 
 
 
+/// A string literal for inside an osa() script. AppleScript only escapes
+/// backslash and double quote; newlines are fine inside its quotes.
+func osaQuote(_ s: String) -> String {
+    "\"" + s.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"") + "\""
+}
 func osa(_ src: String) -> String? {
     let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript"); p.arguments = ["-e", src]
     let out = Pipe(); p.standardOutput = out; p.standardError = Pipe()
@@ -1368,8 +1374,14 @@ final class PenScratchView: NSView {
 }
 
 final class GammaCurveView: NSView {
-    var gamma: Double = 1.0 { didSet { if gamma != oldValue { needsDisplay = true } } }
+    var feel: PenFeel = .normal { didSet { if feel != oldValue { needsDisplay = true } } }
     var live: Double = 0 { didSet { if live != oldValue { needsDisplay = true } } }   // 0...1 input
+
+    /// The plot goes through PressureCore.feel, the same function the pen goes
+    /// through, so the picture cannot drift from the behaviour.
+    private func map(_ x: Double) -> Double {
+        PressureCore.feel(x, gamma: feel.gamma, floor: feel.floor, fullAt: feel.fullAt)
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         let r = bounds.insetBy(dx: 1, dy: 1)
@@ -1385,13 +1397,13 @@ final class GammaCurveView: NSView {
         diag.setLineDash([3, 3], count: 2, phase: 0)
         diag.stroke()
 
-        // the actual curve
+        // the actual curve (120 points: the floor makes a corner that 60
+        // rounded off visibly)
         let curve = NSBezierPath()
         curve.lineWidth = 2
-        for i in 0...60 {
-            let x = Double(i) / 60.0
-            let y = gamma == 1.0 ? x : pow(x, gamma)
-            let p = NSPoint(x: r.minX + CGFloat(x) * r.width, y: r.minY + CGFloat(y) * r.height)
+        for i in 0...120 {
+            let x = Double(i) / 120.0
+            let p = NSPoint(x: r.minX + CGFloat(x) * r.width, y: r.minY + CGFloat(map(x)) * r.height)
             if i == 0 { curve.move(to: p) } else { curve.line(to: p) }
         }
         NSColor.controlAccentColor.setStroke()
@@ -1399,8 +1411,7 @@ final class GammaCurveView: NSView {
 
         // where the pen is right now
         if live > 0.001 {
-            let y = gamma == 1.0 ? live : pow(live, gamma)
-            let p = NSPoint(x: r.minX + CGFloat(live) * r.width, y: r.minY + CGFloat(y) * r.height)
+            let p = NSPoint(x: r.minX + CGFloat(live) * r.width, y: r.minY + CGFloat(map(live)) * r.height)
             NSColor.controlAccentColor.setFill()
             NSBezierPath(ovalIn: NSRect(x: p.x - 3, y: p.y - 3, width: 6, height: 6)).fill()
         }
@@ -1461,8 +1472,17 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     var feelPopup: NSPopUpButton!
     var gammaSlider: NSSlider!
     var gammaLabel: NSTextField!
+    var floorSlider: NSSlider!
+    var floorLabel: NSTextField!
+    var fullAtSlider: NSSlider!
+    var fullAtLabel: NSTextField!
     var curveView: GammaCurveView!
-    let feelChoices: [(String, Double)] = [("Very soft", 0.55), ("Soft", 0.75), ("Normal", 1.0), ("Firm", 1.35), ("Very firm", 1.8)]        // highest raw level seen this test run
+    /// The saved custom profiles (PenFeelCore; up to three), loaded once per window.
+    var penProfiles: [PenProfile] = []
+    /// The custom profile the dropdown last had selected, if any. Kept while
+    /// the sliders move away from its stored values, so "Save changes to it"
+    /// knows which profile is meant.
+    var selectedProfile: String?
 
     // ---- window layout tiers -------------------------------------------------
     // SIMPLE (default): only what needs your attention, plus Launch. Once
@@ -1512,6 +1532,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     var keysNeedSAIRestart = false
     // Advanced › Display (test), DisplayUI.swift: Retina mode and SAI's language.
     var retinaCheck: NSButton!
+    var displayHint: NSTextField!
     var saiLangPopup: NSPopUpButton!
     var displayRestartNote: NSTextField!
     /// Like keysNeedSAIRestart, for the Display settings.
@@ -2125,9 +2146,12 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         feelPopup = NSPopUpButton(frame: .zero, pullsDown: false)
         feelPopup.controlSize = .small
         feelPopup.target = self; feelPopup.action = #selector(feelChanged)
-        for (name, _) in feelChoices { feelPopup.addItem(withTitle: name) }
+        penProfiles = savedPenProfiles()
+        selectedProfile = nil
+        if let m = PenFeelCore.matchName(currentFeel(), profiles: penProfiles),
+           penProfiles.contains(where: { $0.name == m }) { selectedProfile = m }
         fRow.addArrangedSubview(feelPopup)
-        fRow.addArrangedSubview(lbl("how hard you press for a full-width stroke · applies instantly", 10, color: .tertiaryLabelColor))
+        fRow.addArrangedSubview(lbl("how the pen responds · applies instantly", 10, color: .tertiaryLabelColor))
         settingsTab.addArrangedSubview(fRow)
 
         // --- one-button recovery, in Settings ---------------------------------
@@ -2257,22 +2281,47 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         let gRow = NSStackView(); gRow.orientation = .horizontal; gRow.spacing = 8
         gRow.alignment = .centerY
         gRow.addArrangedSubview(lbl("Pen feel curve", 11, bold: true))
-        gammaSlider = NSSlider(value: PressureCore.pressureGamma, minValue: 0.40, maxValue: 2.50,
+        gammaSlider = NSSlider(value: PressureCore.pressureGamma, minValue: 0.0, maxValue: 2.50,
                                target: self, action: #selector(gammaSliderMoved))
         gammaSlider.controlSize = .small
-        gammaSlider.widthAnchor.constraint(equalToConstant: 190).isActive = true
+        gammaSlider.widthAnchor.constraint(equalToConstant: 172).isActive = true
         gRow.addArrangedSubview(gammaSlider)
+        // Sized for the longest value, "0.00 (no pressure)" (105 pt in bold 11).
+        // The slider gave up the extra 18 so the row keeps its width.
         gammaLabel = lbl("", 11, bold: true)
-        gammaLabel.widthAnchor.constraint(equalToConstant: 92).isActive = true
+        gammaLabel.widthAnchor.constraint(equalToConstant: 110).isActive = true
         gRow.addArrangedSubview(gammaLabel)
         curveView = GammaCurveView()
         curveView.widthAnchor.constraint(equalToConstant: 84).isActive = true
         curveView.heightAnchor.constraint(equalToConstant: 46).isActive = true
         gRow.addArrangedSubview(curveView)
         settingsTab.addArrangedSubview(gRow)
-        let gHint = lbl("1.00 = exactly what the tablet reports · below = lighter touch goes further · above = press harder", 9, color: .tertiaryLabelColor)
+        let gHint = lbl("1.00 = what the tablet reports · below = lighter touch goes further · above = press harder · 0 = no pressure", 9, color: .tertiaryLabelColor)
         gHint.preferredMaxLayoutWidth = rowWidth
         settingsTab.addArrangedSubview(gHint)
+        // The other two knobs of the feel (PressureCore.feel). Same row shape
+        // as the curve so the three read as one control.
+        func feelRow(_ title: String, _ min: Double, _ max: Double, _ sel: Selector) -> (NSSlider, NSTextField) {
+            let row = NSStackView(); row.orientation = .horizontal; row.spacing = 8
+            row.alignment = .centerY
+            let t = lbl(title, 11, bold: true)
+            t.widthAnchor.constraint(equalToConstant: 108).isActive = true
+            row.addArrangedSubview(t)
+            let s = NSSlider(value: min, minValue: min, maxValue: max, target: self, action: sel)
+            s.controlSize = .small
+            s.widthAnchor.constraint(equalToConstant: 150).isActive = true
+            row.addArrangedSubview(s)
+            let l = lbl("", 11, bold: true)
+            l.widthAnchor.constraint(equalToConstant: 150).isActive = true
+            row.addArrangedSubview(l)
+            settingsTab.addArrangedSubview(row)
+            return (s, l)
+        }
+        (floorSlider, floorLabel) = feelRow("Ignore light touch", 0.0, 0.30, #selector(feelSliderMoved))
+        (fullAtSlider, fullAtLabel) = feelRow("Full width at", 0.50, 1.0, #selector(feelSliderMoved))
+        let wHint = lbl("below the first = ignored, for clean line starts · at the second = full width, without pressing all the way", 9, color: .tertiaryLabelColor)
+        wHint.preferredMaxLayoutWidth = rowWidth
+        settingsTab.addArrangedSubview(wHint)
         testBtn = NSButton(title: "Test pen", target: self, action: #selector(testTapped))
         testBtn.bezelStyle = .rounded; testBtn.controlSize = .small
         settingsTab.addArrangedSubview(testBtn)
@@ -2433,7 +2482,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     /// session finishes, but not the only one — and segments left behind look
     /// to anyone reading the folder like nothing was recorded at all.
     func applicationWillTerminate(_ note: Notification) {
-        stopLiveEncoder()
+        stopChildrenBeforeExit()        // the encoder AND the Test pen probe
         finalizeTimelapseNow()
     }
 
@@ -2688,32 +2737,127 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         alertUser("Pressure set to \(PressureCore.maxPressure + 1) levels.\n\nSAI reads this once when it starts, so quit SAI completely and relaunch it to apply.")
     }
 
-    @objc func gammaSliderMoved() {
-        let g = (gammaSlider.doubleValue * 100).rounded() / 100      // 2dp, no jitter
-        saveGamma(g)
+    func currentFeel() -> PenFeel {
+        PenFeel(gamma: PressureCore.pressureGamma,
+                floor: PressureCore.feelFloor,
+                fullAt: PressureCore.feelFullAt)
+    }
+
+    @objc func gammaSliderMoved() { feelSliderMoved() }
+
+    @objc func feelSliderMoved() {
+        func dp2(_ v: Double) -> Double { (v * 100).rounded() / 100 }   // 2dp, no jitter
+        var f = PenFeel(gamma: dp2(gammaSlider.doubleValue),
+                        floor: dp2(floorSlider.doubleValue),
+                        fullAt: dp2(fullAtSlider.doubleValue))
+        // The two ends must not meet: hold a gap open rather than flip to
+        // Normal (which is what clamped() does to a corrupt FILE, but a slider
+        // mid-drag deserves resistance, not a reset).
+        if f.floor > f.fullAt - 0.2 { f.floor = dp2(f.fullAt - 0.2) }
+        saveFeel(f)
         syncFeelControls()
     }
 
-    /// One source of truth for both the preset popup and the fine control.
+    private typealias FeelTag = PenFeelCore.Tag
+
+    /// One source of truth for the popup, the three sliders and the plot.
+    /// Called every second by refresh(), INCLUDING while the dropdown is open:
+    /// see syncPopupMenu (PopupMenuSync.swift) for why the menu is not simply
+    /// rebuilt here.
     func syncFeelControls() {
-        let g = PressureCore.pressureGamma
-        if feelPopup != nil {
-            let idx = feelChoices.enumerated().min { abs($0.1.1 - g) < abs($1.1.1 - g) }?.offset ?? 2
-            feelPopup.selectItem(at: idx)
-        }
-        if gammaSlider != nil { gammaSlider.doubleValue = g }
+        let f = currentFeel()
+        if gammaSlider != nil { gammaSlider.doubleValue = f.gamma }
         if gammaLabel != nil {
-            let name = abs(g - 1.0) < 0.03 ? "linear" : (g < 1 ? "softer" : "firmer")
-            gammaLabel.stringValue = String(format: "%.2f (%@)", g, name)
+            let name = f.gamma < 0.005 ? "no pressure"
+                : abs(f.gamma - 1.0) < 0.03 ? "linear" : (f.gamma < 1 ? "softer" : "firmer")
+            gammaLabel.stringValue = String(format: "%.2f (%@)", f.gamma, name)
         }
-        if curveView != nil { curveView.gamma = g }
+        if floorSlider != nil {
+            floorSlider.doubleValue = f.floor
+            floorLabel.stringValue = f.floor < 0.005 ? "off"
+                : String(format: "below %.0f%% force", f.floor * 100)
+        }
+        if fullAtSlider != nil {
+            fullAtSlider.doubleValue = f.fullAt
+            fullAtLabel.stringValue = f.fullAt > 0.995 ? "full force"
+                : String(format: "%.0f%% force", f.fullAt * 100)
+        }
+        if curveView != nil { curveView.feel = f }
+        guard feelPopup != nil else { return }
+
+        let match = PenFeelCore.matchName(f, profiles: penProfiles)
+        if let m = match, penProfiles.contains(where: { $0.name == m }) { selectedProfile = m }
+
+        let m = PenFeelCore.menu(for: f, profiles: penProfiles, selectedProfile: selectedProfile)
+        syncPopupMenu(feelPopup, m.entries, selectTag: m.selected)
     }
 
     @objc func feelChanged() {
-        let g = feelChoices[feelPopup.indexOfSelectedItem].1
-        saveGamma(g)
+        // No SAI restart needed anywhere here: the feel is applied on our side
+        // before the value is sent.
+        let tag = feelPopup.selectedItem?.tag ?? FeelTag.custom
+        switch tag {
+        case FeelTag.preset..<(FeelTag.preset + PenFeelCore.presets.count):
+            selectedProfile = nil
+            saveFeel(PenFeelCore.presets[tag - FeelTag.preset].feel)
+        case FeelTag.profile..<(FeelTag.profile + penProfiles.count):
+            let p = penProfiles[tag - FeelTag.profile]
+            selectedProfile = p.name
+            saveFeel(p.feel)
+        case FeelTag.save:   saveProfileTapped()
+        case FeelTag.update:
+            if let sel = selectedProfile,
+               let out = PenFeelCore.updating(penProfiles, name: sel, feel: currentFeel()) {
+                penProfiles = out; savePenProfiles(out)
+            }
+        case FeelTag.rename: renameProfileTapped()
+        case FeelTag.delete: deleteProfileTapped()
+        default: break                                   // "Custom": already live
+        }
         syncFeelControls()
-        // No SAI restart needed: the curve is applied before the value is sent.
+    }
+
+    private func askProfileName(_ prompt: String, start: String, renaming: String? = nil) -> String? {
+        // One dialog, re-shown with the reason when the name is not usable, so
+        // a slip never silently drops the save.
+        var seed = start
+        while true {
+            guard let raw = osa("text returned of (display dialog \(osaQuote(prompt)) default answer \(osaQuote(seed)))")
+            else { return nil }                                  // Cancel
+            let name = PenFeelCore.cleanName(raw)
+            guard let why = PenFeelCore.nameProblem(name, existing: penProfiles, renaming: renaming) else { return name }
+            seed = name
+            guard osa("button returned of (display dialog \(osaQuote(why)) buttons {\"Cancel\", \"Try again\"} default button \"Try again\" with icon caution)") == "Try again" else { return nil }
+        }
+    }
+
+    func saveProfileTapped() {
+        guard let name = askProfileName("Name this pen feel:", start: ""),
+              let out = PenFeelCore.adding(penProfiles, name: name, feel: currentFeel()) else { return }
+        penProfiles = out
+        selectedProfile = PenFeelCore.cleanName(name)
+        savePenProfiles(out)
+        wlog("pen feel: profile saved: \(name)")
+    }
+
+    func renameProfileTapped() {
+        guard let sel = selectedProfile,
+              let name = askProfileName("Rename \"\(sel)\" to:", start: sel, renaming: sel),
+              let out = PenFeelCore.renaming(penProfiles, from: sel, to: name) else { return }
+        penProfiles = out
+        selectedProfile = PenFeelCore.cleanName(name)
+        savePenProfiles(out)
+    }
+
+    func deleteProfileTapped() {
+        guard let sel = selectedProfile else { return }
+        // The feel it described stays live, so deleting is safe to confirm
+        // lightly: nothing about the pen changes, only the saved name goes.
+        guard osa("button returned of (display dialog \(osaQuote("Delete the profile \"\(sel)\"?\n\nYour current pen feel stays as it is; only the saved profile goes.")) buttons {\"Cancel\", \"Delete\"} default button \"Cancel\")") == "Delete" else { return }
+        penProfiles = PenFeelCore.deleting(penProfiles, name: sel)
+        selectedProfile = nil
+        savePenProfiles(penProfiles)
+        wlog("pen feel: profile deleted: \(sel)")
     }
 
 
@@ -2956,6 +3100,9 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
 }
 
 let g_setup = SetupController()     // strong ref (NSApplication.delegate is weak)
+// `kill`, `killall` or closing the terminal the app was started from would
+// otherwise end it on the spot, with no cleanup at all (ChildCleanup says why).
+ChildCleanup.exitCleanlyOnSignals { endRecordingAndExit() }
 let nsApp = NSApplication.shared
 nsApp.setActivationPolicy(.regular)
 nsApp.delegate = g_setup

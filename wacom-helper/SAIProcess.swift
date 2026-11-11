@@ -185,7 +185,7 @@ func stopLiveEncoder() {
 /// the second, and `open` on an app that is still running only brings it
 /// forward, so the relaunch would quietly not happen.
 func endRecordingAndExit(relaunch: Bool = false) -> Never {
-    stopLiveEncoder()
+    stopChildrenBeforeExit()
     finalizeTimelapseNow()
     if relaunch {
         let p = Process()
@@ -194,6 +194,31 @@ func endRecordingAndExit(relaunch: Bool = false) -> Never {
         try? p.run()
     }
     exit(0)
+}
+/// Stop every child process the app started that must not outlive it. BOTH
+/// ways out call this: applicationWillTerminate (Quit from the menu bar or the
+/// Dock, Cmd+Q, an update) and endRecordingAndExit (SAI closed, a permission
+/// relaunch, SIGTERM/SIGINT/SIGHUP).
+///
+/// THE TRAP: the Test pen probe was stopped by Stop Test and before Launch,
+/// and by nothing on the way out. Quitting during a pen test, or SAI closing
+/// while one ran, left wtprobe.exe running inside Wine, holding the pen port,
+/// for up to the hour it was started for. That is how SAI came to read the pen
+/// from a file and miss quick strokes on 2026-11-11. probeStream.stop() alone
+/// is not enough here: its SIGKILL comes two seconds later, after the exit.
+/// stopStrayProbes() waits until the probe is really gone.
+///
+/// probeStream.stop() still comes first: it clears `wanted`, and without that
+/// the stream starts a NEW probe two seconds after this one is killed, which
+/// can happen while finalizeTimelapseNow() is still encoding.
+///
+/// Deliberately NOT stopped: SAI itself, and so Wine and wineserver for the
+/// prefix while SAI runs. Quitting this app must never close a drawing
+/// unsaved; SAI goes on without pressure, and the log says so.
+func stopChildrenBeforeExit() {
+    stopLiveEncoder()
+    g_setup.probeStream.stop()
+    stopStrayProbes()
 }
 func isForeignSAIWindow(_ w: [String: Any]) -> Bool {
     let owner = (w[kCGWindowOwnerName as String] as? String ?? "").lowercased()
@@ -223,10 +248,27 @@ func saiProcessRunning() -> Bool {
     return p.terminationStatus == 0
 }
 func pollUntilSAICloses() {
+    wlog("launch: watching for SAI's window to close (every 2 s)")
     let t = Timer(timeInterval: 2.0, repeats: true) { timer in
-        if !saiWindowIsOpen() { timer.invalidate(); endRecordingAndExit(relaunch: takeReopenRequest()) }
+        if !saiWindowIsOpen() {
+            timer.invalidate()
+            logQuitBecauseSAIClosed("SAI's window is no longer on screen")
+            endRecordingAndExit(relaunch: takeReopenRequest())
+        }
     }
     RunLoop.main.add(t, forMode: .common)
+}
+/// The app quits when it decides SAI has closed, and it used to do so without
+/// a word: on 2026-11-11 the log simply stopped at 02:10:18 while SAI went on
+/// running with no pen pressure, and nothing said the app had gone. Every
+/// quit for that reason goes through here first, and says whether sai2.exe
+/// is in fact still running, which is the case that leaves SAI without pressure.
+func logQuitBecauseSAIClosed(_ why: String) {
+    if saiProcessRunning() {
+        wlog("launch: quitting because \(why), BUT sai2.exe was still running at that moment. If SAI stays open, it has no pen pressure or wake until the app is opened again")
+    } else {
+        wlog("launch: quitting because \(why); sai2.exe has exited too")
+    }
 }
 // LAUNCH (runs only after the pressure tap is active): start SAI; quit the app
 // when SAI closes.
@@ -256,6 +298,11 @@ func syncBridgeDLL() {
     try? FileManager.default.copyItem(atPath: src, toPath: dst)
 }
 func launchSAIApp() {
+    // Before anything else, including raising an SAI that is already open: a
+    // Test pen probe left running holds the pen port, and SAI then reads the
+    // pen from a file and misses quick strokes (2026-11-11). Stopping it here
+    // also frees the port for an SAI already running, whose DLL retries it.
+    let strayProbes = stopStrayProbes()
     // One SAI at a time (#28). Two instances share one Wine prefix and contend
     // over the same settings and recovery files, and a second copy is never
     // what "Launch" was meant to do — the window is already there, so raise it
@@ -269,6 +316,13 @@ func launchSAIApp() {
         }
         pollUntilSAICloses()      // still quit with SAI, as a fresh launch would
         return
+    }
+    // A stopped probe leaves its Wine session behind, and SAI would join it
+    // (BridgeCheck.restartWineAfterStrayProbes says why that is avoided).
+    // Asked of the PROCESS list: a restart would close a minimised SAI unsaved.
+    if BridgeCheck.restartWineAfterStrayProbes(stopped: strayProbes, saiRunning: saiProcessRunning()) {
+        wlog("launch: restarting Wine for the prefix, so SAI does not join the stopped probe's Wine session")
+        if !stopWineForPrefix(g_wine) { wlog("launch: Wine did not stop within 10 s; starting SAI anyway") }
     }
     syncBridgeDLL()               // an upgraded app must not leave a stale DLL behind
     // Ask the hardware once more before committing the value (issue #27). At
@@ -310,7 +364,8 @@ func launchSAIApp() {
     if e["WT_TIMELAPSE_QUIET_MS"] == nil, timelapseEveryStroke() { e["WT_TIMELAPSE_QUIET_MS"] = "0" }
     p.environment = e
     startLiveEncoder()
-    p.terminationHandler = { _ in
+    p.terminationHandler = { proc in
+        wlog("launch: the Wine process started for SAI (pid \(proc.processIdentifier)) has ended, status \(proc.terminationStatus)")
         try? "0".write(toFile: pf, atomically: true, encoding: .ascii)
         stopLiveEncoder()
         finalizeTimelapseNow()
@@ -323,9 +378,18 @@ func launchSAIApp() {
         // window is still on screen, and in the 1.5 seconds below one can be.
         // So the exit stops whatever is running THEN, not only what ran before.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            if !saiWindowIsOpen() { endRecordingAndExit(relaunch: takeReopenRequest()) }
-            else { pollUntilSAICloses() }
+            if !saiWindowIsOpen() {
+                logQuitBecauseSAIClosed("no SAI window was on screen 1.5 s after that")
+                endRecordingAndExit(relaunch: takeReopenRequest())
+            } else {
+                pollUntilSAICloses()
+            }
         }
     }
-    try? p.run()                                            // async; quits the app when SAI closes
+    do {
+        try p.run()                                         // async; quits the app when SAI closes
+        wlog("launch: started SAI through Wine, pid \(p.processIdentifier)")
+    } catch {
+        wlog("launch: could not start Wine for SAI: \(error)")
+    }
 }
