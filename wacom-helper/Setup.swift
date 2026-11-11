@@ -261,6 +261,31 @@ func runBridgeProbe(_ wine: String, seconds: Int = 5) -> BridgeCheck.Probe? {
     return String(data: data, encoding: .utf8).flatMap { BridgeCheck.parseProbe($0) }
 }
 
+/// Stop every Test pen probe still running. Returns how many there were.
+///
+/// Called before SAI starts, before a new pen test, and on every way out of
+/// the app (stopChildrenBeforeExit). A probe that outlives
+/// its test holds the pen port, so SAI cannot (see BridgeCheck section 4).
+/// The DLL now retries the port every second, so SAI would get it back once
+/// the probe ends anyway, but a probe can live for an hour. Waits, up to
+/// `seconds`, until they are really gone, so SAI's DLL does not load while one
+/// is still letting go of the port.
+///
+/// SIGTERM first, SIGKILL for any still there: a probe holds nothing worth a
+/// graceful exit, and the wine loader does not always pass a SIGTERM on to
+/// the Windows process behind it (see BridgeProbeStream.stop).
+@discardableResult
+func stopStrayProbes(waitUpTo seconds: Double = 1.5) -> Int {
+    let (found, left) = ChildCleanup.stop(find: BridgeCheck.strayProbePIDs, waitUpTo: seconds)
+    if found.isEmpty { return 0 }
+    if left.isEmpty {
+        wlog("probe: stopped \(found.count) leftover Test pen probe(s) \(found) so SAI gets the pen port")
+    } else {
+        wlog("probe: \(left.count) leftover probe(s) would not stop: \(left); SAI's DLL keeps retrying the pen port")
+    }
+    return found.count
+}
+
 /// A probe kept running ALONGSIDE the pen test, so both halves of the bridge
 /// can be watched at the same moment.
 ///
@@ -284,6 +309,9 @@ final class BridgeProbeStream {
 
     func start(_ wine: String, seconds: Int = 3600) {
         stop()
+        // One left by an earlier app would hold the pen port, and this test's
+        // received bar would show nothing while the pen worked.
+        stopStrayProbes()
         self.wine = wine
         self.seconds = seconds
         wanted = true

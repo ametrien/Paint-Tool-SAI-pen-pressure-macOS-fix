@@ -9,10 +9,13 @@
 # file cannot be forgotten here.
 wacom-helper/main.swift
 wacom-helper/PressureCore.swift
+wacom-helper/PenFeelCore.swift
+wacom-helper/PopupMenuSync.swift
 wacom-helper/Settings.swift
 wacom-helper/SAIProcess.swift
 wacom-helper/Setup.swift
 wacom-helper/BridgeCheck.swift
+wacom-helper/ChildCleanup.swift
 wacom-helper/ReportCore.swift
 wacom-helper/Licence.swift
 wacom-helper/SetupUI.swift

@@ -496,6 +496,10 @@ typedef struct { HWND h; LONG area; } BESTWND;
 static volatile HWND  g_wake_target;   /* window the hook should activate */
 static volatile LONG  g_wake_done;
 static HHOOK          g_wake_hook;
+/* Loaded by the Test pen probe rather than by SAI. Set once at load from the
+ * exe's own name (wtc_host_is_probe). The probe must never run the wake: it
+ * would take the Windows foreground away from SAI. */
+static int            g_host_is_probe;
 
 /* Wake diagnostics are ALWAYS logged (separate file, append) — wakes are rare
  * (user-triggered) so there's no per-packet cost, and field reports without
@@ -602,6 +606,10 @@ static int run_wake_hook(HWND w, DWORD tid) {
 }
 
 static void win32_wake(void) {
+    /* Second guard (the first is wtc_wake_requested): in the probe this would
+     * find no visible window, fall back to the probe's hidden one, and take
+     * the foreground from SAI for it. See wtc_host_is_probe in wintab_core.h. */
+    if (g_host_is_probe) return;
     BESTWND best = { NULL, 0 };
     EnumWindows(find_main_window, (LPARAM)&best);
     HWND w = best.h ? best.h : (g_hwnd ? GetAncestor(g_hwnd, GA_ROOT) : NULL);
@@ -705,11 +713,10 @@ static void check_win32_wake(DWORD now) {
     size_t n = fread(b, 1, sizeof(b) - 1, f);
     fclose(f);
     b[n] = 0;
-    if (strcmp(b, lastVal) != 0) {
-        int first = (lastVal[0] == 0);
-        strcpy(lastVal, b);
-        if (!first) win32_wake();       /* skip the value we see on startup */
-    }
+    /* once per new request, never for the one left from before we started,
+     * and never in the Test pen probe. lastVal must be at least as big as b. */
+    if (wtc_wake_requested(b, lastVal, sizeof lastVal, g_host_is_probe))
+        win32_wake();
 }
 
 /* ---- CLICK DE-DUP (pen tap = double click bug) -----------------------------
@@ -947,6 +954,25 @@ static void write_status(unsigned long recv, unsigned long posted) {
     fclose(f);
 }
 
+/* Bind the pen port. INVALID_SOCKET (and the Winsock error in *err) when the
+ * port is taken, typically by a Test pen probe still running inside Wine. */
+static SOCKET open_sample_socket(int *err) {
+    SOCKET s = socket(AF_INET, SOCK_DGRAM, 0);
+    if (s == INVALID_SOCKET) { *err = WSAGetLastError(); return INVALID_SOCKET; }
+    struct sockaddr_in a; memset(&a, 0, sizeof(a));
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    a.sin_port = htons(SAMPLE_PORT);
+    if (bind(s, (struct sockaddr*)&a, sizeof(a)) != 0) {
+        *err = WSAGetLastError();
+        closesocket(s);
+        return INVALID_SOCKET;
+    }
+    DWORD tv = 15;          /* ms; short so pending flush + housekeeping are prompt */
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+    return s;
+}
+
 /* producer: block on the UDP socket and post EACH datagram the instant it
  * arrives (no fixed poll interval — removes up to 6 ms of cursor-vs-ink lag
  * and packet clumping). A 100 ms recv timeout lets us do heartbeat logging
@@ -962,24 +988,28 @@ static DWORD WINAPI producer(LPVOID arg) {
     unsigned long recvCount = 0, gaps = 0;
     long lastSeq = -1;
     SOCKET sock = INVALID_SOCKET;
+    int wsaOK = 0;
+    DWORD lastBindTry = 0, portTakenAt = 0;
     (void)arg;
 
     WSADATA wsa;
     if (WSAStartup(MAKEWORD(2,2), &wsa) == 0) {
-        sock = socket(AF_INET, SOCK_DGRAM, 0);
+        int err = 0;
+        wsaOK = 1;
+        lastBindTry = GetTickCount();
+        sock = open_sample_socket(&err);
         if (sock != INVALID_SOCKET) {
-            struct sockaddr_in a; memset(&a, 0, sizeof(a));
-            a.sin_family = AF_INET;
-            a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-            a.sin_port = htons(SAMPLE_PORT);
-            if (bind(sock, (struct sockaddr*)&a, sizeof(a)) != 0) {
-                log_line("producer: UDP bind :%d failed (%d) — file mode only", SAMPLE_PORT, WSAGetLastError());
-                closesocket(sock); sock = INVALID_SOCKET;
-            } else {
-                DWORD tv = 15;          /* ms; short so pending flush + housekeeping are prompt */
-                setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
-                log_line("producer: listening on UDP 127.0.0.1:%d (blocking, immediate post)", SAMPLE_PORT);
-            }
+            log_line("producer: listening on UDP 127.0.0.1:%d (blocking, immediate post)", SAMPLE_PORT);
+        } else {
+            /* The housekeeping below retries (wtc_should_retry_bind). Also in
+             * the always-on wake log: nothing else on the far side shows that
+             * SAI is reading the file instead of the live stream. */
+            portTakenAt = lastBindTry;
+            log_line("producer: UDP bind :%d failed (%d), reading the file until the port is free "
+                     "(retrying every %d ms)", SAMPLE_PORT, err, WTC_PORT_RETRY_MS);
+            if (!g_host_is_probe)
+                wake_log("producer: pen port %d taken (%d); SAI reads the file until it is free",
+                         SAMPLE_PORT, err);
         }
     }
 
@@ -1030,6 +1060,21 @@ static DWORD WINAPI producer(LPVOID arg) {
 
         /* recv timed out (idle) or no socket -> housekeeping */
         DWORD now = GetTickCount();
+        /* Port taken at load (or since)? Keep asking for it, so SAI goes back
+         * to the live stream the moment whatever held it lets go, instead of
+         * reading the file for the rest of the session. */
+        if (wsaOK && wtc_should_retry_bind(sock != INVALID_SOCKET, now, lastBindTry, WTC_PORT_RETRY_MS)) {
+            int err = 0;
+            lastBindTry = now;
+            sock = open_sample_socket(&err);
+            if (sock != INVALID_SOCKET) {
+                log_line("producer: pen port free again after %lu ms; listening on UDP 127.0.0.1:%d",
+                         (unsigned long)(now - portTakenAt), SAMPLE_PORT);
+                if (!g_host_is_probe)
+                    wake_log("producer: pen port free again after %lu ms; SAI is back on the live stream",
+                             (unsigned long)(now - portTakenAt));
+            }
+        }
         /* Timelapse: feed the debounce a zero on the idle path too. The helper
          * stops sending entirely once the pen leaves range, so a stroke that
          * ends by lifting away would otherwise never see enough zero samples to
@@ -1332,6 +1377,12 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID r) {
         if (g_virtW <= 0) g_virtW = g_screenW;
         if (g_virtH <= 0) g_virtH = g_screenH;
         read_virtual(&g_virtX, &g_virtY, &g_virtW, &g_virtH);
+        {
+            char exe[MAX_PATH] = "";
+            DWORD len = GetModuleFileNameA(NULL, exe, (DWORD)sizeof exe);
+            if (len == 0 || len >= sizeof exe) exe[0] = '\0';   /* unknown: treated as SAI */
+            g_host_is_probe = wtc_host_is_probe(exe);
+        }
         if (getenv("WT_NO_CTX_NOTIFY")) g_notify_ctx = 0;
         if (getenv("WT_NO_SELFCHECK")) g_selfcheck = 0;
         if (getenv("WT_LOG_POS")) g_log_pos = 1;
@@ -1347,8 +1398,9 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID r) {
          * unanswerable from the log, and a stale DLL looked exactly like a
          * broken fix. One line here settles it. */
         log_line("==== OwnTab wintab32.dll loaded; built " WT_BUILD_STAMP
-                 "; screen %dx%d virtual %dx%d at (%d,%d) maxPress=%d ====",
-             g_screenW, g_screenH, g_virtW, g_virtH, g_virtX, g_virtY, g_max_press);
+                 "; screen %dx%d virtual %dx%d at (%d,%d) maxPress=%d host=%s ====",
+             g_screenW, g_screenH, g_virtW, g_virtH, g_virtX, g_virtY, g_max_press,
+             g_host_is_probe ? "Test pen probe (no wake)" : "SAI");
         CreateThread(NULL, 0, producer, NULL, 0, NULL);
         /* Off unless WT_TIMELAPSE / WT_TIMELAPSE_PROBE is set. Started after
          * the producer so nothing here can delay pressure coming up. */

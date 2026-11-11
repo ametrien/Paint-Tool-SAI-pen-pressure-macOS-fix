@@ -3,6 +3,39 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](https://semver.org/).
 
+## [0.3.11] — 2026-11-11
+
+### Fixed
+- **SAI no longer goes inactive or misses quick, short strokes because of a leftover pen test.**
+  The *Test pen* button runs a small stand-in for SAI inside Wine. When one outlived its test, it
+  held the port the pen samples arrive on, so SAI fell back to reading a file that only keeps the
+  newest sample, and quick strokes were lost. It also ran the auto wake and kept taking the
+  foreground away from SAI. Now the pen test never runs the wake, SAI takes the pen port back as
+  soon as it is free (it checks every second), and the app stops any leftover pen test before it
+  starts SAI.
+- **Quitting the app no longer leaves a pen test running.** Quit, Cmd+Q, an update, SAI closing,
+  and a `kill` or closed Terminal all stop the *Test pen* stand-in and wait until it is gone.
+  Before, only *Stop Test* and *Launch* did, so after quitting during a pen test it could keep
+  running inside Wine for up to an hour. SAI itself still stays open when you quit only the app,
+  so no drawing is closed unsaved.
+- **The log says why the app quit** when it decides SAI has closed, and whether SAI was in fact
+  still running, which is the case that leaves SAI without pen pressure.
+
+### Added
+- **Pen feel presets named by what you are doing:** Normal, Light hand, Inking, Painting and Heavy
+  hand, in place of Very soft to Very firm. Each is a starting point you can adjust.
+- **Two new pen settings** next to the feel curve. *Ignore light touch*: pressure below this sends
+  nothing, for clean line starts. *Full width at*: reach full width without pressing all the way,
+  easier on the hand. The curve plot shows all three.
+- **Up to three custom profiles.** Set the sliders, then *Pen feel › Save as profile…*. A saved
+  profile can be picked, updated with *Save changes*, renamed or deleted from the same menu.
+- **The feel curve goes all the way down to 0.** Below the old limit of 0.4 a light touch goes
+  even further, and at 0 there is no pressure at all: every touch is a full-width stroke.
+
+### Changed
+- **The Sharp text hint matches your Wine.** With the fix (our patch, or Wine 11.22 and newer) it
+  no longer warns that strokes will be slower; without it, it points to Advanced › Wine.
+
 ## [0.3.10] — 2026-11-10
 
 ### Fixed

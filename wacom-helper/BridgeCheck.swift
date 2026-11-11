@@ -397,6 +397,76 @@ enum BridgeCheck {
         return p
     }
 
+    // ---- 4. a probe left running ---------------------------------------------
+    // A probe is meant to live exactly as long as the pen test. On 2026-11-11
+    // one outlived an app quit and kept running inside Wine for most of its
+    // hour. While it ran it held the pen port, so SAI's bridge could not bind
+    // it and read the pen from a file instead of the live stream, and (before
+    // the DLL learned to tell the two apart) it ran the wake too, taking the
+    // Windows foreground away from SAI. SAI went inactive and missed quick
+    // strokes. So the app clears every probe before it starts SAI.
+    //
+    // Which processes count comes from `ps -x -ww -o pid=,command=`, and Wine
+    // names its processes in three ways, all seen on a real machine:
+    //
+    //     8096 /Applications/SAI Pen Pressure.app/Contents/Resources/wtprobe.exe 3600
+    //    11842 C:\windows\system32\winedevice.exe
+    //    11874 sai2.exe
+    //
+    // THE TRAP: matching "contains wtprobe.exe" also matches the commands
+    // people use to look for it (`pgrep -f wtprobe.exe`, `grep wtprobe.exe`),
+    // and the app would kill those. The name has to be a FILE name: at the
+    // start of the command or right after a path separator, and followed by
+    // the end or a space.
+
+    /// Is this `ps` command line a running wtprobe.exe (or the wine loader
+    /// starting one)?
+    static func isProbeCommand(_ command: String) -> Bool {
+        let c = Array(command.lowercased().unicodeScalars)
+        let name = Array("wtprobe.exe".unicodeScalars)
+        guard c.count >= name.count else { return false }
+        for start in 0...(c.count - name.count) where Array(c[start..<start + name.count]) == name {
+            let before: Unicode.Scalar? = start > 0 ? c[start - 1] : nil
+            let afterIdx = start + name.count
+            let after: Unicode.Scalar? = afterIdx < c.count ? c[afterIdx] : nil
+            let startsName = before == nil || before == "/" || before == "\\"
+            let endsName = after == nil || after == " " || after == "\t"
+            if startsName && endsName { return true }
+        }
+        return false
+    }
+
+    /// After stopping leftover probes, restart Wine for the prefix before SAI
+    /// starts? A probe started its own Wine session, and stopping the probe
+    /// leaves that session running. On 2026-11-11 an SAI started two seconds
+    /// after a probe was stopped joined that session, and a minute later the
+    /// app lost track of it: the Wine process it had started for SAI ended
+    /// while SAI kept running, the app quit, and SAI drew with no pressure.
+    /// Not proven to be the cause; a fresh session takes it out of the question.
+    ///
+    /// THE TRAP: restarting Wine ends EVERY Windows program in the prefix,
+    /// SAI included, without saving. `saiRunning` must come from the PROCESS
+    /// list (saiProcessRunning), never from "an SAI window is on screen": a
+    /// minimised SAI, one on another Space, or one behind a save dialog has no
+    /// window on screen and would be closed with its unsaved work.
+    static func restartWineAfterStrayProbes(stopped: Int, saiRunning: Bool) -> Bool {
+        stopped > 0 && !saiRunning
+    }
+
+    /// The pids of every probe in `ps -x -ww -o pid=,command=` output, in the
+    /// order listed. Lines without a leading pid are skipped.
+    static func strayProbePIDs(inPS text: String) -> [Int32] {
+        var pids: [Int32] = []
+        for raw in text.components(separatedBy: .newlines) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            guard let gap = line.firstIndex(where: { $0 == " " || $0 == "\t" }),
+                  let pid = Int32(line[line.startIndex..<gap]), pid > 0 else { continue }
+            let command = line[gap...].trimmingCharacters(in: .whitespaces)
+            if isProbeCommand(command) { pids.append(pid) }
+        }
+        return pids
+    }
+
     enum ProbeVerdict: Equatable {
         case didNotRun      // wine couldn't run it, or it isn't the probe's output
         case noDLL          // nothing called wintab32 loaded at all
