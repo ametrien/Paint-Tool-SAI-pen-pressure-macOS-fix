@@ -373,6 +373,73 @@ struct BridgeTests {
             expect(!BridgeCheck.explainProbe(v, pIdle).isEmpty, "probe: \(v) has a sentence")
         }
 
+        // --- a probe left running (SAI going inactive, 2026-11-11) ----------
+        // The exact process list from the machine it happened on (home folder
+        // generalised): the probe started by Test pen at 01:33, still holding
+        // the pen port when SAI was launched at 01:41.
+        let psThatMorning = """
+             8096 /Users/someone/Documents/sai-pen-pressure-macos/dist/SAI Pen Pressure.app/Contents/Resources/wtprobe.exe 3600
+             8098 /Applications/Wine Staging.app/Contents/Resources/wine/lib/wine/../../bin/wineserver
+             8106 C:\\windows\\system32\\winedevice.exe
+             8112 C:\\windows\\system32\\winedevice.exe
+            10812 /Users/someone/Documents/sai-pen-pressure-macos/dist/SAI Pen Pressure.app/Contents/MacOS/SAIPenPressure
+            10957 /Users/someone/Documents/sai-pen-pressure-macos/dist/SAI Pen Pressure.app/Contents/Resources/sai-timelapse-encoder --frames /Users/someone/SAI2-pressure/drive_c/sai-timelapse/frames --watch
+            10958 sai2.exe
+        """
+        expect(BridgeCheck.strayProbePIDs(inPS: psThatMorning) == [8096],
+               "stray: THE CASE: the leftover probe is found, and nothing else (not SAI, not wine)")
+
+        // every way Wine names a running probe
+        expect(BridgeCheck.isProbeCommand("/Applications/SAI Pen Pressure.app/Contents/Resources/wtprobe.exe 3600"),
+               "stray: the probe by its Mac path, with its seconds argument")
+        expect(BridgeCheck.isProbeCommand("/Applications/SAI Pen Pressure.app/Contents/Resources/wtprobe.exe"),
+               "stray: the probe by its Mac path, no argument")
+        expect(BridgeCheck.isProbeCommand("Z:\\Applications\\SAI Pen Pressure.app\\Contents\\Resources\\wtprobe.exe 5"),
+               "stray: the probe by its Windows path")
+        expect(BridgeCheck.isProbeCommand("wtprobe.exe 3600") && BridgeCheck.isProbeCommand("wtprobe.exe "),
+               "stray: the probe by its bare name, the way Wine shows sai2.exe")
+        expect(BridgeCheck.isProbeCommand("/Applications/Wine Staging.app/Contents/Resources/wine/bin/wine /Applications/SAI Pen Pressure.app/Contents/Resources/wtprobe.exe 3600"),
+               "stray: the wine loader still starting a probe")
+        expect(BridgeCheck.isProbeCommand("Z:\\APPS\\WTPROBE.EXE 5"),
+               "stray: Windows names ignore case")
+
+        // the commands people use to LOOK for it must survive
+        expect(!BridgeCheck.isProbeCommand("pkill -f wtprobe.exe"), "stray: `pkill -f wtprobe.exe` is not a probe")
+        expect(!BridgeCheck.isProbeCommand("pgrep -fl wtprobe.exe"), "stray: `pgrep -fl wtprobe.exe` is not a probe")
+        expect(!BridgeCheck.isProbeCommand("grep wtprobe.exe"), "stray: `grep wtprobe.exe` is not a probe")
+
+        // one character either side of the name
+        expect(!BridgeCheck.isProbeCommand("/x/mywtprobe.exe 5"), "stray: a longer name ending in wtprobe.exe is not a probe")
+        expect(!BridgeCheck.isProbeCommand("/x/wtprobe.exe2 5"), "stray: wtprobe.exe2 is not a probe")
+        expect(!BridgeCheck.isProbeCommand("/x/wtprobe.exe.bak"), "stray: wtprobe.exe.bak is not a probe")
+        expect(!BridgeCheck.isProbeCommand("/x/wtprobe.ex 5"), "stray: one letter short is not a probe")
+        expect(!BridgeCheck.isProbeCommand("sai2.exe "), "stray: SAI is not a probe")
+        expect(!BridgeCheck.isProbeCommand(""), "stray: an empty command is not a probe")
+
+        // the list parse itself
+        expect(BridgeCheck.strayProbePIDs(inPS: "  101 wtprobe.exe 5\n  102 sai2.exe \n  103 C:\\x\\wtprobe.exe 3600\n") == [101, 103],
+               "stray: every probe, in the order listed")
+        expect(BridgeCheck.strayProbePIDs(inPS: "\n\nwtprobe.exe 5\nabc wtprobe.exe 5\n-4 wtprobe.exe 5\n0 wtprobe.exe 5\n") == [],
+               "stray: lines with no real pid are skipped, never guessed at")
+        expect(BridgeCheck.strayProbePIDs(inPS: "") == [], "stray: no processes, nothing to stop")
+        expect(BridgeCheck.strayProbePIDs(inPS: "\t77\t/x/wtprobe.exe\t5") == [77], "stray: tabs separate like spaces")
+
+        // --- a fresh Wine session after stopping one ---------------------------
+        // 02:09 on 2026-11-11: one probe stopped, no SAI running yet.
+        expect(BridgeCheck.restartWineAfterStrayProbes(stopped: 1, saiRunning: false),
+               "fresh wine: THE CASE: a probe was stopped and no SAI runs: start SAI in a fresh session")
+        expect(BridgeCheck.restartWineAfterStrayProbes(stopped: 3, saiRunning: false),
+               "fresh wine: several probes stopped, no SAI: restart")
+        expect(!BridgeCheck.restartWineAfterStrayProbes(stopped: 0, saiRunning: false),
+               "fresh wine: no leftover probe: a normal launch does not pay for a restart")
+        // THE TRAP: a restart closes SAI without saving
+        expect(!BridgeCheck.restartWineAfterStrayProbes(stopped: 1, saiRunning: true),
+               "fresh wine: THE TRAP: SAI running (even minimised or on another Space): never restart")
+        expect(!BridgeCheck.restartWineAfterStrayProbes(stopped: 0, saiRunning: true),
+               "fresh wine: SAI running and no probe: nothing to do")
+        expect(!BridgeCheck.restartWineAfterStrayProbes(stopped: -1, saiRunning: false),
+               "fresh wine: a nonsense count is not a reason to restart")
+
         print(failures == 0 ? "BridgeCheck: all passed" : "BridgeCheck: \(failures) FAILED")
         exit(failures == 0 ? 0 : 1)
     }

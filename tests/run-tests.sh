@@ -13,7 +13,8 @@ WATCHERS=""
 # passing run into exit status 1.)
 # A test below leaves one STOPPED (SIGSTOP), and a stopped process holds a SIGTERM
 # pending forever, so each one is also continued.
-trap 'for p in $WATCHERS; do kill -TERM "$p" 2>/dev/null || true; kill -CONT "$p" 2>/dev/null || true; done; rm -rf "$WORK"' EXIT
+# The quit tests' fake probes can ignore SIGTERM, so they are SIGKILLed by path.
+trap 'for p in $WATCHERS; do kill -TERM "$p" 2>/dev/null || true; kill -CONT "$p" 2>/dev/null || true; done; pkill -KILL -f "$WORK/quit/" 2>/dev/null || true; rm -rf "$WORK"' EXIT
 
 echo "== C core (wintab_core.h) — under AddressSanitizer + UBSanitizer =="
 # Sanitizers turn any out-of-bounds / divide-by-zero / integer-UB into a hard
@@ -35,6 +36,20 @@ echo ""
 echo "== Swift core (PressureCore.swift) =="
 swiftc -o "$WORK/core-tests" "$REPO/wacom-helper/PressureCore.swift" "$REPO/tests/CoreTests.swift"
 "$WORK/core-tests"
+
+echo ""
+echo "== Swift core (PenFeelCore.swift) =="
+# The pen feel presets and the three custom profiles the user can save.
+swiftc -o "$WORK/penfeel-tests" "$REPO/wacom-helper/PenFeelCore.swift" "$REPO/tests/PenFeelTests.swift"
+"$WORK/penfeel-tests"
+
+echo ""
+echo "== Swift AppKit (PopupMenuSync.swift) =="
+# The pen feel dropdown on a real NSPopUpButton, offscreen (no window, no
+# clicks): a pick made while the 1 s refresh runs must not be dropped.
+swiftc -o "$WORK/popupmenu-tests" "$REPO/wacom-helper/PenFeelCore.swift" \
+  "$REPO/wacom-helper/PopupMenuSync.swift" "$REPO/tests/PopupMenuTests.swift"
+"$WORK/popupmenu-tests"
 
 echo ""
 echo "== Swift core (BridgeCheck.swift) =="
@@ -751,6 +766,148 @@ awk '/^func pollUntilSAICloses/,/^}/' "$REPO/wacom-helper/SAIProcess.swift" \
   && echo "  ok   exits: quitting because SAI closed is one of them" \
   || { echo "  FAIL exits: pollUntilSAICloses no longer ends the recording"; exit 1; }
 echo "All exit tests passed."
+
+echo ""
+echo "== Nothing the app started outlives it (real processes) =="
+# macOS does not end a child when its parent exits. On 2026-11-11 a Test pen
+# probe (wtprobe.exe) left running inside Wine after the app had gone held the
+# pen port, and SAI read the pen from a file and missed quick strokes. The probe
+# was stopped by Stop Test and before Launch, and by NOTHING on the way out:
+# not by Quit (applicationWillTerminate), not when SAI closed
+# (endRecordingAndExit), not on a kill or a closed terminal (no signal handling).
+#
+# The "app" here is tests/QuitStandIn.swift, built from the app's own
+# ChildCleanup.swift and BridgeCheck.swift. Its "probe" is tests/fake_wtprobe.c:
+# same name, and like the leftover it does not end when its pipe closes.
+# "stubborn" ones also ignore SIGTERM, as the Windows program behind the wine
+# loader can. ps decides every answer. Only fakes under $WORK/quit are touched.
+QD="$WORK/quit"; mkdir -p "$QD"; quit_fail=0
+cc -Wall -Wextra -Werror -o "$QD/wtprobe.exe" "$REPO/tests/fake_wtprobe.c"
+swiftc -o "$WORK/quit-standin" "$REPO/wacom-helper/ChildCleanup.swift" \
+  "$REPO/wacom-helper/BridgeCheck.swift" "$REPO/tests/QuitStandIn.swift"
+alive() {  # running, and not a zombie waiting to be reaped
+  local st; st=$(ps -o stat= -p "$1" 2>/dev/null | cut -c1)
+  [ -n "$st" ] && [ "$st" != Z ]
+}
+probe_pid() {  # pid file -> the fake probe's pid, once the stand-in has written it
+  wait_until 5 test -s "$1" || { echo "  FAIL quit: the stand-in never started its probe"; exit 1; }
+  cat "$1"
+}
+# Is the probe still there a moment after the app has gone? 1.5 s is longer
+# than any probe takes to end on its own pipe check (one tick, 100 ms).
+outlived() { sleep 1.5; alive "$1"; }
+
+# --- 0. the controls: without cleanup, the fake really does outlive the app ---
+# Without these, every "gone" below could be passing because the fake ends by
+# itself, and the tests would prove nothing.
+rm -f "$QD/pid"; "$WORK/quit-standin" bare-exit "$QD" 60 polite "$QD/pid" > /dev/null
+pid=$(probe_pid "$QD/pid")
+if outlived "$pid"; then
+  echo "  ok   control: a bare exit leaves the probe running (parent now $(ps -o ppid= -p "$pid" | tr -d ' '))"
+else
+  echo "  FAIL control: the fake probe ended with its app, so these tests prove nothing"; quit_fail=1
+fi
+kill -KILL "$pid" 2>/dev/null || true
+rm -f "$QD/pid"; "$WORK/quit-standin" no-handler "$QD" 60 polite "$QD/pid" > /dev/null &
+app=$!; pid=$(probe_pid "$QD/pid"); kill -TERM "$app"; wait "$app" 2>/dev/null || true
+if outlived "$pid"; then
+  echo "  ok   control: SIGTERM with no handler ends the app and leaves the probe"
+else
+  echo "  FAIL control: the probe ended with an unhandled SIGTERM, so the signal tests prove nothing"; quit_fail=1
+fi
+kill -KILL "$pid" 2>/dev/null || true
+
+# --- 1. Quit and every exit through endRecordingAndExit ---
+# THE TRAP: ChildCleanup.stop must be synchronous. BridgeProbeStream.stop()
+# schedules its SIGKILL two seconds later, and the app has exited by then. Make
+# stop() return right after the SIGTERM, or drop its SIGKILL, and "stubborn"
+# goes red.
+for kind in polite stubborn; do
+  rm -f "$QD/pid"
+  res=$("$WORK/quit-standin" quit "$QD" 60 "$kind" "$QD/pid")
+  pid=$(probe_pid "$QD/pid")
+  if outlived "$pid"; then
+    echo "  FAIL quit: a $kind probe outlived the app ($res; pid $pid, parent now $(ps -o ppid= -p "$pid" | tr -d ' '))"
+    quit_fail=1; kill -KILL "$pid" 2>/dev/null || true
+  else
+    echo "  ok   quit: a $kind probe is gone once the app has exited ($res)"
+  fi
+done
+
+# THE TRAP: the cleanup must never stop the app itself. A command line that
+# only MENTIONS a probe's path matches as a probe, and this stand-in's does here
+# (the extra argument). Drop the getpid() filter in ChildCleanup.stop and the
+# stand-in SIGTERMs itself mid-cleanup: status 143, and the probe may be left.
+rm -f "$QD/pid"; st=0
+res=$("$WORK/quit-standin" quit "$QD" 60 polite "$QD/pid" "$QD/wtprobe.exe") || st=$?
+pid=$(probe_pid "$QD/pid")
+if outlived "$pid"; then
+  echo "  FAIL quit: the probe outlived an app whose command line mentions it (status $st, $res)"
+  quit_fail=1; kill -KILL "$pid" 2>/dev/null || true
+elif [ "$st" != 0 ] || [ "$res" != "cleanup: found 1, left 0" ]; then
+  echo "  FAIL quit: the cleanup stopped the app itself (status $st, '$res')"; quit_fail=1
+else
+  echo "  ok   quit: the cleanup never stops the app itself"
+fi
+
+# --- 2. a signal: kill, killall, a closed terminal ---
+# THE TRAP: remove the signal() line in ChildCleanup.exitCleanlyOnSignals and
+# the default action ends the app before the dispatch source can run, which is
+# the no-handler control above. Every one of these goes red.
+for sig in TERM INT HUP; do
+  rm -f "$QD/pid"
+  "$WORK/quit-standin" signals "$QD" 60 stubborn "$QD/pid" > "$QD/sig.log" &
+  app=$!; pid=$(probe_pid "$QD/pid")
+  kill -"$sig" "$app"
+  if ! wait_until 5 gone "$app"; then
+    echo "  FAIL signal: SIG$sig did not end the app"; quit_fail=1; kill -KILL "$app" 2>/dev/null || true
+  fi
+  st=0; wait "$app" 2>/dev/null || st=$?   # (|| keeps set -e from ending the run here)
+  if outlived "$pid"; then
+    echo "  FAIL signal: SIG$sig left the probe running (app status $st: $(cat "$QD/sig.log"))"
+    quit_fail=1; kill -KILL "$pid" 2>/dev/null || true
+  elif [ "$st" != 0 ] || ! grep -q "cleanup: found 1, left 0" "$QD/sig.log"; then
+    # Status 0 and the cleanup line: the app exited through its own cleanup,
+    # rather than being killed by the signal while the probe died some other way.
+    echo "  FAIL signal: SIG$sig did not go through the cleanup (status $st: $(cat "$QD/sig.log"))"; quit_fail=1
+  else
+    echo "  ok   signal: SIG$sig stops the probe, then exits cleanly"
+  fi
+done
+
+# --- 3. a quit with nothing to stop stays quick ---
+res=$("$WORK/quit-standin" nothing)
+ms=${res##*ms=}
+case "$res" in
+  "found=0 left=0 "*) [ "$ms" -lt 1000 ] && echo "  ok   quit: with nothing running the cleanup costs ${ms} ms" \
+                       || { echo "  FAIL quit: the cleanup took ${ms} ms with nothing to stop"; quit_fail=1; } ;;
+  *) echo "  FAIL quit: the cleanup found something that is not ours: $res"; quit_fail=1 ;;
+esac
+
+# --- 4. the app wires it to every way out ---
+# The app cannot be launched here, so this reads the source. THE TRAP each line
+# guards: a way out that does not call stopChildrenBeforeExit leaves the probe.
+fn() { awk -v f="$1" '$0 ~ f, /^(    )?}/' "$2"; }
+fn "func applicationWillTerminate" "$REPO/wacom-helper/main.swift" | grep -q "stopChildrenBeforeExit()" \
+  && echo "  ok   wired: Quit (applicationWillTerminate) stops the children" \
+  || { echo "  FAIL wired: applicationWillTerminate does not call stopChildrenBeforeExit"; quit_fail=1; }
+fn "^func endRecordingAndExit" "$REPO/wacom-helper/SAIProcess.swift" | grep -q "stopChildrenBeforeExit()" \
+  && echo "  ok   wired: endRecordingAndExit (SAI closed, relaunch, signals) stops the children" \
+  || { echo "  FAIL wired: endRecordingAndExit does not call stopChildrenBeforeExit"; quit_fail=1; }
+body=$(fn "^func stopChildrenBeforeExit" "$REPO/wacom-helper/SAIProcess.swift" | grep -v '^ *//')
+order=$(printf '%s\n' "$body" | grep -oE "stopLiveEncoder\(\)|probeStream\.stop\(\)|stopStrayProbes\(" | tr '\n' ' ')
+# probeStream.stop() BEFORE stopStrayProbes: it clears `wanted`, and the stream
+# otherwise starts a new probe two seconds after the old one is killed.
+[ "$order" = "stopLiveEncoder() probeStream.stop() stopStrayProbes( " ] \
+  && echo "  ok   wired: it stops the encoder, the probe stream, then any probe left" \
+  || { echo "  FAIL wired: stopChildrenBeforeExit calls '$order'"; quit_fail=1; }
+awk '/ChildCleanup\.exitCleanlyOnSignals/ { s = NR } /^nsApp\.run\(\)/ { r = NR } END { exit !(s && r && s < r) }' \
+  "$REPO/wacom-helper/main.swift" \
+  && grep -q "exitCleanlyOnSignals { endRecordingAndExit() }" "$REPO/wacom-helper/main.swift" \
+  && echo "  ok   wired: signals reach endRecordingAndExit, installed before the app runs" \
+  || { echo "  FAIL wired: the app does not route SIGTERM/SIGINT/SIGHUP to endRecordingAndExit"; quit_fail=1; }
+[ "$quit_fail" = 0 ] || exit 1
+echo "All quit tests passed."
 
 echo ""
 echo "== A session leaves a fingerprint, and pieces rebuild into one video =="

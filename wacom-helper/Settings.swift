@@ -209,16 +209,39 @@ func writeMaxPressureForDLL() {
     try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
     try? "\(PressureCore.maxPressure)".write(toFile: "\(dir)/wt_pmax.txt", atomically: true, encoding: .ascii)
 }
-// Pen feel (response curve). Stored as a gamma; 1.0 = untouched.
-func savedGamma() -> Double {
+// Pen feel. feel.txt holds "gamma floor fullAt"; gamma.txt is what builds up
+// to 0.3.10 wrote (gamma only) and is still read when feel.txt is missing, so
+// an upgrade keeps the feel the user had. saveFeel writes BOTH, so going back
+// to an older build keeps at least the gamma.
+func savedFeel() -> PenFeel {
+    if let s = try? String(contentsOfFile: appSupport() + "/feel.txt", encoding: .utf8) {
+        let p = s.split(separator: " ").compactMap { Double($0) }
+        if p.count == 3 { return PenFeel(gamma: p[0], floor: p[1], fullAt: p[2]).clamped() }
+    }
     guard let s = try? String(contentsOfFile: appSupport() + "/gamma.txt", encoding: .utf8),
-          let v = Double(s.trimmingCharacters(in: .whitespacesAndNewlines)),
-          v >= 0.4, v <= 2.5 else { return 1.0 }
-    return v
+          let v = Double(s.trimmingCharacters(in: .whitespacesAndNewlines)) else { return .normal }
+    return PenFeel(gamma: v, floor: 0, fullAt: 1).clamped()
 }
-func saveGamma(_ v: Double) {
-    try? String(format: "%.2f", v).write(toFile: appSupport() + "/gamma.txt", atomically: true, encoding: .utf8)
-    PressureCore.pressureGamma = v
+func saveFeel(_ raw: PenFeel) {
+    let f = raw.clamped()
+    try? String(format: "%.2f %.2f %.2f", f.gamma, f.floor, f.fullAt)
+        .write(toFile: appSupport() + "/feel.txt", atomically: true, encoding: .utf8)
+    try? String(format: "%.2f", f.gamma).write(toFile: appSupport() + "/gamma.txt", atomically: true, encoding: .utf8)
+    applyFeel(f)
+}
+func applyFeel(_ f: PenFeel) {
+    PressureCore.pressureGamma = f.gamma
+    PressureCore.feelFloor = f.floor
+    PressureCore.feelFullAt = f.fullAt
+}
+
+// The user's saved pen feel profiles (PenFeelCore), up to three.
+func savedPenProfiles() -> [PenProfile] {
+    PenFeelCore.parse((try? String(contentsOfFile: appSupport() + "/pen-profiles.txt", encoding: .utf8)) ?? "")
+}
+func savePenProfiles(_ list: [PenProfile]) {
+    try? PenFeelCore.serialize(list).write(toFile: appSupport() + "/pen-profiles.txt",
+                                           atomically: true, encoding: .utf8)
 }
 func saveSAIPath(_ p: String) { try? p.write(toFile: appSupport() + "/config.txt", atomically: true, encoding: .utf8) }
 

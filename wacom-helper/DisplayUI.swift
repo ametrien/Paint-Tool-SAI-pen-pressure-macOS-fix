@@ -200,13 +200,30 @@ extension SetupController {
         retinaCheck = NSButton(checkboxWithTitle: "Sharp text on Retina screens",
                                target: self, action: #selector(retinaToggled))
         box.addArrangedSubview(retinaCheck)
-        let hint = lbl("Better quality, but strokes will most likely show up slower. Off by default. "
+        // The warning about slower strokes is only true for a Wine WITHOUT the
+        // fix (issue #39): with our patch or Wine 11.22+, sharp text draws
+        // smoothly and is on by default. Reading the Wine's state costs a
+        // version call, so it happens off the main thread and the hint catches
+        // up a moment after the tab opens.
+        displayHint = lbl("Sharper SAI on a Retina screen. "
                        + "If SAI looks too small or too big, set Window › Scaling of User Interface to Auto.",
                        10, color: .tertiaryLabelColor)
-        hint.preferredMaxLayoutWidth = rowWidth
-        hint.lineBreakMode = .byWordWrapping
-        hint.usesSingleLineMode = false
-        box.addArrangedSubview(hint)
+        displayHint.preferredMaxLayoutWidth = rowWidth
+        displayHint.lineBreakMode = .byWordWrapping
+        displayHint.usesSingleLineMode = false
+        box.addArrangedSubview(displayHint)
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let hasFix = wineHasRetinaFix()
+            DispatchQueue.main.async {
+                guard let self = self, self.displayHint != nil else { return }
+                self.displayHint.stringValue = (hasFix
+                    ? "Sharper SAI on a Retina screen, with no slowdown: your Wine has the fix for it. On by default. "
+                    : "Better quality, but strokes will most likely show up slower with this Wine. "
+                      + "Advanced › Wine can fix that. Off by default. ")
+                    + "If SAI looks too small or too big, set Window › Scaling of User Interface to Auto."
+                self.applyLayout()
+            }
+        }
 
         // Language menu, hidden (see the top of this file).
         // let langRow = NSStackView()

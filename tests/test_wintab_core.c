@@ -490,6 +490,106 @@ int main(void) {
                "status: a missing build stamp says so");
     }
 
+    /* --- which program loaded us (SAI going inactive, 2026-11-11) ---------
+     * A Test pen probe left running loaded this same DLL and ran the wake,
+     * taking the Windows foreground away from SAI every time. These pin who
+     * counts as the probe: a false "no" lets the probe fight SAI again, a
+     * false "yes" takes the wake away from SAI. */
+    {
+        /* the probe, as Wine reports its own exe path, and other spellings */
+        EXPECT(wtc_host_is_probe("Z:\\Applications\\SAI Pen Pressure.app\\Contents\\Resources\\wtprobe.exe") == 1,
+               "host: the probe, as Wine names it, is the probe");
+        EXPECT(wtc_host_is_probe("/Applications/SAI Pen Pressure.app/Contents/Resources/wtprobe.exe") == 1,
+               "host: the probe by a Mac path is the probe");
+        EXPECT(wtc_host_is_probe("wtprobe.exe") == 1, "host: a bare probe name is the probe");
+        EXPECT(wtc_host_is_probe("Z:\\APPS\\WTPROBE.EXE") == 1 && wtc_host_is_probe("C:\\x\\WtProbe.Exe") == 1,
+               "host: Windows paths ignore case, so the probe in capitals is still the probe");
+
+        /* SAI, under every name it has shipped as: must keep its wake */
+        EXPECT(wtc_host_is_probe("C:\\SAI2\\sai2.exe") == 0, "host: SAI2 is not the probe");
+        EXPECT(wtc_host_is_probe("C:\\PaintToolSAI\\sai.exe") == 0, "host: SAI Ver.1 is not the probe");
+        EXPECT(wtc_host_is_probe("C:\\Program Files\\SAI\\My SAI copy.exe") == 0,
+               "host: a renamed SAI is not the probe");
+
+        /* one character either side of the name, and the name in the wrong place */
+        EXPECT(wtc_host_is_probe("C:\\x\\mywtprobe.exe") == 0, "host: a longer name ending in wtprobe.exe is not the probe");
+        EXPECT(wtc_host_is_probe("C:\\x\\wtprobe.exe.bak") == 0, "host: wtprobe.exe plus more is not the probe");
+        EXPECT(wtc_host_is_probe("C:\\x\\wtprobe.ex") == 0, "host: one letter short is not the probe");
+        EXPECT(wtc_host_is_probe("C:\\wtprobe.exe\\sai2.exe") == 0,
+               "host: a FOLDER called wtprobe.exe does not make SAI the probe");
+        EXPECT(wtc_host_is_probe("C:\\x\\wtprobe.exe\\") == 0, "host: a path ending in a separator names no file");
+
+        /* unknown host: SAI must not lose its wake because the lookup failed */
+        EXPECT(wtc_host_is_probe(NULL) == 0, "host: unknown (NULL) is not the probe");
+        EXPECT(wtc_host_is_probe("") == 0, "host: unknown (empty) is not the probe");
+    }
+
+    /* --- the wake request, as each process sees it --------------------------
+     * Replays what the wake log showed: SAI and the probe both watching
+     * C:\wt_wake.txt, each with its own memory of the last value. */
+    {
+        char saiLast[32] = "", probeLast[32] = "";
+        const int SAI = 0, PROBE = 1;
+
+        /* the value already in the file at load is an old request */
+        EXPECT(wtc_wake_requested("3", saiLast, sizeof saiLast, SAI) == 0,
+               "wake: SAI ignores the request left over from before it started");
+        EXPECT(wtc_wake_requested("3", probeLast, sizeof probeLast, PROBE) == 0,
+               "wake: the probe ignores it too");
+
+        /* THE FAILING CASE: the helper asks for a wake */
+        EXPECT(wtc_wake_requested("4", saiLast, sizeof saiLast, SAI) == 1,
+               "wake: SAI wakes when the helper asks");
+        EXPECT(wtc_wake_requested("4", probeLast, sizeof probeLast, PROBE) == 0,
+               "wake: THE BUG: the probe must NOT wake (it would take the foreground from SAI)");
+
+        /* once per request, not once per look at the file (~6 per second) */
+        EXPECT(wtc_wake_requested("4", saiLast, sizeof saiLast, SAI) == 0,
+               "wake: SAI does not wake again for the same request");
+        EXPECT(wtc_wake_requested("5", saiLast, sizeof saiLast, SAI) == 1 &&
+               wtc_wake_requested("5", probeLast, sizeof probeLast, PROBE) == 0,
+               "wake: the next request wakes SAI and still not the probe");
+        /* a new app session counts from 1 again: a change is a change */
+        EXPECT(wtc_wake_requested("1", saiLast, sizeof saiLast, SAI) == 1,
+               "wake: a lower number after an app restart is still a new request");
+
+        /* nothing to compare: never a wake, never a crash */
+        EXPECT(wtc_wake_requested(NULL, saiLast, sizeof saiLast, SAI) == 0, "wake: no marker, no wake");
+        EXPECT(wtc_wake_requested("9", NULL, 32, SAI) == 0, "wake: no memory, no wake");
+        EXPECT(wtc_wake_requested("9", saiLast, 0, SAI) == 0, "wake: zero-size memory, no wake");
+    }
+
+    /* --- retrying the pen port ----------------------------------------------
+     * Before: one try at load, then "file mode only" for the whole session. */
+    {
+        EXPECT(wtc_should_retry_bind(1, 5000, 0, WTC_PORT_RETRY_MS) == 0,
+               "port: holding the port, never retry");
+        EXPECT(wtc_should_retry_bind(0, 999, 0, WTC_PORT_RETRY_MS) == 0,
+               "port: taken, 999 ms after the last try: wait");
+        EXPECT(wtc_should_retry_bind(0, 1000, 0, WTC_PORT_RETRY_MS) == 1,
+               "port: taken, 1000 ms after the last try: THE FIX: try again");
+        EXPECT(wtc_should_retry_bind(0, 1001, 0, WTC_PORT_RETRY_MS) == 1,
+               "port: taken, 1001 ms after: try again");
+        EXPECT(wtc_should_retry_bind(0, 61000, 60000, WTC_PORT_RETRY_MS) == 1,
+               "port: keeps retrying for as long as the port stays taken");
+
+        /* GetTickCount() wraps after 49.7 days of uptime; Macs stay up that long */
+        uint32_t before = 0xFFFFFE00u;            /* 512 ms before the wrap */
+        EXPECT(wtc_should_retry_bind(0, before + 999u, before, WTC_PORT_RETRY_MS) == 0,
+               "port: across the 32-bit tick wrap, 999 ms: wait");
+        EXPECT(wtc_should_retry_bind(0, before + 1000u, before, WTC_PORT_RETRY_MS) == 1,
+               "port: across the 32-bit tick wrap, 1000 ms: try again");
+        /* The case `now >= last_try + interval` gets wrong: the last try was
+         * just before the wrap, the clock has since wrapped to a small number,
+         * and that form would wait another 49.7 days to try again. */
+        uint32_t lastTry = 0xFFFFF000u;           /* 4096 ms before the wrap */
+        EXPECT(wtc_should_retry_bind(0, lastTry + 5000u, lastTry, WTC_PORT_RETRY_MS) == 1,
+               "port: last try before the wrap, clock now past it: try again, not in 49 days");
+        /* ...and the other way round: the deadline wraps, the clock has not yet */
+        EXPECT(wtc_should_retry_bind(0, before + 256u, before, WTC_PORT_RETRY_MS) == 0,
+               "port: 256 ms after a try just before the wrap: still wait");
+    }
+
     if (failures) { printf("FAILED: %d test(s)\n", failures); return 1; }
     printf("All wintab_core tests passed.\n");
     return 0;

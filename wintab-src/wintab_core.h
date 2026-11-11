@@ -364,4 +364,83 @@ static int wtc_format_screens(char *out, size_t cap, int newscreen, int mismatch
     return n;
 }
 
+/* ---------------------------------------------------------------------------
+ * WHICH PROGRAM LOADED US? (SAI going inactive, 2026-11-11)
+ * ---------------------------------------------------------------------------
+ * Two programs load this DLL: SAI, and wtprobe.exe, the stand-in for SAI that
+ * the app's Test pen button runs inside Wine. Both start the producer thread,
+ * so both used to run every one of its chores. The wake is the one that
+ * reaches outside its own process: it takes the Windows foreground for the
+ * host's window, with the AttachThreadInput bypass. A probe left running after
+ * a pen test therefore took the foreground away from SAI on every wake, and
+ * SAI went inactive. The wake log showed it as two pids taking turns, ending
+ * "STILL LOST".
+ *
+ * THE TRAP: the probe's window is never shown, so find_main_window() finds
+ * nothing and win32_wake() falls back to GetAncestor(g_hwnd). "The probe has
+ * no visible window" does NOT mean "the wake does nothing there". Anything
+ * new in the producer that touches the foreground, focus or another process's
+ * windows must be gated on wtc_host_is_probe() too.
+ *
+ * Decided by the probe's name, not by SAI's: SAI has shipped as sai.exe and
+ * sai2.exe and people rename it, while the probe is ours and is always
+ * wtprobe.exe. Only the file name counts (a folder called wtprobe.exe is not
+ * the probe), compared without case because Windows paths are. Unknown host
+ * (NULL, empty) means "not the probe", so SAI never loses its wake because
+ * GetModuleFileName failed. */
+#define WTC_PROBE_EXE "wtprobe.exe"
+
+static int wtc_host_is_probe(const char *exe_path) {
+    const char *base, *p, *want = WTC_PROBE_EXE;
+    if (!exe_path) return 0;
+    base = exe_path;
+    for (p = exe_path; *p; p++)
+        if (*p == '\\' || *p == '/') base = p + 1;
+    for (p = base; *p && *want; p++, want++) {
+        char a = *p, b = *want;
+        if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+        if (a != b) return 0;
+    }
+    return *p == '\0' && *want == '\0';
+}
+
+/* Should THIS process run a wake now? The helper asks for one by writing a
+ * new number to C:\wt_wake.txt; `marker` is what the file holds now and `last`
+ * (capacity `cap`) is what this process saw before, updated here.
+ *   - never in the probe (see above): this is the line the bug lacked;
+ *   - not for the value already there when we started, which is an old
+ *     request from a previous session, not a new one;
+ *   - otherwise exactly once per change of the file. */
+static int wtc_wake_requested(const char *marker, char *last, size_t cap, int host_is_probe) {
+    int first;
+    if (host_is_probe) return 0;
+    if (!marker || !last || cap == 0) return 0;
+    if (strcmp(marker, last) == 0) return 0;
+    first = (last[0] == '\0');
+    snprintf(last, cap, "%s", marker);
+    return !first;
+}
+
+/* PEN PORT RETRY. The producer binds 127.0.0.1:47800 to receive the helper's
+ * samples. Until 2026-11-11 it tried once, at load: if anything else held the
+ * port (a leftover probe did), SAI stayed in "file mode only" for the whole
+ * session. File mode reads one file that holds only the newest sample, so
+ * whatever the pen did while the producer was busy elsewhere (a wake keeps it
+ * busy for a quarter to most of a second) is overwritten before it is read.
+ * The UDP socket queues those samples instead.
+ *
+ * So the producer keeps trying, once per `interval_ms`, and takes the live
+ * stream back as soon as the port is free. GetTickCount() is 32 bits and
+ * wraps after 49.7 days; the 32-bit unsigned subtraction is what keeps the
+ * retry going across the wrap. Do not widen these to unsigned long (64 bits
+ * on the Mac, so the tests would stop seeing the wrap) or rewrite the test as
+ * `now >= last_try + interval`. */
+#define WTC_PORT_RETRY_MS 1000
+
+static int wtc_should_retry_bind(int have_socket, uint32_t now,
+                                 uint32_t last_try, uint32_t interval_ms) {
+    if (have_socket) return 0;
+    return (uint32_t)(now - last_try) >= interval_ms;
+}
+
 #endif /* WINTAB_CORE_H */
