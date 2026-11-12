@@ -207,6 +207,20 @@ A change takes effect the next time SAI starts.
 
 <p align="center"><a href="docs/assets/screenshots/sai-japanese.png"><img src="docs/assets/screenshots/sai-japanese.png" alt="SAI with its menus and panels in Japanese, every character readable." width="80%"></a></p>
 
+#### Your own fonts
+
+Fonts you installed with Font Book show up under **Your fonts** in the same menu. SAI's menus and
+panels then use that font for Chinese, Japanese and Korean, and the path is shown with *Copy path*.
+Use fonts whose licence lets you use them; the app never copies them.
+
+<p align="center"><a href="docs/assets/screenshots/font-menu.png"><img src="docs/assets/screenshots/font-menu.png" alt="The Language menu in Advanced: English, 日本語, then Your fonts with installed Japanese fonts, Add a font and Off." width="55%"></a></p>
+
+<p align="center">
+  <a href="docs/assets/screenshots/sai-font-mitsu.png"><img src="docs/assets/screenshots/sai-font-mitsu.png" alt="SAI's Japanese menus drawn in the handwritten MitsuFont." width="49%"></a>
+  <a href="docs/assets/screenshots/sai-font-shigoto.png"><img src="docs/assets/screenshots/sai-font-shigoto.png" alt="SAI's Japanese menus drawn in ShigotoMemogaki." width="49%"></a><br>
+  <sub>MitsuFont (left) and ShigotoMemogaki (right)</sub>
+</p>
+
 → **[Full install guide](https://ametrien.github.io/Paint-Tool-SAI-pen-pressure-macOS-fix/install)**, including the manual command-line route
 → **[Troubleshooting](https://ametrien.github.io/Paint-Tool-SAI-pen-pressure-macOS-fix/troubleshooting)**, organised by how to tell which problem you have
 → **[How it works](https://ametrien.github.io/Paint-Tool-SAI-pen-pressure-macOS-fix/how-it-works)**, if you want the architecture
