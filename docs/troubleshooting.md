@@ -176,6 +176,17 @@ The buttons above the layer list and the layer's pencil icon stay small at 200%.
 fixed-size pictures inside SAI, the same with sharp text on or off, and only SYSTEMAX can change
 them ([issue #45](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/45)).
 
+## Chinese, Japanese or Korean text shows as boxes
+
+Update to 0.3.12 or later, then quit and reopen SAI. With **Advanced › Display › Language** on
+**English** or **日本語**, the app uses your Mac's fonts, in the order of your Mac's languages.
+The menus themselves only come in English and Japanese; Chinese and Korean menus would need a
+changed `sai2.exe`, which only SYSTEMAX can make. SAI's **Text tool** is a separate case: its own
+font engine does not support the Mac's Chinese, Japanese and Korean fonts yet.
+
+If one character stays blank with a font of your own, that font has an empty drawing for it:
+pick **English** or **日本語** again to use the Mac's fonts.
+
 ## Alt does nothing — the eyedropper won't come up
 
 Up to 0.3.5 no Mac key sent Alt to SAI: ⌘ was mapped to Ctrl for the shortcuts, and that was the

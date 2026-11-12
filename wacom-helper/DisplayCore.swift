@@ -170,25 +170,19 @@ enum DisplayCore {
 
 // MARK: - SAI's UI language
 
-/// The codes sai2.exe knows ([Locale] lang). Found in the executable itself;
-/// whether each one has a full translation in a given SAI build is SAI's
-/// business, not ours.
+/// The menu languages SAI has ([Locale] lang). sai2.exe (2026-07-27) holds
+/// English and Japanese menu text and nothing else: no Chinese, Korean,
+/// Russian, German or French words at all. An earlier list of 11 codes came
+/// from guessing, and Russian and Chinese did nothing in testing. Other
+/// languages would need a changed sai2.exe, which is SYSTEMAX's software and
+/// out of bounds for this app.
 enum SAILanguage: String, CaseIterable {
-    case en, ja, zh, tw, ko, de, fr, es, it, pt, ru
+    case en, ja
 
     var label: String {
         switch self {
         case .en: return "English"
         case .ja: return "日本語"
-        case .zh: return "简体中文"
-        case .tw: return "繁體中文"
-        case .ko: return "한국어"
-        case .de: return "Deutsch"
-        case .fr: return "Français"
-        case .es: return "Español"
-        case .it: return "Italiano"
-        case .pt: return "Português"
-        case .ru: return "Русский"
         }
     }
 }
@@ -219,6 +213,8 @@ enum SAILanguageChoice {
     /// the file alone. `original` is the remembered "before" value.
     static func iniTarget(stored: String?, original: String?) -> String? {
         guard let s = stored, !s.isEmpty else { return nil }        // never changed
+        // A code SAI does not have (left by an older test build): hands off.
+        guard s == defaultChoice || SAILanguage(rawValue: s) != nil else { return nil }
         if s == defaultChoice {
             guard let o = original, o != noValue, !o.isEmpty else { return nil }
             return o
