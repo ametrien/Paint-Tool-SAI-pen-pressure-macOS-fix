@@ -9,7 +9,7 @@ Run **PaintTool SAI Ver.2** on a Mac with **real pen pressure**, and record a **
 canvas** while you draw. Free and open source.
 
 - **[Get started](#get-started):** download, drag to Applications, follow the setup window.
-- **[What you get](#what-you-get):** pressure and pen feel, Mac shortcuts, sharp text on Retina screens, timelapse.
+- **[What you get](#what-you-get):** pressure and pen feel, Mac shortcuts, sharp text on Retina screens, Chinese, Japanese and Korean text, timelapse.
 - **[What it does not do](#what-it-does-not-do):** SAI and its licence are not included, pressure only, and the limits that belong to SAI or Wine.
 - **[Something not working?](#something-not-working):** troubleshooting, and one button that collects a problem report.
 
@@ -96,6 +96,8 @@ It does not edit videos beyond choosing their length.
 - **Install updates automatically**, never while SAI is open.
 - **Display › Sharp text on Retina screens:** SAI at your screen's full resolution
   ([details](#sharp-text-on-retina-screens-without-lag)).
+- **Display › Language:** SAI's menus in English or 日本語, and the font for Chinese, Japanese and
+  Korean text, so it shows instead of boxes ([details](#chinese-japanese-and-korean-text)).
 - **Wine:** the Wine in use, whether it has the fix for the Retina drawing lag, and buttons to add
   the patch or update Wine.
 - **Developer mode** adds the logs, a health check, a diagnostics dump and shortcuts to SAI's
@@ -119,6 +121,7 @@ It does not edit videos beyond choosing their length.
 - **Pinch to zoom** and **two-finger scroll to pan** on the trackpad
 - **⌃⌥⌘Space** brings back a SAI window that has gone missing, and it can do that automatically when you switch back to SAI
 - **Sharp, full-resolution SAI on Retina screens**, without the drawing lag, with a Wine that has the fix (Setup installs one)
+- **Chinese, Japanese and Korean text instead of boxes**, with the fonts already on your Mac, and **SAI's menus in Japanese** if you like
 
 **[Canvas timelapse](#credit)** *(v0.2.0+)*
 
@@ -186,6 +189,23 @@ Some small panel icons stay small at 200%. That is SAI's own icon art
 ([#45](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/45)).
 Why the fix is needed: [issue #39](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/39) and
 [RETINA-LAG-FINDINGS.md](RETINA-LAG-FINDINGS.md).
+
+### Chinese, Japanese and Korean text
+
+SAI asks for Windows fonts that a Mac does not have, so without help these characters show as boxes.
+**Advanced › Display › Language** fixes that with the fonts that come with your Mac:
+
+- **English** or **日本語** for SAI's menus. SAI's menus only come in these two languages.
+- **简体中文, 繁體中文, 한국어:** the menus stay in English, and text such as layer names, file names and
+  dialogs uses PingFang SC, PingFang TC or Apple SD Gothic Neo.
+- **Your own fonts** installed with Font Book are in the list too. *Add a font…* takes one you downloaded:
+  it opens in Font Book to install. The path of the font in use is shown, with *Copy path*.
+
+The app never copies, bundles or downloads a font; it only points Wine at the fonts on your Mac.
+SAI's Text tool is not affected: it uses its own font engine, which does not support these fonts yet.
+A change takes effect the next time SAI starts.
+
+<p align="center"><a href="docs/assets/screenshots/sai-japanese.png"><img src="docs/assets/screenshots/sai-japanese.png" alt="SAI with its menus and panels in Japanese, every character readable." width="80%"></a></p>
 
 → **[Full install guide](https://ametrien.github.io/Paint-Tool-SAI-pen-pressure-macOS-fix/install)**, including the manual command-line route
 → **[Troubleshooting](https://ametrien.github.io/Paint-Tool-SAI-pen-pressure-macOS-fix/troubleshooting)**, organised by how to tell which problem you have

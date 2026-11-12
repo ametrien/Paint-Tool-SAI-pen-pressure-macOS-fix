@@ -94,6 +94,12 @@ or reinstall — and the *SAI license* row will say so.
    panels land where they should. If you turn sharp text off again, go back to 100% and restart
    SAI once more.
 
+### Chinese, Japanese or Korean
+
+**Advanced › Display › Language**: **日本語** switches SAI's menus to Japanese. **简体中文**,
+**繁體中文** and **한국어** keep English menus and pick the font for text such as layer names.
+Then quit and reopen SAI.
+
 ## 8. Pen feel, if you want it
 
 The **Pen** tab has presets (*Light hand*, *Inking*, *Painting*, *Heavy hand*) and sliders to

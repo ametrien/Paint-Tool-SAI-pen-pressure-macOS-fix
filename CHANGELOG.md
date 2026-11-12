@@ -3,7 +3,7 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.3.12] — 2026-11-12
 
 ### Added
 - **Chinese, Japanese and Korean text in SAI instead of boxes** (#39). SAI asks for Windows fonts
