@@ -139,10 +139,10 @@ only its maker can change them.
 
 SAI asks for Windows fonts that a Mac does not have, so these characters used to show as boxes.
 **Advanced › Display › Language** points Wine at the fonts that come with your Mac instead:
-**English** or **日本語** for SAI's menus (the only two languages SAI's menus come in), and
-**简体中文**, **繁體中文** or **한국어** for the font used in layer names, file names and dialogs,
-with English menus. Fonts you installed with Font Book can be chosen too, and the path of the font
-in use is shown. Nothing is copied or downloaded. SAI's Text tool is not affected: it uses its own
+**English** or **日本語** for SAI's menus (the only two languages SAI's menus come in). With
+either, Chinese, Japanese and Korean text in layer names, file names and dialogs shows, in the
+order of your Mac's languages. Fonts you installed with Font Book can be chosen too, and the path
+of the font in use is shown. Nothing is copied or downloaded. SAI's Text tool is not affected: it uses its own
 font engine, which does not support these fonts yet.
 
 ![SAI with its menus in Japanese](assets/screenshots/sai-japanese.png)

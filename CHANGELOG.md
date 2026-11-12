@@ -13,12 +13,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
   Mac's preferred languages. It only points Wine at them where they are: no font is copied,
   bundled or downloaded. Latin and Cyrillic text look exactly as before. SAI's Text tool is not
   affected: it uses its own font engine, which does not support these fonts yet.
-- **Language menu** in Advanced › Display: English, 日本語, 简体中文, 繁體中文 and 한국어. 日本語
-  also switches SAI's menus to Japanese, which now shows instead of boxes. SAI's menus only exist
-  in English and Japanese, so Chinese and Korean keep English menus and choose the font for text
-  such as layer names. Fonts you installed with Font Book are listed too, *Add a font…* takes a
-  downloaded one (it opens in Font Book to install, nothing is copied), and the path of the font in
-  use is shown with *Copy path*. *Off* gives Wine's own lists back exactly.
+- **Language menu** in Advanced › Display: English or 日本語, the two languages SAI's menus come
+  in. Japanese menus now show instead of boxes. Chinese, Japanese and Korean text shows with
+  either. Fonts you installed with Font Book are listed too, *Add a font…* takes a downloaded one
+  (it opens in Font Book to install, nothing is copied), and the path of the font in use is shown
+  with *Copy path*. *Off* gives Wine's own lists back exactly.
 
 ## [0.3.11] — 2026-11-11
 

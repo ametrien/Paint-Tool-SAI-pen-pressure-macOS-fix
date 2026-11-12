@@ -246,25 +246,41 @@ struct FontLinkTests {
 
         // --- the Language dropdown ----------------------------------------------
         let opts = FL.languageOptions
-        expect(opts.map(\.title) == ["English", "日本語", "简体中文", "繁體中文", "한국어"],
-               "language: English, Japanese, Simplified and Traditional Chinese, Korean, in that order")
-        expect(opts.map(\.font) == [nil, FL.hiraginoSans, FL.pingFangSC, FL.pingFangTC, FL.appleSDGothic],
-               "language: each line's font (English is Automatic)")
+        // THE TRAP (FontLinkCore, LanguageOption): only the languages SAI has. A
+        // 简体中文 or 한국어 line read as if SAI could switch to Chinese or Korean.
+        expect(opts.map(\.title) == ["English", "日本語"],
+               "language: only English and 日本語, the two languages SAI has")
+        expect(opts.map(\.saiLanguage) == ["en", "ja"],
+               "language: every line is a different SAI menu language, none is only a font")
+        expect(opts.map(\.font) == [nil, FL.hiraginoSans],
+               "language: English is Automatic, 日本語 puts Hiragino first")
         // SAI has English and Japanese menus only: no line may ask sai2.ini for another.
         expect(opts.allSatisfy { ["en", "ja"].contains($0.saiLanguage) } && opts.filter { $0.saiLanguage == "ja" }.count == 1,
                "language: only en and ja go into sai2.ini, Japanese on one line")
         expect(!opts.contains { $0.title.contains("\u{2014}") }, "language: no em dash in the menu")
         expect(FL.choice(for: opts[0], path: "/x") == .automatic, "language: English means Automatic fonts")
-        expect(FL.choice(for: opts[2], path: "/p/PingFang.ttc") == .font(FL.pingFangSC, path: "/p/PingFang.ttc"),
-               "language: 简体中文 puts PingFang SC first")
+        expect(FL.choice(for: opts[1], path: "/p/W3.ttc") == .font(FL.hiraginoSans, path: "/p/W3.ttc"),
+               "language: 日本語 puts Hiragino first")
+        // English still covers every script: Automatic has all four Mac fonts and Yahei.
+        let autoAll = FL.fonts(for: FL.choice(for: opts[0], path: nil), preferredLanguages: ["en-GB", "ru"])
+        expect(Set(autoAll.map(\.entry)) == Set([FL.hiraginoSans, FL.pingFangSC, FL.pingFangTC, FL.appleSDGothic, FL.wineYahei].map(\.entry)),
+               "language: English still gets Chinese, Japanese and Korean fonts")
+        // The test build stored PingFang SC for its 简体中文 line: now Automatic,
+        // so Wine gets what the menu shows (English). Own fonts and Hiragino stay.
+        expect(FL.effective(.font(FL.pingFangSC, path: "/p")) == .automatic, "effective: old 简体中文 choice is Automatic")
+        expect(FL.effective(.font(FL.pingFangTC, path: "/p")) == .automatic, "effective: old 繁體中文 choice is Automatic")
+        expect(FL.effective(.font(FL.appleSDGothic, path: "/p")) == .automatic, "effective: old 한국어 choice is Automatic")
+        expect(FL.effective(.font(FL.hiraginoSans, path: "/p")) == .font(FL.hiraginoSans, path: "/p"), "effective: 日本語's Hiragino stays")
+        expect(FL.effective(.font(foo, path: "/f")) == .font(foo, path: "/f"), "effective: a font of the person's own stays")
+        expect(FL.effective(.off) == .off && FL.effective(.automatic) == .automatic, "effective: Off and Automatic stay")
         typealias Sel = FL.Selection
         expect(FL.selection(saiLanguage: nil, font: .automatic) == .language(0), "shown: nothing stored is English")
         expect(FL.selection(saiLanguage: "en", font: .automatic) == .language(0), "shown: en + Automatic is English")
         expect(FL.selection(saiLanguage: "ja", font: .font(FL.hiraginoSans, path: "")) == .language(1), "shown: ja is 日本語")
         expect(FL.selection(saiLanguage: "ja", font: .automatic) == .language(1),
                "shown: Japanese menus show 日本語 whatever the font (SAI set to ja by hand)")
-        expect(FL.selection(saiLanguage: "en", font: .font(FL.pingFangTC, path: "")) == .language(3), "shown: en + PingFang TC is 繁體中文")
-        expect(FL.selection(saiLanguage: "en", font: .font(FL.appleSDGothic, path: "")) == .language(4), "shown: en + Apple SD Gothic Neo is 한국어")
+        expect(FL.selection(saiLanguage: "en", font: FL.effective(.font(FL.pingFangTC, path: ""))) == .language(0),
+               "shown: the old 繁體中文 choice shows as English")
         expect(FL.selection(saiLanguage: "en", font: .font(FL.hiraginoSans, path: "")) == .language(0),
                "shown: Hiragino with English menus has no line of its own, shown as English")
         expect(FL.selection(saiLanguage: "ja", font: .font(foo, path: "/f")) == .font(foo), "shown: a font of the person's own shows itself")
