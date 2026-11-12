@@ -1,5 +1,6 @@
 // DisplayUI.swift — the Display part of Advanced: sharp text on Retina
-// screens (issue #39). Also SAI's UI language, which is built but HIDDEN.
+// screens (issue #39), and Chinese, Japanese and Korean text with the Mac's own
+// fonts (FontLinkCore.swift). Also SAI's UI language, which is built but HIDDEN.
 //
 // The language menu is switched off on purpose, not unfinished: in testing,
 // Russian and Chinese did nothing in SAI Alpha 2026.07.27, and Japanese
@@ -31,6 +32,8 @@ func retinaPrevDPIFile() -> String { appSupport() + "/retina-prev-dpi.txt" }
 func saiLanguageFile() -> String { appSupport() + "/sai-lang.txt" }
 /// sai2.ini's lang from before this app first changed it, for Default.
 func saiLanguageOriginalFile() -> String { appSupport() + "/sai-lang-original.txt" }
+/// "on" or "off" for Chinese, Japanese and Korean text. Missing means on.
+func cjkFontsSettingFile() -> String { appSupport() + "/cjk-fonts.txt" }
 /// Present when Wine has to start fresh before the next SAI, because RetinaMode
 /// changed. One-shot: removed once that has happened.
 func wineRestartPendingFile() -> String { appSupport() + "/wine-restart-pending.txt" }
@@ -54,6 +57,15 @@ func storedRetinaSetting() -> Bool? {
 
 /// The raw stored choice: nil, "default", or a code.
 func storedSAILanguageChoice() -> String? { readTrimmed(saiLanguageFile()) }
+
+/// nil = never switched here (FontLinkCore.wanted makes that on).
+func storedCJKFontsSetting() -> Bool? {
+    switch readTrimmed(cjkFontsSettingFile()) {
+    case "on": return true
+    case "off": return false
+    default: return nil
+    }
+}
 
 func prefixUserReg() -> String { (try? String(contentsOfFile: "\(appPrefix)/user.reg", encoding: .utf8)) ?? "" }
 func prefixSystemReg() -> String { (try? String(contentsOfFile: "\(appPrefix)/system.reg", encoding: .utf8)) ?? "" }
@@ -101,6 +113,26 @@ func applyRetinaToWine(_ wine: String) {
     }
 }
 
+/// Put the Mac's own fonts at the front of Wine's fallback lists for the fonts
+/// SAI asks for, or take them out again (FontLinkCore.swift). Registry only:
+/// no font file is copied, bundled or downloaded, ever.
+///
+/// SAI reads the lists when it starts, so a change reaches an open SAI only
+/// after a restart. Writing while SAI runs is harmless. `force` is for a click:
+/// system.reg can lag a few seconds behind Wine, so after a click every list is
+/// written, not only the ones the file shows as different (see
+/// FontLinkCore.changes). At launch only real differences are written, so a
+/// normal launch starts no reg.exe.
+func applyCJKFontsToWine(_ wine: String, force: Bool = false) {
+    guard !wine.isEmpty else { return }
+    let changes = FontLinkCore.changes(current: FontLinkCore.systemLinks(systemReg: prefixSystemReg()),
+                                       on: FontLinkCore.wanted(stored: storedCJKFontsSetting()),
+                                       fonts: FontLinkCore.order(preferredLanguages: Locale.preferredLanguages),
+                                       force: force)
+    let env = ["WINEPREFIX": appPrefix, "WINEDEBUG": "-all"]
+    for c in changes { runProc(wine, FontLinkCore.regCommand(c), env: env) }
+}
+
 /// Put the chosen language into sai2.ini. Only while SAI is closed: SAI reads
 /// the file at start, and writing under a running SAI changes nothing.
 func applySAILanguage() {
@@ -146,6 +178,9 @@ func prepareDisplaySettingsForLaunch(_ wine: String) {
         try? FileManager.default.removeItem(atPath: wineRestartPendingFile())
     }
     applyRetinaToWine(wine)
+    // Every launch: puts our fonts back if Wine rewrote a list, follows a new
+    // language order on the Mac, and writes nothing when all is as it should be.
+    applyCJKFontsToWine(wine)
     // Hidden with the language menu (see the top of this file). Off here too,
     // so a choice left over from a test build cannot change SAI's language.
     // applySAILanguage()
@@ -227,6 +262,17 @@ extension SetupController {
             }
         }
 
+        cjkCheck = NSButton(checkboxWithTitle: "Chinese, Japanese and Korean text",
+                            target: self, action: #selector(cjkToggled))
+        box.addArrangedSubview(cjkCheck)
+        let cjkHint = lbl("Shows these characters in SAI with your Mac's own fonts instead of boxes. "
+                          + "Nothing is copied. SAI's Text tool is not affected.",
+                          10, color: .tertiaryLabelColor)
+        cjkHint.preferredMaxLayoutWidth = rowWidth
+        cjkHint.lineBreakMode = .byWordWrapping
+        cjkHint.usesSingleLineMode = false
+        box.addArrangedSubview(cjkHint)
+
         // Language menu, hidden (see the top of this file).
         // let langRow = NSStackView()
         // langRow.orientation = .horizontal
@@ -264,6 +310,7 @@ extension SetupController {
         guard retinaCheck != nil else { return }
         retinaCheck.state = (DisplayCore.wanted(stored: storedRetinaSetting(), wineHasFix: wineHasRetinaFix())
                              ?? retinaModeInWine()) ? .on : .off
+        cjkCheck?.state = FontLinkCore.wanted(stored: storedCJKFontsSetting()) ? .on : .off
         if saiLangPopup != nil {      // nil while the language menu is hidden
             let choice = storedSAILanguageChoice() ?? SAILanguageChoice.defaultChoice
             let i = saiLangPopup.indexOfItem(withRepresentedObject: choice)
@@ -299,6 +346,16 @@ extension SetupController {
             // other way gets it too. Launch writes it again either way.
             let wine = g_wine.isEmpty ? (wineBin() ?? "") : g_wine
             DispatchQueue.global(qos: .userInitiated).async { applyRetinaToWine(wine) }
+        }
+    }
+
+    @objc func cjkToggled() {
+        let on = cjkCheck.state == .on
+        confirmDisplayChange(revert: { [weak self] in self?.refreshDisplaySection() }) {
+            try? (on ? "on" : "off").write(toFile: cjkFontsSettingFile(), atomically: true, encoding: .utf8)
+            // Into Wine straight away, like the Retina switch; launch checks again.
+            let wine = g_wine.isEmpty ? (wineBin() ?? "") : g_wine
+            DispatchQueue.global(qos: .userInitiated).async { applyCJKFontsToWine(wine, force: true) }
         }
     }
 

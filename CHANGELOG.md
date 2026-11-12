@@ -3,6 +3,18 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Chinese, Japanese and Korean text in SAI instead of boxes** (Advanced › Display, on by
+  default, #39). SAI asks for Windows fonts that a Mac does not have, and Wine's fallback list for
+  them only names Windows font files, so these characters came out as boxes. The app now puts the
+  fonts that come with your Mac (Hiragino Sans, PingFang, Apple SD Gothic Neo) at the front of
+  that list, in the order of your Mac's preferred languages. It only points Wine at them where they
+  are: no font is copied, bundled or downloaded. Latin and Cyrillic text look exactly as before.
+  SAI's Text tool is not affected: it uses its own font engine, which does not support these fonts
+  yet. Turning the switch off gives Wine's own lists back exactly.
+
 ## [0.3.11] — 2026-11-11
 
 ### Fixed

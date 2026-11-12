@@ -31,6 +31,7 @@ wacom-helper/KeysCore.swift
 wacom-helper/KeysUI.swift
 wacom-helper/DisplayCore.swift
 wacom-helper/DisplayUI.swift
+wacom-helper/FontLinkCore.swift
 wacom-helper/WinePatchCore.swift
 wacom-helper/WinePatch.swift
 wacom-helper/WineStatusCore.swift
