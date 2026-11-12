@@ -1534,6 +1534,8 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     var retinaCheck: NSButton!
     var displayHint: NSTextField!
     var saiLangPopup: NSPopUpButton!
+    /// Chinese, Japanese and Korean text with the Mac's own fonts (FontLinkCore).
+    var cjkCheck: NSButton!
     var displayRestartNote: NSTextField!
     /// Like keysNeedSAIRestart, for the Display settings.
     var displayNeedsSAIRestart = false

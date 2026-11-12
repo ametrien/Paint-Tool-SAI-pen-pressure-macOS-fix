@@ -86,6 +86,14 @@ swiftc -o "$WORK/display-tests" "$REPO/wacom-helper/DisplayCore.swift" "$REPO/te
 "$WORK/display-tests"
 
 echo ""
+echo "== Swift core (FontLinkCore.swift) =="
+# Chinese, Japanese and Korean text with the Mac's own fonts (#39). Off must give
+# Wine's lists back exactly, and every entry must name a family Wine matches in
+# the real font file ("Hiragino Sans W3", not "Hiragino Sans").
+swiftc -o "$WORK/fontlink-tests" "$REPO/wacom-helper/FontLinkCore.swift" "$REPO/tests/FontLinkTests.swift"
+"$WORK/fontlink-tests"
+
+echo ""
 echo "== Swift core (WinePatchCore.swift) =="
 # Swapping Wine's Mac driver (issue #39). The backup must only ever hold the
 # original, and no Wine but the exact known build may be touched.
