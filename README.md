@@ -24,7 +24,7 @@ canvas** while you draw. Free and open source.
 Six tabs, one window.
 
 <p align="center">
-  <a href="docs/assets/screenshots/all-tabs.png"><img src="docs/assets/screenshots/all-tabs.png" alt="All six tabs side by side. Top row: Setup, with Launch and Wake SAI; Pen, with pressure levels, pen feel presets, the curve and two more feel sliders, and a live test; Keys, with what each Option and Command key sends. Bottom row: Recording, with the timelapse switch and save folder; Videos, one video per drawing; Advanced, with developer mode, automatic updates, sharp text on Retina screens and the Wine in use." width="100%"></a>
+  <a href="docs/assets/screenshots/all-tabs.png"><img src="docs/assets/screenshots/all-tabs.png" alt="All six tabs side by side. Top row: Setup, with Launch and Wake SAI; Pen, with pressure levels, pen feel presets, the curve and two more feel sliders, and a live test; Keys, with what each Option and Command key sends. Bottom row: Recording, with the timelapse switch and save folder; Videos, one video per drawing; Advanced, with developer mode, automatic updates, sharp text on Retina screens, the Language menu with the font in use, and the Wine in use." width="100%"></a>
 </p>
 <p align="center"><sub>Full size:
   <a href="docs/assets/screenshots/setup.png">Setup</a> ·
