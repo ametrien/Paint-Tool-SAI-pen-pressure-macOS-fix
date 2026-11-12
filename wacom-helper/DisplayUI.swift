@@ -1,14 +1,12 @@
 // DisplayUI.swift — the Display part of Advanced: sharp text on Retina
-// screens (issue #39), and Chinese, Japanese and Korean text with the Mac's own
-// fonts (FontLinkCore.swift). Also SAI's UI language, which is built but HIDDEN.
+// screens (issue #39), and the Language dropdown: SAI's menu language
+// (sai2.ini, English or Japanese, the only two SAI has) together with the font
+// for Chinese, Japanese and Korean text (FontLinkCore.swift).
 //
-// The language menu is switched off on purpose, not unfinished: in testing,
-// Russian and Chinese did nothing in SAI Alpha 2026.07.27, and Japanese
-// switched SAI over but drew every character as a box (no font Wine could
-// give it; mapping Meiryo UI / MS UI Gothic to Hiragino did not help). The
-// code is kept, and still unit-tested, for when that is solved. To bring it
-// back: uncomment the langRow block in buildDisplaySection() and the
-// applySAILanguage() call in prepareDisplaySettingsForLaunch().
+// History: a language menu was built earlier and hidden, because Japanese drew
+// every character as a box and other codes did nothing. The boxes were Wine's
+// fallback lists naming only Windows fonts (FontLinkCore.swift); "other codes"
+// do not exist in sai2.exe (DisplayCore.swift, SAILanguage).
 //
 // What the values mean and why off restores the old DPI is in DisplayCore.swift.
 // This file is the settings files, getting them into Wine and sai2.ini, and the
@@ -20,6 +18,8 @@
 // behaves exactly as if it were closed by hand. It is never killed.
 
 import AppKit
+import CoreText
+import UniformTypeIdentifiers
 
 // MARK: - settings files (Application Support, like every other setting)
 
@@ -32,8 +32,12 @@ func retinaPrevDPIFile() -> String { appSupport() + "/retina-prev-dpi.txt" }
 func saiLanguageFile() -> String { appSupport() + "/sai-lang.txt" }
 /// sai2.ini's lang from before this app first changed it, for Default.
 func saiLanguageOriginalFile() -> String { appSupport() + "/sai-lang-original.txt" }
-/// "on" or "off" for Chinese, Japanese and Korean text. Missing means on.
+/// The font choice for Chinese, Japanese and Korean text, one line
+/// (FontLinkCore.Choice.stored). Missing means Automatic.
 func cjkFontsSettingFile() -> String { appSupport() + "/cjk-fonts.txt" }
+/// Every font of the person's own ever put into Wine's lists, one entry per
+/// line, so Off and later choices can take them out (FontLinkCore.remembering).
+func cjkFontsChosenFile() -> String { appSupport() + "/cjk-fonts-chosen.txt" }
 /// Present when Wine has to start fresh before the next SAI, because RetinaMode
 /// changed. One-shot: removed once that has happened.
 func wineRestartPendingFile() -> String { appSupport() + "/wine-restart-pending.txt" }
@@ -58,13 +62,55 @@ func storedRetinaSetting() -> Bool? {
 /// The raw stored choice: nil, "default", or a code.
 func storedSAILanguageChoice() -> String? { readTrimmed(saiLanguageFile()) }
 
-/// nil = never switched here (FontLinkCore.wanted makes that on).
-func storedCJKFontsSetting() -> Bool? {
-    switch readTrimmed(cjkFontsSettingFile()) {
-    case "on": return true
-    case "off": return false
-    default: return nil
+func storedCJKChoice() -> FontLinkCore.Choice { FontLinkCore.Choice(stored: readTrimmed(cjkFontsSettingFile())) }
+
+func rememberedCJKEntries() -> [String] {
+    (readTrimmed(cjkFontsChosenFile()) ?? "").components(separatedBy: "\n").filter { !$0.isEmpty }
+}
+
+/// Wine's own fonts folder, next to the wine binary (bin/wine -> share/wine/fonts).
+func wineFontsDir() -> String? {
+    let w = g_wine.isEmpty ? (wineBin() ?? "") : g_wine
+    guard !w.isEmpty else { return nil }
+    return URL(fileURLWithPath: w).deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("share/wine/fonts").path
+}
+
+func fontSearchDirs() -> [String] {
+    FontLinkCore.fontDirs(home: NSHomeDirectory(), wineFontsDir: wineFontsDir()) {
+        (try? FileManager.default.contentsOfDirectory(atPath: $0)) ?? []
     }
+}
+
+/// Where a font is on this Mac, for showing and Copy path. Only looked up,
+/// never opened here.
+func pathOfFont(_ f: FontLinkCore.LinkFont, in dirs: [String]) -> String? {
+    dirs.map { $0 + "/" + f.file }.first { FileManager.default.fileExists(atPath: $0) }
+}
+
+/// The person's own installed fonts that have Chinese, Japanese or Korean, each
+/// under the family name Wine matches (read from the file, FontLinkCore
+/// THE TRAP 1). A font Wine's own lists already name is left out (canOffer).
+func installedCJKFonts(wineEntries: [String]) -> [(font: FontLinkCore.LinkFont, path: String)] {
+    var out: [(font: FontLinkCore.LinkFont, path: String)] = []
+    for dir in FontLinkCore.installedFontDirs(home: NSHomeDirectory()) {
+        let names = ((try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []).sorted()
+        for name in names where FontLinkCore.fontFileExtensions.contains((name as NSString).pathExtension.lowercased()) {
+            let url = URL(fileURLWithPath: dir + "/" + name)
+            let descs = (CTFontManagerCreateFontDescriptorsFromURL(url as CFURL) as? [CTFontDescriptor]) ?? []
+            let langs = descs.flatMap { (CTFontDescriptorCopyAttribute($0, kCTFontLanguagesAttribute) as? [String]) ?? [] }
+            guard langs.contains(where: { $0.hasPrefix("ja") || $0.hasPrefix("zh") || $0.hasPrefix("ko") }),
+                  !name.contains(","), !name.contains("\\"),
+                  let data = try? Data(contentsOf: url, options: .alwaysMapped) else { continue }
+            for family in FontLinkCore.gdiFamilies(fontData: data) {
+                let f = FontLinkCore.LinkFont(file: name, family: family)
+                if FontLinkCore.canOffer(f, wineEntries: wineEntries), !out.contains(where: { $0.font == f }) {
+                    out.append((f, url.path))
+                }
+            }
+        }
+    }
+    return out
 }
 
 func prefixUserReg() -> String { (try? String(contentsOfFile: "\(appPrefix)/user.reg", encoding: .utf8)) ?? "" }
@@ -125,9 +171,11 @@ func applyRetinaToWine(_ wine: String) {
 /// normal launch starts no reg.exe.
 func applyCJKFontsToWine(_ wine: String, force: Bool = false) {
     guard !wine.isEmpty else { return }
+    let choice = storedCJKChoice()
     let changes = FontLinkCore.changes(current: FontLinkCore.systemLinks(systemReg: prefixSystemReg()),
-                                       on: FontLinkCore.wanted(stored: storedCJKFontsSetting()),
-                                       fonts: FontLinkCore.order(preferredLanguages: Locale.preferredLanguages),
+                                       on: choice != .off,
+                                       fonts: FontLinkCore.fonts(for: choice, preferredLanguages: Locale.preferredLanguages),
+                                       remembered: rememberedCJKEntries(),
                                        force: force)
     let env = ["WINEPREFIX": appPrefix, "WINEDEBUG": "-all"]
     for c in changes { runProc(wine, FontLinkCore.regCommand(c), env: env) }
@@ -181,9 +229,9 @@ func prepareDisplaySettingsForLaunch(_ wine: String) {
     // Every launch: puts our fonts back if Wine rewrote a list, follows a new
     // language order on the Mac, and writes nothing when all is as it should be.
     applyCJKFontsToWine(wine)
-    // Hidden with the language menu (see the top of this file). Off here too,
-    // so a choice left over from a test build cannot change SAI's language.
-    // applySAILanguage()
+    // The Language dropdown's menu language. Only en and ja are ever written
+    // (SAILanguageChoice.iniTarget ignores any other stored code).
+    applySAILanguage()
 }
 
 /// Set by Close and reopen: when SAI closes, reopen the app and start SAI again
@@ -262,36 +310,47 @@ extension SetupController {
             }
         }
 
-        cjkCheck = NSButton(checkboxWithTitle: "Chinese, Japanese and Korean text",
-                            target: self, action: #selector(cjkToggled))
-        box.addArrangedSubview(cjkCheck)
-        let cjkHint = lbl("Shows these characters in SAI with your Mac's own fonts instead of boxes. "
-                          + "Nothing is copied. SAI's Text tool is not affected.",
-                          10, color: .tertiaryLabelColor)
-        cjkHint.preferredMaxLayoutWidth = rowWidth
-        cjkHint.lineBreakMode = .byWordWrapping
-        cjkHint.usesSingleLineMode = false
-        box.addArrangedSubview(cjkHint)
+        // Language: SAI's menus (English or Japanese) and the font for Chinese,
+        // Japanese and Korean text, in one dropdown. Items are filled in by
+        // refreshLanguageMenu(), which also finds the person's own fonts.
+        let langRow = NSStackView()
+        langRow.orientation = .horizontal
+        langRow.alignment = .centerY
+        langRow.spacing = 8
+        langRow.addArrangedSubview(lbl("Language", 11))
+        langPopup = NSPopUpButton()
+        langPopup.controlSize = .small
+        langPopup.autoenablesItems = false        // a font missing on this Mac is greyed out
+        langPopup.target = self
+        langPopup.action = #selector(languagePicked)
+        langRow.addArrangedSubview(langPopup)
+        box.addArrangedSubview(langRow)
 
-        // Language menu, hidden (see the top of this file).
-        // let langRow = NSStackView()
-        // langRow.orientation = .horizontal
-        // langRow.alignment = .centerY
-        // langRow.spacing = 8
-        // langRow.addArrangedSubview(lbl("SAI language", 11))
-        // saiLangPopup = NSPopUpButton()
-        // saiLangPopup.controlSize = .small
-        // // Default first and selected on a fresh install: SAI's own setting.
-        // saiLangPopup.addItem(withTitle: "Default")
-        // saiLangPopup.lastItem?.representedObject = SAILanguageChoice.defaultChoice
-        // for l in SAILanguage.allCases {
-        //     saiLangPopup.addItem(withTitle: l.label)
-        //     saiLangPopup.lastItem?.representedObject = l.rawValue
-        // }
-        // saiLangPopup.target = self
-        // saiLangPopup.action = #selector(saiLanguageChanged)
-        // langRow.addArrangedSubview(saiLangPopup)
-        // box.addArrangedSubview(langRow)
+        let pathRow = NSStackView()
+        pathRow.orientation = .horizontal
+        pathRow.alignment = .centerY
+        pathRow.spacing = 6
+        fontPathLabel = lbl("", 10, color: .secondaryLabelColor)
+        fontPathLabel.isSelectable = true
+        fontPathLabel.lineBreakMode = .byTruncatingMiddle
+        fontPathLabel.widthAnchor.constraint(lessThanOrEqualToConstant: rowWidth - 90).isActive = true
+        fontPathLabel.toolTip = "The font file used for Chinese, Japanese and Korean text"
+        fontCopyButton = NSButton(title: "Copy path", target: self, action: #selector(copyFontPath))
+        fontCopyButton.controlSize = .small
+        fontCopyButton.bezelStyle = .rounded
+        pathRow.addArrangedSubview(fontPathLabel)
+        pathRow.addArrangedSubview(fontCopyButton)
+        box.addArrangedSubview(pathRow)
+
+        let langHint = lbl("SAI's menus come in English and Japanese. For Chinese and Korean the menus stay "
+                           + "in English and the font changes, so text like layer names shows instead of boxes. "
+                           + "Uses fonts on your Mac, nothing is copied. A font you downloaded: Add a font. "
+                           + "SAI's Text tool is not affected.",
+                           10, color: .tertiaryLabelColor)
+        langHint.preferredMaxLayoutWidth = rowWidth
+        langHint.lineBreakMode = .byWordWrapping
+        langHint.usesSingleLineMode = false
+        box.addArrangedSubview(langHint)
 
         displayRestartNote = lbl("", 11, bold: true, color: .systemOrange)
         displayRestartNote.preferredMaxLayoutWidth = rowWidth
@@ -310,14 +369,74 @@ extension SetupController {
         guard retinaCheck != nil else { return }
         retinaCheck.state = (DisplayCore.wanted(stored: storedRetinaSetting(), wineHasFix: wineHasRetinaFix())
                              ?? retinaModeInWine()) ? .on : .off
-        cjkCheck?.state = FontLinkCore.wanted(stored: storedCJKFontsSetting()) ? .on : .off
-        if saiLangPopup != nil {      // nil while the language menu is hidden
-            let choice = storedSAILanguageChoice() ?? SAILanguageChoice.defaultChoice
-            let i = saiLangPopup.indexOfItem(withRepresentedObject: choice)
-            saiLangPopup.selectItem(at: i >= 0 ? i : 0)
-            saiLangPopup.isEnabled = saiInstalledInPrefix()
-        }
+        refreshLanguageMenu()
         refreshDisplayRestartNote()
+    }
+
+    /// The menu language shown: the stored choice, else what sai2.ini says.
+    private func shownSAILanguage() -> String {
+        let s = storedSAILanguageChoice()
+        if let s = s, SAILanguage(rawValue: s) != nil { return s }
+        return saiLanguageInIni() ?? "en"
+    }
+
+    /// Rebuilt every time: a font installed with Font Book meanwhile shows up.
+    /// Each item's representedObject says what it does: "lang:N", a stored
+    /// font Choice, "add" or "off".
+    func refreshLanguageMenu() {
+        guard let popup = langPopup, let menu = popup.menu else { return }
+        let dirs = fontSearchDirs()
+        let choice = storedCJKChoice()
+        let remembered = rememberedCJKEntries()
+        let wineOwn = FontLinkCore.wineEntries(FontLinkCore.systemLinks(systemReg: prefixSystemReg()), remembered: remembered)
+        // NSMenu, not popup.addItem(withTitle:): that one drops an item with the
+        // same title as an earlier one, and two fonts can share a family name.
+        func add(_ title: String, _ key: String, enabled: Bool = true) {
+            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            item.representedObject = key
+            item.isEnabled = enabled
+            menu.addItem(item)
+        }
+        menu.removeAllItems()
+        for (i, o) in FontLinkCore.languageOptions.enumerated() {
+            add(o.title, "lang:\(i)", enabled: o.font.map { pathOfFont($0, in: dirs) != nil } ?? true)
+        }
+        var own = installedCJKFonts(wineEntries: wineOwn)
+        // A chosen font that is gone still shows, so the menu says what is set.
+        if case .font(let f, let path) = choice, !FontLinkCore.languageOptions.contains(where: { $0.font == f }),
+           !own.contains(where: { $0.font == f }) {
+            own.append((f, path))
+        }
+        if !own.isEmpty {
+            menu.addItem(.separator())
+            add("Your fonts", "", enabled: false)
+            for o in own {
+                let missing = !FileManager.default.fileExists(atPath: o.path)
+                add(o.font.family + (missing ? " (not found)" : ""),
+                    FontLinkCore.Choice.font(o.font, path: o.path).stored, enabled: !missing)
+            }
+        }
+        menu.addItem(.separator())
+        add("Add a font…", "add")
+        add("Off", "off")
+
+        let key: String
+        switch FontLinkCore.selection(saiLanguage: shownSAILanguage(), font: choice) {
+        case .language(let i): key = "lang:\(i)"
+        case .font: key = choice.stored
+        case .off: key = "off"
+        }
+        if let i = menu.items.firstIndex(where: { ($0.representedObject as? String) == key }) { popup.selectItem(at: i) }
+
+        // The file in front, for the path line: built-in fonts are looked up
+        // fresh (a macOS update can move PingFang), the person's own as chosen.
+        let front = FontLinkCore.fonts(for: choice, preferredLanguages: Locale.preferredLanguages).first
+        var path = ""
+        if case .font(let f, let p) = choice, !FontLinkCore.isOurs(f.entry) { path = p }
+        else if let f = front { path = pathOfFont(f, in: dirs) ?? "" }
+        fontPathLabel.stringValue = path
+        fontPathLabel.isHidden = path.isEmpty
+        fontCopyButton.isHidden = path.isEmpty
     }
 
     /// Shown only while it is true, and gone by itself once SAI has closed.
@@ -349,29 +468,94 @@ extension SetupController {
         }
     }
 
-    @objc func cjkToggled() {
-        let on = cjkCheck.state == .on
-        confirmDisplayChange(revert: { [weak self] in self?.refreshDisplaySection() }) {
-            try? (on ? "on" : "off").write(toFile: cjkFontsSettingFile(), atomically: true, encoding: .utf8)
-            // Into Wine straight away, like the Retina switch; launch checks again.
-            let wine = g_wine.isEmpty ? (wineBin() ?? "") : g_wine
-            DispatchQueue.global(qos: .userInitiated).async { applyCJKFontsToWine(wine, force: true) }
+    @objc func languagePicked() {
+        guard let key = langPopup.selectedItem?.representedObject as? String, !key.isEmpty else {
+            refreshLanguageMenu(); return
+        }
+        if key == "add" { addFontPicked(); return }
+        if key.hasPrefix("lang:"), let i = Int(key.dropFirst(5)), FontLinkCore.languageOptions.indices.contains(i) {
+            let o = FontLinkCore.languageOptions[i]
+            let path = o.font.flatMap { pathOfFont($0, in: fontSearchDirs()) }
+            applyLanguageChoice(saiLanguage: o.saiLanguage, font: FontLinkCore.choice(for: o, path: path))
+        } else {
+            // "off", or one of the person's own fonts: SAI's menus stay as they are.
+            applyLanguageChoice(saiLanguage: nil, font: FontLinkCore.Choice(stored: key))
         }
     }
 
-    @objc func saiLanguageChanged() {
-        guard let code = saiLangPopup.selectedItem?.representedObject as? String else { return }
-        // Same choice again, or Default when nothing was ever changed: no
-        // change, so no restart to ask about.
-        if code == (storedSAILanguageChoice() ?? SAILanguageChoice.defaultChoice) { return }
+    /// "Add a font…": a font file the person has. Wine only sees INSTALLED
+    /// fonts, and this app never copies one, so a file that is not installed
+    /// opens in Font Book for the person to install there.
+    private func addFontPicked() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.font]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.message = "Choose a font with Chinese, Japanese or Korean characters"
+        guard panel.runModal() == .OK, let url = panel.url else { refreshLanguageMenu(); return }
+        let folder = url.deletingLastPathComponent().path
+        let installed = (FontLinkCore.installedFontDirs(home: NSHomeDirectory()) + ["/System/Library/Fonts"]).contains(folder)
+        guard installed else {
+            NSWorkspace.shared.open([url], withApplicationAt: URL(fileURLWithPath: "/System/Applications/Font Book.app"),
+                                    configuration: NSWorkspace.OpenConfiguration())
+            note("Install the font first",
+                 "Wine can only use fonts that are installed on your Mac. Font Book is opening with this font. "
+                 + "Click Install there, then choose the font from the Language menu.")
+            refreshLanguageMenu(); return
+        }
+        let wineOwn = FontLinkCore.wineEntries(FontLinkCore.systemLinks(systemReg: prefixSystemReg()),
+                                               remembered: rememberedCJKEntries())
+        guard let data = try? Data(contentsOf: url, options: .alwaysMapped),
+              let family = FontLinkCore.gdiFamilies(fontData: data).first,
+              !url.lastPathComponent.contains(","), !url.lastPathComponent.contains("\\") else {
+            note("This font cannot be used", "Its name could not be read from the file.")
+            refreshLanguageMenu(); return
+        }
+        let f = FontLinkCore.LinkFont(file: url.lastPathComponent, family: family)
+        guard FontLinkCore.canOffer(f, wineEntries: wineOwn) else {
+            note("Wine already uses this font", "It is in Wine's own list for missing characters, so there is nothing to add.")
+            refreshLanguageMenu(); return
+        }
+        applyLanguageChoice(saiLanguage: nil, font: .font(f, path: url.path))
+    }
+
+    private func note(_ title: String, _ text: String) {
+        let a = NSAlert()
+        a.messageText = title
+        a.informativeText = text
+        a.addButton(withTitle: "OK")
+        a.runModal()
+    }
+
+    @objc func copyFontPath() {
+        let path = fontPathLabel.stringValue
+        guard !path.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(path, forType: .string)
+    }
+
+    /// Store and apply a Language choice. `saiLanguage` nil leaves SAI's menus
+    /// as they are. Both are read when SAI starts, so an open SAI is asked
+    /// about first (confirmDisplayChange).
+    private func applyLanguageChoice(saiLanguage: String?, font: FontLinkCore.Choice) {
+        let langChanges = saiLanguage != nil && saiLanguage != shownSAILanguage()
+        if font == storedCJKChoice() && !langChanges { refreshLanguageMenu(); return }
         confirmDisplayChange(revert: { [weak self] in self?.refreshDisplaySection() }) {
-            if code != SAILanguageChoice.defaultChoice {
+            try? font.stored.write(toFile: cjkFontsSettingFile(), atomically: true, encoding: .utf8)
+            if case .font(let f, _) = font {
+                let r = FontLinkCore.remembering(f, in: rememberedCJKEntries())
+                try? r.joined(separator: "\n").write(toFile: cjkFontsChosenFile(), atomically: true, encoding: .utf8)
+            }
+            if let lang = saiLanguage, langChanges {
                 let keep = SAILanguageChoice.originalToRemember(
                     alreadySaved: readTrimmed(saiLanguageOriginalFile()), iniNow: saiLanguageInIni())
                 try? keep.write(toFile: saiLanguageOriginalFile(), atomically: true, encoding: .utf8)
+                try? lang.write(toFile: saiLanguageFile(), atomically: true, encoding: .utf8)
+                applySAILanguage()      // now if SAI is closed, otherwise at the next launch
             }
-            try? code.write(toFile: saiLanguageFile(), atomically: true, encoding: .utf8)
-            applySAILanguage()      // now if SAI is closed, otherwise at the next launch
+            // Into Wine straight away, like the Retina switch; launch checks again.
+            let wine = g_wine.isEmpty ? (wineBin() ?? "") : g_wine
+            DispatchQueue.global(qos: .userInitiated).async { applyCJKFontsToWine(wine, force: true) }
         }
     }
 

@@ -55,56 +55,19 @@ func applied(_ state: [String: FL.Value], _ cs: [FL.Change]) -> [String: FL.Valu
     return s
 }
 
-// MARK: - reading real font files (test only: the app never opens a font)
+// MARK: - real font files on this Mac (read only, through the app's own code)
 
-/// The family names Wine can match in a font file: per face, the Windows
-/// English (platform 3, US English) name 1 if the face has one, otherwise the
-/// Mac or Unicode English name 1. That is the order Wine (via FreeType) uses.
-func wineFamilies(_ path: String) -> Set<String> {
-    guard let d = FileManager.default.contents(atPath: path) else { return [] }
-    let b = [UInt8](d)
-    func u16(_ o: Int) -> Int { o + 2 <= b.count ? Int(b[o]) << 8 | Int(b[o + 1]) : 0 }
-    func u32(_ o: Int) -> Int { o + 4 <= b.count ? u16(o) << 16 | u16(o + 2) : 0 }
-    var faces = [0]
-    if b.count > 12, String(bytes: b[0..<4], encoding: .ascii) == "ttcf" {
-        faces = (0..<u32(8)).map { u32(12 + 4 * $0) }
-    }
-    var out = Set<String>()
-    for f in faces {
-        var nameTable = -1
-        for t in 0..<u16(f + 4) where String(bytes: b[(f + 12 + 16 * t)..<(f + 16 + 16 * t)], encoding: .ascii) == "name" {
-            nameTable = u32(f + 12 + 16 * t + 8)
-        }
-        guard nameTable >= 0 else { continue }
-        let count = u16(nameTable + 2), strings = nameTable + u16(nameTable + 4)
-        var windows: String?, mac: String?
-        for r in 0..<count {
-            let rec = nameTable + 6 + 12 * r
-            let (pid, lid, nid) = (u16(rec), u16(rec + 4), u16(rec + 6))
-            let (len, off) = (u16(rec + 8), u16(rec + 10))
-            guard nid == 1, strings + off + len <= b.count else { continue }
-            let raw = Data(b[(strings + off)..<(strings + off + len)])
-            if pid == 3 && lid == 0x409 { windows = String(data: raw, encoding: .utf16BigEndian) }
-            else if pid == 1 && lid == 0 && mac == nil { mac = String(data: raw, encoding: .macOSRoman) }
-            else if pid == 0 && mac == nil { mac = String(data: raw, encoding: .utf16BigEndian) }
-        }
-        if let n = windows ?? mac { out.insert(n) }
-    }
-    return out
+let wineFontsDir = "/Applications/Wine Staging.app/Contents/Resources/wine/share/wine/fonts"
+let realDirs = FL.fontDirs(home: NSHomeDirectory(), wineFontsDir: wineFontsDir) {
+    (try? FileManager.default.contentsOfDirectory(atPath: $0)) ?? []
 }
-
 /// Where macOS (and Wine Staging) keep a font file with this name.
 func findFontFile(_ name: String) -> String? {
-    var dirs = ["/System/Library/Fonts", "/System/Library/Fonts/Supplemental",
-                "/Applications/Wine Staging.app/Contents/Resources/wine/share/wine/fonts"]
-    let assets = "/System/Library/AssetsV2"
-    let fm = FileManager.default
-    for kind in (try? fm.contentsOfDirectory(atPath: assets)) ?? [] where kind.contains("Font") {
-        for a in (try? fm.contentsOfDirectory(atPath: "\(assets)/\(kind)")) ?? [] {
-            dirs.append("\(assets)/\(kind)/\(a)/AssetData")
-        }
-    }
-    return dirs.map { "\($0)/\(name)" }.first { fm.fileExists(atPath: $0) }
+    realDirs.map { "\($0)/\(name)" }.first { FileManager.default.fileExists(atPath: $0) }
+}
+func wineFamilies(_ path: String) -> Set<String> {
+    guard let d = try? Data(contentsOf: URL(fileURLWithPath: path), options: .alwaysMapped) else { return [] }
+    return Set(FL.gdiFamilies(fontData: d))
 }
 
 @main
@@ -241,7 +204,7 @@ struct FontLinkTests {
            let real = FL.systemLinks(systemReg: text) {
             let entries = real.values.flatMap { list($0) ?? [] }
             expect(real.count >= 20 && entries.count > 100, "wine 11.16: the real section is read (\(real.count) names)")
-            expect(!entries.contains(where: FL.isOurs), "wine 11.16: none of Wine's own entries counts as ours")
+            expect(!entries.contains { FL.isOurs($0) }, "wine 11.16: none of Wine's own entries counts as ours")
             let realOn = applied(real, FL.changes(current: real, on: true, fonts: fonts))
             expect(applied(realOn, FL.changes(current: realOn, on: false, fonts: fonts)) == real,
                    "wine 11.16: on, then off, gives Wine's lists back exactly")
@@ -261,8 +224,87 @@ struct FontLinkTests {
                "reg: no list deletes the value")
         expect(FL.systemLinkKey.hasPrefix("HKLM\\") && FL.systemLinkKey.hasSuffix("\\FontLink\\SystemLink"),
                "reg: the machine-wide SystemLink key")
-        expect(FL.wanted(stored: nil) && !FL.wanted(stored: false) && FL.wanted(stored: true),
-               "setting: on unless switched off")
+        // --- the dropdown's choice ---------------------------------------------
+        typealias C = FL.Choice
+        for s in [nil, "", "auto", "on", "garbage", "font\tA.ttf\tA", "font\tA,B.ttf\tA\t/x", "font\t\tA\t/x"] as [String?] {
+            expect(C(stored: s) == .automatic, "choice: \(s.map { "\"\($0)\"" } ?? "nothing stored") is Automatic")
+        }
+        expect(C(stored: "off") == .off && C(stored: " off\n") == .off, "choice: off is Off")
+        let foo = FL.LinkFont(file: "Foo Sans.otf", family: "Foo Sans")
+        let fooChoice = C.font(foo, path: "/Users/x/Library/Fonts/Foo Sans.otf")
+        expect(C(stored: fooChoice.stored) == fooChoice, "choice: a chosen font is stored and read back")
+        expect(C(stored: C.off.stored) == .off && C(stored: C.automatic.stored) == .automatic,
+               "choice: Off and Automatic are stored and read back")
+        let ja = FL.order(preferredLanguages: ["ja"])
+        expect(FL.fonts(for: .automatic, preferredLanguages: ["ja"]) == ja, "choice: Automatic is the language order")
+        expect(FL.fonts(for: .off, preferredLanguages: ["ja"]).isEmpty, "choice: Off puts nothing in front")
+        expect(FL.fonts(for: fooChoice, preferredLanguages: ["ja"]) == [foo] + ja,
+               "choice: a chosen font first, the automatic ones behind it for what it lacks")
+        let tcFirst = FL.fonts(for: .font(FL.pingFangTC, path: "/p"), preferredLanguages: ["ja"])
+        expect(tcFirst.first == FL.pingFangTC && tcFirst.filter { $0 == FL.pingFangTC }.count == 1,
+               "choice: a built-in font chosen moves to the front, not doubled")
+
+        // --- the Language dropdown ----------------------------------------------
+        let opts = FL.languageOptions
+        expect(opts.map(\.title) == ["English", "日本語", "简体中文", "繁體中文", "한국어"],
+               "language: English, Japanese, Simplified and Traditional Chinese, Korean, in that order")
+        expect(opts.map(\.font) == [nil, FL.hiraginoSans, FL.pingFangSC, FL.pingFangTC, FL.appleSDGothic],
+               "language: each line's font (English is Automatic)")
+        // SAI has English and Japanese menus only: no line may ask sai2.ini for another.
+        expect(opts.allSatisfy { ["en", "ja"].contains($0.saiLanguage) } && opts.filter { $0.saiLanguage == "ja" }.count == 1,
+               "language: only en and ja go into sai2.ini, Japanese on one line")
+        expect(!opts.contains { $0.title.contains("\u{2014}") }, "language: no em dash in the menu")
+        expect(FL.choice(for: opts[0], path: "/x") == .automatic, "language: English means Automatic fonts")
+        expect(FL.choice(for: opts[2], path: "/p/PingFang.ttc") == .font(FL.pingFangSC, path: "/p/PingFang.ttc"),
+               "language: 简体中文 puts PingFang SC first")
+        typealias Sel = FL.Selection
+        expect(FL.selection(saiLanguage: nil, font: .automatic) == .language(0), "shown: nothing stored is English")
+        expect(FL.selection(saiLanguage: "en", font: .automatic) == .language(0), "shown: en + Automatic is English")
+        expect(FL.selection(saiLanguage: "ja", font: .font(FL.hiraginoSans, path: "")) == .language(1), "shown: ja is 日本語")
+        expect(FL.selection(saiLanguage: "ja", font: .automatic) == .language(1),
+               "shown: Japanese menus show 日本語 whatever the font (SAI set to ja by hand)")
+        expect(FL.selection(saiLanguage: "en", font: .font(FL.pingFangTC, path: "")) == .language(3), "shown: en + PingFang TC is 繁體中文")
+        expect(FL.selection(saiLanguage: "en", font: .font(FL.appleSDGothic, path: "")) == .language(4), "shown: en + Apple SD Gothic Neo is 한국어")
+        expect(FL.selection(saiLanguage: "en", font: .font(FL.hiraginoSans, path: "")) == .language(0),
+               "shown: Hiragino with English menus has no line of its own, shown as English")
+        expect(FL.selection(saiLanguage: "ja", font: .font(foo, path: "/f")) == .font(foo), "shown: a font of the person's own shows itself")
+        expect(FL.selection(saiLanguage: "ja", font: .off) == .off, "shown: Off shows Off")
+
+        // Fonts chosen from the Mac's folders: remembered so Off takes them out.
+        expect(FL.remembering(FL.pingFangSC, in: []) == [], "remember: a built-in font needs no remembering")
+        let rem = FL.remembering(foo, in: [])
+        expect(rem == [foo.entry] && FL.remembering(FL.LinkFont(file: "FOO SANS.OTF", family: "foo sans"), in: rem) == rem,
+               "remember: a chosen font once, whatever the letter case")
+        let withFoo = applied(start, FL.changes(current: start, on: true, fonts: FL.fonts(for: fooChoice, preferredLanguages: ["ja"]), remembered: rem))
+        expect(list(withFoo["Tahoma"])?.first == foo.entry, "remember: the chosen font is first in Tahoma's list")
+        let fooOff = applied(withFoo, FL.changes(current: withFoo, on: false, fonts: [], remembered: rem))
+        expect(fooOff == start, "remember: Off takes a chosen font out too, Wine's lists exact")
+        let bar = FL.LinkFont(file: "Bar.ttf", family: "Bar")
+        let rem2 = FL.remembering(bar, in: rem)
+        let toBar = applied(withFoo, FL.changes(current: withFoo, on: true, fonts: FL.fonts(for: .font(bar, path: "/b"), preferredLanguages: ["ja"]), remembered: rem2))
+        expect(list(toBar["Tahoma"]) == [bar.entry] + ja.map(\.entry) + wineTahoma,
+               "remember: choosing another font replaces the first one, nothing left behind")
+        // A font Wine's own lists already name is never offered (Off would take it from Wine).
+        let wineOwn = FL.wineEntries(start)
+        expect(wineOwn.contains("SIMSUN.TTC,SimSun") && !FL.canOffer(FL.LinkFont(file: "simsun.ttc", family: "SIMSUN"), wineEntries: wineOwn),
+               "offer: a font in Wine's own lists (any case) is not offered")
+        expect(FL.canOffer(foo, wineEntries: wineOwn) && FL.canOffer(FL.hiraginoSans, wineEntries: wineOwn),
+               "offer: other fonts are")
+        expect(!FL.wineEntries(withFoo, remembered: rem).contains(foo.entry) && !FL.wineEntries(withFoo, remembered: rem).contains(FL.pingFangSC.entry),
+               "offer: Wine's own entries leave ours and chosen ones out")
+
+        // --- where fonts are looked for ----------------------------------------
+        let fake: [String: [String]] = [
+            "/System/Library/AssetsV2": ["com_apple_MobileAsset_Font8", "com_apple_MobileAsset_Other"],
+            "/System/Library/AssetsV2/com_apple_MobileAsset_Font8": ["abc.asset"],
+            "/System/Library/AssetsV2/com_apple_MobileAsset_Other": ["zzz.asset"],
+        ]
+        let dirs = FL.fontDirs(home: "/Users/x", wineFontsDir: "/W/fonts") { fake[$0] ?? [] }
+        expect(dirs.first == "/System/Library/Fonts" && dirs.contains("/Users/x/Library/Fonts") && dirs.last == "/W/fonts",
+               "dirs: system fonts first, the user's fonts, Wine's fonts last")
+        expect(dirs.contains("/System/Library/AssetsV2/com_apple_MobileAsset_Font8/abc.asset/AssetData")
+               && !dirs.contains { $0.contains("MobileAsset_Other") },
+               "dirs: PingFang's font asset folder is found, other assets are not")
 
         // --- THE TRAP 1: real files, real family names -------------------------
         // Every entry must name a file that exists and a family Wine matches in
@@ -283,6 +325,29 @@ struct FontLinkTests {
         if let h = findFontFile(FL.hiraginoSans.file) {
             expect(!wineFamilies(h).contains("Hiragino Sans"),
                    "real font: plain \"Hiragino Sans\" is NOT a family Wine matches (the old mistake)")
+        }
+
+        // --- a broken or hostile font file never crashes the app ---------------
+        // The dropdown reads names from files the person picks, so any bytes at all.
+        expect(FL.gdiFamilies(fontData: Data()).isEmpty && FL.gdiFamilies(fontData: Data("ttcf".utf8)).isEmpty,
+               "names: empty and cut-off data give no names")
+        let hostile = Data("ttcf".utf8) + Data([0, 1, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF]) + Data(repeating: 0xFF, count: 64)
+        expect(FL.gdiFamilies(fontData: hostile).isEmpty,
+               "names: a collection claiming 4 billion faces at wild offsets gives no names")
+        if let h = findFontFile(FL.hiraginoSans.file),
+           let d = try? Data(contentsOf: URL(fileURLWithPath: h), options: .alwaysMapped) {
+            for cut in stride(from: 0, to: min(d.count, 400_000), by: 997) { _ = FL.gdiFamilies(fontData: d.prefix(cut)) }
+            var rng = SystemRandomNumberGenerator()
+            for _ in 0..<400 {
+                var m = Data(d.prefix(8192))
+                for _ in 0..<24 { m[Int.random(in: 0..<m.count, using: &rng)] = UInt8.random(in: 0...255, using: &rng) }
+                _ = FL.gdiFamilies(fontData: m)
+            }
+            expect(true, "names: 400 cut-off and 400 scrambled copies of a real font, no crash")
+            // Data whose first index is not 0 (a slice): same names.
+            let shifted = (Data([1, 2, 3]) + d)[3...]
+            expect(FL.gdiFamilies(fontData: shifted) == FL.gdiFamilies(fontData: d) && !FL.gdiFamilies(fontData: d).isEmpty,
+                   "names: a Data slice that does not start at 0 reads the same")
         }
 
         report()
