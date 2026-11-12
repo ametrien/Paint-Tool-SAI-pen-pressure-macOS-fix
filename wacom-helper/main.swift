@@ -1533,9 +1533,10 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     // Advanced › Display (test), DisplayUI.swift: Retina mode and SAI's language.
     var retinaCheck: NSButton!
     var displayHint: NSTextField!
-    var saiLangPopup: NSPopUpButton!
-    /// Chinese, Japanese and Korean text with the Mac's own fonts (FontLinkCore).
-    var cjkCheck: NSButton!
+    /// Language: SAI's menus and the font for Chinese, Japanese and Korean text.
+    var langPopup: NSPopUpButton!
+    var fontPathLabel: NSTextField!
+    var fontCopyButton: NSButton!
     var displayRestartNote: NSTextField!
     /// Like keysNeedSAIRestart, for the Display settings.
     var displayNeedsSAIRestart = false

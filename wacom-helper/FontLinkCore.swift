@@ -130,9 +130,198 @@ enum FontLinkCore {
         return out
     }
 
-    /// Missing setting = on. It only changes which font Wine uses where SAI's
-    /// own font has no character, so there is nothing to lose by default.
-    static func wanted(stored: Bool?) -> Bool { stored ?? true }
+    // MARK: - the choice in Advanced › Display
+
+    /// One line of the Language dropdown: SAI's menu language (sai2.ini
+    /// `[Locale] lang`) and the font in front. SAI only has English and Japanese
+    /// menus (nothing else is in sai2.exe), so Chinese and Korean keep English
+    /// menus and only choose the font. `font` nil means Automatic.
+    struct LanguageOption: Equatable {
+        let title: String
+        let saiLanguage: String
+        let font: LinkFont?
+    }
+
+    static let languageOptions = [
+        LanguageOption(title: "English", saiLanguage: "en", font: nil),
+        LanguageOption(title: "日本語", saiLanguage: "ja", font: hiraginoSans),
+        LanguageOption(title: "简体中文", saiLanguage: "en", font: pingFangSC),
+        LanguageOption(title: "繁體中文", saiLanguage: "en", font: pingFangTC),
+        LanguageOption(title: "한국어", saiLanguage: "en", font: appleSDGothic),
+    ]
+
+    /// What the dropdown shows as selected.
+    enum Selection: Equatable {
+        case language(Int)          // index into languageOptions
+        case font(LinkFont)         // one of the person's own fonts
+        case off
+    }
+
+    /// The selection for what is stored. `saiLanguage` is the stored menu
+    /// language, or sai2.ini's when none is stored. Japanese menus win (there
+    /// is only one Japanese line); otherwise the font says which line it is.
+    static func selection(saiLanguage: String?, font: Choice) -> Selection {
+        switch font {
+        case .off:
+            return .off
+        case .font(let f, _) where !languageOptions.contains(where: { $0.font == f }):
+            return .font(f)
+        default:
+            break
+        }
+        if saiLanguage == "ja", let i = languageOptions.firstIndex(where: { $0.saiLanguage == "ja" }) {
+            return .language(i)
+        }
+        if case .font(let f, _) = font,
+           let i = languageOptions.firstIndex(where: { $0.font == f && $0.saiLanguage != "ja" }) {
+            return .language(i)
+        }
+        return .language(0)                                   // English, Automatic
+    }
+
+    /// The font choice a language line stands for. `path` is where that font
+    /// is on this Mac (shown under the dropdown).
+    static func choice(for option: LanguageOption, path: String?) -> Choice {
+        guard let f = option.font else { return .automatic }
+        return .font(f, path: path ?? "")
+    }
+
+    /// What the dropdown says. Stored as one line in Application Support.
+    enum Choice: Equatable {
+        /// The Mac's preferred languages decide (order(preferredLanguages:)).
+        case automatic
+        /// None of ours in Wine's lists: SAI shows boxes, as before.
+        case off
+        /// This font first, the automatic ones behind it, so a script the
+        /// chosen font lacks (Korean in a Japanese font) still shows. `path`
+        /// is where the file was when chosen, for showing and Copy path.
+        case font(LinkFont, path: String)
+
+        /// Missing, empty, "on" (the first test build) or anything unreadable
+        /// is Automatic. It only changes which font Wine uses where SAI's own
+        /// font has no character, so there is nothing to lose by default.
+        init(stored: String?) {
+            let s = stored?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if s == "off" { self = .off; return }
+            let p = s.components(separatedBy: "\t")
+            if p.count == 4, p[0] == "font", !p[1].isEmpty, !p[2].isEmpty,
+               !p[1].contains(","), !p[1].contains("\\") {
+                self = .font(LinkFont(file: p[1], family: p[2]), path: p[3])
+            } else {
+                self = .automatic
+            }
+        }
+
+        /// Tabs between the parts: file and family names never hold one.
+        var stored: String {
+            switch self {
+            case .automatic: return "auto"
+            case .off: return "off"
+            case .font(let f, let path): return ["font", f.file, f.family, path].joined(separator: "\t")
+            }
+        }
+    }
+
+    /// The fonts to put in front, in order, for a choice.
+    static func fonts(for choice: Choice, preferredLanguages: [String]) -> [LinkFont] {
+        let auto = order(preferredLanguages: preferredLanguages)
+        switch choice {
+        case .automatic: return auto
+        case .off: return []
+        case .font(let f, _): return [f] + auto.filter { $0 != f }
+        }
+    }
+
+    /// A font chosen from the Mac's own folder is ours too, but only this app
+    /// knows it wrote it. So every chosen entry that is not in allOurs is kept
+    /// in a small list, and Off and every later choice take those out as well
+    /// (THE TRAP 2 for chosen fonts). The list only grows; taking out an entry
+    /// that is not there does nothing.
+    static func remembering(_ chosen: LinkFont, in remembered: [String]) -> [String] {
+        if isOurs(chosen.entry) || remembered.contains(where: { $0.caseInsensitiveCompare(chosen.entry) == .orderedSame }) {
+            return remembered
+        }
+        return remembered + [chosen.entry]
+    }
+
+    /// THE TRAP 2 again: a font Wine's own lists already name (SimSun from an
+    /// Office install, say) must never be offered. Off would take it out of
+    /// Wine's list too. Wine falls back to such a font already anyway.
+    static func canOffer(_ f: LinkFont, wineEntries: [String]) -> Bool {
+        !wineEntries.contains { $0.caseInsensitiveCompare(f.entry) == .orderedSame }
+    }
+
+    /// Every entry in Wine's own part of the lists (ours taken out).
+    static func wineEntries(_ links: [String: Value]?, remembered: [String] = []) -> [String] {
+        (links ?? [:]).values.flatMap { v -> [String] in
+            if case .list(let l) = v { return withoutOurs(l, remembered: remembered) }
+            return []
+        }
+    }
+
+    // MARK: - reading a font file's family the way Wine does
+
+    /// The family names Wine can match in a font file (THE TRAP 1): per face,
+    /// the Windows US-English family name if the face has one, otherwise the
+    /// Mac or Unicode one. In face order, each once. Only reads the file's
+    /// name table; never writes or copies it. Every offset is checked, so a
+    /// broken or hostile file gives fewer names, never a crash.
+    static func gdiFamilies(fontData d: Data) -> [String] {
+        func u8(_ o: Int) -> Int? { o >= 0 && o < d.count ? Int(d[d.startIndex + o]) : nil }
+        func u16(_ o: Int) -> Int? { guard let a = u8(o), let b = u8(o + 1) else { return nil }; return a << 8 | b }
+        func u32(_ o: Int) -> Int? { guard let a = u16(o), let b = u16(o + 2) else { return nil }; return a << 16 | b }
+        func bytes(_ o: Int, _ n: Int) -> Data? {
+            guard o >= 0, n >= 0, o + n <= d.count else { return nil }
+            return d.subdata(in: (d.startIndex + o)..<(d.startIndex + o + n))
+        }
+        var faces = [0]
+        if bytes(0, 4) == Data("ttcf".utf8), let n = u32(8) {
+            faces = (0..<min(n, 64)).compactMap { u32(12 + 4 * $0) }
+        }
+        var out: [String] = []
+        for f in faces {
+            guard let tables = u16(f + 4) else { continue }
+            var nameAt: Int?
+            for t in 0..<min(tables, 128) where bytes(f + 12 + 16 * t, 4) == Data("name".utf8) {
+                nameAt = u32(f + 12 + 16 * t + 8)
+            }
+            guard let nt = nameAt, let count = u16(nt + 2), let strOff = u16(nt + 4) else { continue }
+            var windows: String?, mac: String?
+            for r in 0..<min(count, 4096) {
+                let rec = nt + 6 + 12 * r
+                guard let pid = u16(rec), let lid = u16(rec + 4), let nid = u16(rec + 6),
+                      let len = u16(rec + 8), let off = u16(rec + 10), nid == 1,
+                      let raw = bytes(nt + strOff + off, len) else { continue }
+                if pid == 3 && lid == 0x409 { windows = String(data: raw, encoding: .utf16BigEndian) }
+                else if pid == 1 && lid == 0 && mac == nil { mac = String(data: raw, encoding: .macOSRoman) }
+                else if pid == 0 && mac == nil { mac = String(data: raw, encoding: .utf16BigEndian) }
+            }
+            if let name = windows ?? mac, !name.isEmpty, !out.contains(name) { out.append(name) }
+        }
+        return out
+    }
+
+    // MARK: - where the fonts are
+
+    /// Folders where macOS and Wine keep the fonts this app names, in the order
+    /// to look. PingFang is a macOS download ("asset"), so its folder has a hash
+    /// in it and is found by listing.
+    static func fontDirs(home: String, wineFontsDir: String?, listDir: (String) -> [String]) -> [String] {
+        var dirs = ["/System/Library/Fonts", "/System/Library/Fonts/Supplemental",
+                    "/Library/Fonts", home + "/Library/Fonts"]
+        let assets = "/System/Library/AssetsV2"
+        for kind in listDir(assets).sorted() where kind.hasPrefix("com_apple_MobileAsset_Font") {
+            for a in listDir(assets + "/" + kind).sorted() { dirs.append("\(assets)/\(kind)/\(a)/AssetData") }
+        }
+        if let w = wineFontsDir { dirs.append(w) }
+        return dirs
+    }
+
+    /// Fonts the person installed themselves (Font Book puts them here). Wine on
+    /// a Mac loads these too.
+    static func installedFontDirs(home: String) -> [String] { [home + "/Library/Fonts", "/Library/Fonts"] }
+
+    static let fontFileExtensions: Set<String> = ["ttf", "ttc", "otf", "otc"]
 
     // MARK: - reading the lists from system.reg
 
@@ -213,12 +402,16 @@ enum FontLinkCore {
 
     // MARK: - what to write
 
-    static func isOurs(_ entry: String) -> Bool {
+    /// `remembered`: entries of fonts chosen in the dropdown (see remembering).
+    static func isOurs(_ entry: String, remembered: [String] = []) -> Bool {
         allOurs.contains { $0.entry.caseInsensitiveCompare(entry) == .orderedSame }
+            || remembered.contains { $0.caseInsensitiveCompare(entry) == .orderedSame }
     }
 
     /// Wine's own list: the list without our entries (THE TRAP 2).
-    static func withoutOurs(_ list: [String]) -> [String] { list.filter { !isOurs($0) } }
+    static func withoutOurs(_ list: [String], remembered: [String] = []) -> [String] {
+        list.filter { !isOurs($0, remembered: remembered) }
+    }
 
     /// One value to write. `list` nil means delete the value: it was not there
     /// before ours (ＭＳ Ｐゴシック has no list of Wine's own).
@@ -236,7 +429,8 @@ enum FontLinkCore {
     /// lists written are right either way, because they are computed from
     /// Wine's own part, which a lagging file has too. At launch, force is off:
     /// a normal launch starts no reg.exe at all.
-    static func changes(current: [String: Value]?, on: Bool, fonts: [LinkFont], force: Bool = false) -> [Change] {
+    static func changes(current: [String: Value]?, on: Bool, fonts: [LinkFont],
+                        remembered: [String] = [], force: Bool = false) -> [Change] {
         guard let current = current else { return [] }
         var out: [Change] = []
         for name in saiFontNames {
@@ -244,7 +438,7 @@ enum FontLinkCore {
             let value = key.flatMap { current[$0] }
             if value == .unreadable { continue }                          // THE TRAP 3
             let now: [String]? = { if case .list(let l)? = value { return l }; return nil }()
-            let wine = withoutOurs(now ?? [])
+            let wine = withoutOurs(now ?? [], remembered: remembered)
             let target: [String]? = on ? entries(for: name, fonts: fonts) + wine : (wine.isEmpty ? nil : wine)
             if !force && target == (now.map { $0.isEmpty ? nil : $0 } ?? nil) { continue }
             // Nothing there and nothing wanted: no delete to send.
