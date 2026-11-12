@@ -94,6 +94,11 @@ or reinstall — and the *SAI license* row will say so.
    panels land where they should. If you turn sharp text off again, go back to 100% and restart
    SAI once more.
 
+### Chinese, Japanese or Korean
+
+Chinese, Japanese and Korean text such as layer names shows by itself, with your Mac's fonts.
+For Japanese menus, pick **日本語** in **Advanced › Display › Language**, then quit and reopen SAI.
+
 ## 8. Pen feel, if you want it
 
 The **Pen** tab has presets (*Light hand*, *Inking*, *Painting*, *Heavy hand*) and sliders to

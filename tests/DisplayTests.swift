@@ -174,8 +174,15 @@ struct DisplayTests {
         expect(LC.originalToRemember(alreadySaved: nil, iniNow: nil) == "-",
                "default: a missing lang line is remembered as missing")
 
-        expect(SAILanguage.allCases.count == 11 && SAILanguage(rawValue: "zh")?.label == "简体中文",
-               "languages: the codes found in sai2.exe")
+        // sai2.exe (2026-07-27) holds English and Japanese menu text only. The old
+        // list of 11 codes made Russian and Chinese "do nothing" in testing.
+        expect(SAILanguage.allCases.map(\.rawValue) == ["en", "ja"] && SAILanguage(rawValue: "ja")?.label == "日本語",
+               "languages: only the two SAI has, English and Japanese")
+        // A code left over from an older test build (ru, zh...) is never written.
+        for code in ["ru", "zh", "tw", "ko", "de", "xx"] {
+            expect(LC.iniTarget(stored: code, original: "en") == nil,
+                   "languages: a stored \"\(code)\" leaves sai2.ini alone")
+        }
 
         report()
     }

@@ -22,8 +22,9 @@ This project is that translator.
 - [**How it works**](how-it-works.md) — the architecture, and the file-layout question that trips up nearly everyone.
 - [**Engineering notes**](notes.md) — decisions, mistakes, and the reasoning behind both.
 
-**New in 0.3.11:** [pen feel presets and your own profiles](#pen-feel), and SAI no longer goes
-inactive or drops quick strokes because of a leftover pen test.
+**New in 0.3.12:** [Chinese, Japanese and Korean text instead of boxes](#chinese-japanese-and-korean-text),
+and SAI's menus in Japanese if you like.
+Since 0.3.11: [pen feel presets and your own profiles](#pen-feel).
 Since 0.3.9: [**sharp text on Retina screens**](#sharp-text-on-retina-screens), without the lag.
 Since 0.3.0: [**canvas timelapse**](#canvas-timelapse) that spans sessions, one video per drawing.
 
@@ -133,6 +134,18 @@ installs Wine Staging 11.16 with that exact change added, so sharp text costs no
 
 A few of SAI's small panel icons stay small at 200%. They are fixed-size pictures inside SAI, and
 only its maker can change them.
+
+## Chinese, Japanese and Korean text
+
+SAI asks for Windows fonts that a Mac does not have, so these characters used to show as boxes.
+**Advanced › Display › Language** points Wine at the fonts that come with your Mac instead:
+**English** or **日本語** for SAI's menus (the only two languages SAI's menus come in). With
+either, Chinese, Japanese and Korean text in layer names, file names and dialogs shows, in the
+order of your Mac's languages. Fonts you installed with Font Book can be chosen too, and the path
+of the font in use is shown. Nothing is copied or downloaded. SAI's Text tool is not affected: it uses its own
+font engine, which does not support these fonts yet.
+
+![SAI with its menus in Japanese](assets/screenshots/sai-japanese.png)
 
 ## Canvas timelapse
 
