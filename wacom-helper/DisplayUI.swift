@@ -62,7 +62,9 @@ func storedRetinaSetting() -> Bool? {
 /// The raw stored choice: nil, "default", or a code.
 func storedSAILanguageChoice() -> String? { readTrimmed(saiLanguageFile()) }
 
-func storedCJKChoice() -> FontLinkCore.Choice { FontLinkCore.Choice(stored: readTrimmed(cjkFontsSettingFile())) }
+func storedCJKChoice() -> FontLinkCore.Choice {
+    FontLinkCore.effective(FontLinkCore.Choice(stored: readTrimmed(cjkFontsSettingFile())))
+}
 
 func rememberedCJKEntries() -> [String] {
     (readTrimmed(cjkFontsChosenFile()) ?? "").components(separatedBy: "\n").filter { !$0.isEmpty }
@@ -342,8 +344,8 @@ extension SetupController {
         pathRow.addArrangedSubview(fontCopyButton)
         box.addArrangedSubview(pathRow)
 
-        let langHint = lbl("SAI's menus come in English and Japanese. For Chinese and Korean the menus stay "
-                           + "in English and the font changes, so text like layer names shows instead of boxes. "
+        let langHint = lbl("SAI's menus come in English and Japanese. Chinese, Japanese and Korean text, "
+                           + "like layer names, shows with your Mac's fonts in both. "
                            + "Uses fonts on your Mac, nothing is copied. A font you downloaded: Add a font. "
                            + "SAI's Text tool is not affected.",
                            10, color: .tertiaryLabelColor)
@@ -494,7 +496,8 @@ extension SetupController {
         panel.message = "Choose a font with Chinese, Japanese or Korean characters"
         guard panel.runModal() == .OK, let url = panel.url else { refreshLanguageMenu(); return }
         let folder = url.deletingLastPathComponent().path
-        let installed = (FontLinkCore.installedFontDirs(home: NSHomeDirectory()) + ["/System/Library/Fonts"]).contains(folder)
+        let installed = (FontLinkCore.installedFontDirs(home: NSHomeDirectory())
+                         + ["/System/Library/Fonts", "/System/Library/Fonts/Supplemental"]).contains(folder)
         guard installed else {
             NSWorkspace.shared.open([url], withApplicationAt: URL(fileURLWithPath: "/System/Applications/Font Book.app"),
                                     configuration: NSWorkspace.OpenConfiguration())

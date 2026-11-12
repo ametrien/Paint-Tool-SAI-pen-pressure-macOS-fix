@@ -133,9 +133,14 @@ enum FontLinkCore {
     // MARK: - the choice in Advanced › Display
 
     /// One line of the Language dropdown: SAI's menu language (sai2.ini
-    /// `[Locale] lang`) and the font in front. SAI only has English and Japanese
-    /// menus (nothing else is in sai2.exe), so Chinese and Korean keep English
-    /// menus and only choose the font. `font` nil means Automatic.
+    /// `[Locale] lang`) and the font in front. `font` nil means Automatic.
+    ///
+    /// THE TRAP: only the two languages SAI really has. sai2.exe holds English
+    /// and Japanese text and nothing else. A test build also listed 简体中文,
+    /// 繁體中文 and 한국어, which only changed the font, and it read as if SAI
+    /// could be switched to Chinese or Korean. It cannot. Text in every script
+    /// shows anyway: Automatic puts all the Mac's fonts in Wine's lists, in the
+    /// order of the Mac's languages.
     struct LanguageOption: Equatable {
         let title: String
         let saiLanguage: String
@@ -145,10 +150,18 @@ enum FontLinkCore {
     static let languageOptions = [
         LanguageOption(title: "English", saiLanguage: "en", font: nil),
         LanguageOption(title: "日本語", saiLanguage: "ja", font: hiraginoSans),
-        LanguageOption(title: "简体中文", saiLanguage: "en", font: pingFangSC),
-        LanguageOption(title: "繁體中文", saiLanguage: "en", font: pingFangTC),
-        LanguageOption(title: "한국어", saiLanguage: "en", font: appleSDGothic),
     ]
+
+    /// A stored choice as it is used. A built-in font that no line stands for
+    /// (PingFang SC from the test build's 简体中文 line) is Automatic: the menu
+    /// shows English or 日本語 then, and Wine must get what the menu shows.
+    /// The person's own fonts, and Hiragino for 日本語, stay as chosen.
+    static func effective(_ c: Choice) -> Choice {
+        if case .font(let f, _) = c, allOurs.contains(f), !languageOptions.contains(where: { $0.font == f }) {
+            return .automatic
+        }
+        return c
+    }
 
     /// What the dropdown shows as selected.
     enum Selection: Equatable {

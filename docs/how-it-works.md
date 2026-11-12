@@ -180,8 +180,8 @@ a Mac. When a character is missing, Wine tries the list for that font name under
 only name Windows font files, so every such character was a box.
 
 Wine already loads the fonts that come with macOS where they are. The app puts them at the front
-of those five lists before SAI starts (registry only, nothing copied), in the order of the
-Language menu or your Mac's preferred languages. Two details matter: Wine matches an entry by
+of those five lists before SAI starts (registry only, nothing copied), in the order of your
+Mac's preferred languages (Hiragino first with 日本語 menus, or a font you chose). Two details matter: Wine matches an entry by
 file name and the font's Windows family name, which for Hiragino is `Hiragino Sans W3`, not
 `Hiragino Sans`; and a font name that does not exist is drawn entirely in its first entry, so
 those lists start with Wine's own Arial and Latin and Cyrillic look as before. Off removes only

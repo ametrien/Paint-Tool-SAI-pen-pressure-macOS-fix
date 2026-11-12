@@ -196,8 +196,8 @@ SAI asks for Windows fonts that a Mac does not have, so without help these chara
 **Advanced › Display › Language** fixes that with the fonts that come with your Mac:
 
 - **English** or **日本語** for SAI's menus. SAI's menus only come in these two languages.
-- **简体中文, 繁體中文, 한국어:** the menus stay in English, and text such as layer names, file names and
-  dialogs uses PingFang SC, PingFang TC or Apple SD Gothic Neo.
+- **Chinese, Japanese and Korean text**, such as layer names, file names and dialogs, shows with either:
+  the app uses Hiragino Sans, PingFang and Apple SD Gothic Neo, in the order of your Mac's languages.
 - **Your own fonts** installed with Font Book are in the list too. *Add a font…* takes one you downloaded:
   it opens in Font Book to install. The path of the font in use is shown, with *Copy path*.
 

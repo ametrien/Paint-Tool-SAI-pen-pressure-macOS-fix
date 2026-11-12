@@ -96,9 +96,8 @@ or reinstall — and the *SAI license* row will say so.
 
 ### Chinese, Japanese or Korean
 
-**Advanced › Display › Language**: **日本語** switches SAI's menus to Japanese. **简体中文**,
-**繁體中文** and **한국어** keep English menus and pick the font for text such as layer names.
-Then quit and reopen SAI.
+Chinese, Japanese and Korean text such as layer names shows by itself, with your Mac's fonts.
+For Japanese menus, pick **日本語** in **Advanced › Display › Language**, then quit and reopen SAI.
 
 ## 8. Pen feel, if you want it
 
