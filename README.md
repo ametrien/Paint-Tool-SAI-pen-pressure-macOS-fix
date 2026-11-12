@@ -16,7 +16,7 @@ canvas** while you draw. Free and open source.
 📺 **[Watch the setup video](https://youtu.be/62mJwWQsEYI)**
 
 <p align="center">
-  <img src="docs/assets/screenshots/pressure-in-sai.png" alt="A stroke drawn in PaintTool SAI with the AirBrush tool, thick where the pen was pressed hard and tapering to nothing at both ends" width="88%">
+  <img src="docs/assets/screenshots/sai-on-mac.png" alt="PaintTool SAI Ver.2 running on a MacBook, with a pressure-sensitive pen stroke on the canvas" width="88%">
 </p>
 
 ## What it looks like
