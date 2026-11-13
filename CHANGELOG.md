@@ -11,9 +11,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
   pen. One refresh took about 55 ms, and pen samples that arrived meanwhile waited for it, up to
   20 ms, about once a second for the whole drawing session. Now a window nobody can see is not
   refreshed, the tablet check behind the Pen tab runs in the background, and two file checks are
-  remembered until their files change. Measured over Bluetooth on an Intuos BT S: pauses longer
-  than 5 ms went from about one a second to none, and the longest wait for a pen sample from
-  20 ms to under 5 ms, with the window minimized or open. Not measured over USB yet.
+  remembered until their files change. Measured on an Intuos BT S, switching between 0.3.12 and
+  0.3.13 every 5 seconds while drawing: pauses longer than 5 ms went from about one a second to
+  one in 16 to 18 seconds, over USB and over Bluetooth alike. The longest wait for a pen sample
+  fell from 32 ms to 6 ms over USB, and from 18 ms to 6 ms over Bluetooth. Over USB, the
+  slowest 1 in 100 samples now waits 0.4 ms instead of 18 ms.
 
 ### Changed
 - **The pen's backup file is written in the background.** Every pen sample is also saved to a
