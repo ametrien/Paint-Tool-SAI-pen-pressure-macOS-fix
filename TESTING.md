@@ -51,7 +51,7 @@ Run the same checks locally:
 bash tests/run-tests.sh
 cd wintab-src && x86_64-w64-mingw32-windres wintab32.rc -O coff -o wintab32_res.o && \
   x86_64-w64-mingw32-gcc -shared -O2 -o wintab32.dll wintab32.c wintab32_res.o wintab32.def -lgdi32 -luser32 -lws2_32 -municode
-cd ../wacom-helper && swiftc -O -o wacom-pressure-helper main.swift PressureCore.swift
+cd ../wacom-helper && swiftc -O -o wacom-pressure-helper $(bash ../tools/sources.sh helper)
 cd .. && bash make-app.sh
 ```
 

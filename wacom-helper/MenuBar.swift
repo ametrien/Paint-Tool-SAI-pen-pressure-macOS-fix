@@ -114,6 +114,9 @@ extension SetupController {
     @objc func showSetupWindow() {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        // The refresh skips a window nobody can see, so bring this one up to
+        // date now rather than at the next tick.
+        refresh()
     }
     // Right-click on our Dock icon. Left-click focuses SAI; the useful actions —
     // including the Developer-mode toggle — live here, which is the second place
