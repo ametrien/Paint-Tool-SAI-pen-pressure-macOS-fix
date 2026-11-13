@@ -3,6 +3,32 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](https://semver.org/).
 
+## [0.3.13] — 2026-11-13
+
+### Fixed
+- **No more pen stutter once a second while drawing.** The app refreshes its setup window every
+  second, also while that window is minimized, and it did so on the same thread that reads the
+  pen. One refresh took about 55 ms, and pen samples that arrived meanwhile waited for it, up to
+  20 ms, about once a second for the whole drawing session. Now a window nobody can see is not
+  refreshed, the tablet check behind the Pen tab runs in the background, and two file checks are
+  remembered until their files change. Measured over Bluetooth on an Intuos BT S: pauses longer
+  than 5 ms went from about one a second to none, and the longest wait for a pen sample from
+  20 ms to under 5 ms, with the window minimized or open. Not measured over USB yet.
+
+### Changed
+- **The pen's backup file is written in the background.** Every pen sample is also saved to a
+  small file SAI can fall back on. That write used to happen on the pen's own path, about 0.3 ms
+  per sample; it now takes about 0.05 ms there. The file is written as often as before and
+  always ends on the newest sample.
+- On the Pen tab, a tablet you connect or switch off shows up two to three seconds later instead
+  of within one. The pressure levels sent to SAI are still read fresh when you press *Launch*.
+
+### Internal
+- **The code is easier to work on.** The app's largest source file was split into smaller parts
+  that each do one job, with less tying them together. Nothing about how the app behaves
+  changed with it.
+- `install.sh` can build the helper by itself again.
+
 ## [0.3.12] — 2026-11-12
 
 ### Added

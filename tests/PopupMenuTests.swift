@@ -22,7 +22,7 @@ func expect(_ cond: Bool, _ name: String, file: StaticString = #file, line: UInt
 typealias Tag = PenFeelCore.Tag
 
 /// A stand-in for SetupController: the same state, the same sync, and a
-/// feelChanged that applies presets and profiles the way main.swift does.
+/// feelChanged that applies presets and profiles the way PenUI.swift does.
 final class FeelWindow: NSObject {
     let popup = NSPopUpButton(frame: .zero, pullsDown: false)
     var feel = PenFeel.normal
@@ -36,14 +36,14 @@ final class FeelWindow: NSObject {
         popup.action = #selector(changed)
         sync()
     }
-    /// What syncFeelControls does with the popup (main.swift).
+    /// What syncFeelControls does with the popup (PenUI.swift).
     func sync() {
         if let m = PenFeelCore.matchName(feel, profiles: profiles),
            profiles.contains(where: { $0.name == m }) { selectedProfile = m }
         let m = PenFeelCore.menu(for: feel, profiles: profiles, selectedProfile: selectedProfile)
         syncPopupMenu(popup, m.entries, selectTag: m.selected)
     }
-    /// What feelChanged does for a preset or a profile (main.swift).
+    /// What feelChanged does for a preset or a profile (PenUI.swift).
     @objc func changed() {
         actions += 1
         let tag = popup.selectedItem?.tag ?? Tag.custom

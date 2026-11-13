@@ -8,7 +8,12 @@
 # tests/run-tests.sh checks this list against what is actually on disk, so a new
 # file cannot be forgotten here.
 wacom-helper/main.swift
+wacom-helper/PenEngine.swift
+wacom-helper/LatestFileWriter.swift
 wacom-helper/PressureCore.swift
+wacom-helper/TabletDetect.swift
+wacom-helper/RefreshCache.swift
+wacom-helper/SelfTests.swift
 wacom-helper/PenFeelCore.swift
 wacom-helper/PopupMenuSync.swift
 wacom-helper/Settings.swift
@@ -19,6 +24,10 @@ wacom-helper/ChildCleanup.swift
 wacom-helper/ReportCore.swift
 wacom-helper/Licence.swift
 wacom-helper/SetupUI.swift
+wacom-helper/SetupWindow.swift
+wacom-helper/PenUI.swift
+wacom-helper/PenViews.swift
+wacom-helper/AutoWake.swift
 wacom-helper/Diagnostics.swift
 wacom-helper/MenuBar.swift
 wacom-helper/UpdateCore.swift

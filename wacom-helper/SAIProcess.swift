@@ -344,6 +344,10 @@ func launchSAIApp() {
     // live" is the single answer this must never give, so it gets two guards.
     try? FileManager.default.removeItem(atPath: "\(appPrefix)/drive_c/wt_status.txt")
     let pf = "\(appPrefix)/drive_c/wt_pressure.txt"
+    // The pen file is written on a background queue now. Let a sample still on
+    // its way land first, or it could arrive after this pen-up and SAI would
+    // start with a stale touch in the file.
+    penFile.flush()
     try? "0".write(toFile: pf, atomically: true, encoding: .ascii)
     let p = Process()
     p.executableURL = URL(fileURLWithPath: g_wine); p.arguments = ["sai2.exe"]
