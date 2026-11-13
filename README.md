@@ -16,7 +16,7 @@ canvas** while you draw. Free and open source.
 📺 **[Watch the setup video](https://youtu.be/62mJwWQsEYI)**
 
 <p align="center">
-  <img src="docs/assets/screenshots/sai-on-mac.png" alt="PaintTool SAI Ver.2 running on a MacBook, with a pressure-sensitive pen stroke on the canvas" width="88%">
+  <img src="docs/assets/screenshots/sai-on-mac.png" alt="PaintTool SAI Ver.2 running on a MacBook next to SAI Pen Pressure, with a pressure-sensitive pen stroke on the canvas" width="88%">
 </p>
 
 ## What it looks like
