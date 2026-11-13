@@ -186,7 +186,7 @@ extension SetupController {
         // Left on autoresizing translation it keeps its zero frame, and every
         // row inside it is present, unhidden, and drawn at (0,0,0,0) — the tab
         // renders as a blank rectangle. This is the same trap the tab bar in
-        // main.swift documents, in the opposite direction.
+        // SetupWindow.swift documents, in the opposite direction.
         libStack.translatesAutoresizingMaskIntoConstraints = false
         let scroll = NSScrollView()
         // THE TRAP: NSClipView is not flipped, so a list shorter than the

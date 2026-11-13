@@ -38,6 +38,21 @@ swiftc -o "$WORK/core-tests" "$REPO/wacom-helper/PressureCore.swift" "$REPO/test
 "$WORK/core-tests"
 
 echo ""
+echo "== Swift core (LatestFileWriter.swift) =="
+# The pen sample file, written off the pen path. THE TRAP: a writer that drops
+# a value arriving while a write is in progress loses a pen-up now and then.
+swiftc -o "$WORK/latestfile-tests" "$REPO/wacom-helper/LatestFileWriter.swift" "$REPO/tests/LatestFileWriterTests.swift"
+"$WORK/latestfile-tests"
+
+echo ""
+echo "== Swift core (RefreshCache.swift) =="
+# The caches that keep the once-a-second window refresh from holding up the
+# pen. THE TRAP: a cached answer served after the file changed is a wrong
+# "the bridge is installed", which is what #29 was.
+swiftc -o "$WORK/refreshcache-tests" "$REPO/wacom-helper/RefreshCache.swift" "$REPO/tests/RefreshCacheTests.swift"
+"$WORK/refreshcache-tests"
+
+echo ""
 echo "== Swift core (PenFeelCore.swift) =="
 # The pen feel presets and the three custom profiles the user can save.
 swiftc -o "$WORK/penfeel-tests" "$REPO/wacom-helper/PenFeelCore.swift" "$REPO/tests/PenFeelTests.swift"
@@ -768,9 +783,11 @@ echo "== Every exit from the running app ends the recording first =="
 # in the running app except the one inside endRecordingAndExit.
 #   * main.swift above `final class SetupController` is command-line modes that
 #     run instead of the app, so only the part from there on is checked;
+#   * SelfTests.swift is the hooks this file drives the binary through. They
+#     too run instead of the app and exit when done, so it is not checked;
 #   * a developer hook (SAIPP_TEST_*) may exit within a few lines of its check.
 bare=$(awk '
-  FNR == 1 { app = (FILENAME !~ /\/main\.swift$/); inside = 0; hook = -100 }
+  FNR == 1 { app = (FILENAME !~ /\/(main|SelfTests)\.swift$/); inside = 0; hook = -100 }
   FILENAME ~ /\/main\.swift$/ && /^final class SetupController/ { app = 1 }
   /SAIPP_TEST_/ { hook = FNR }
   /^func endRecordingAndExit/ { inside = 1 }

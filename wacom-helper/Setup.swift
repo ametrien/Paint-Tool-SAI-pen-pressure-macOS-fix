@@ -113,10 +113,22 @@ func readUserReg() -> String? {
 /// user.reg catches up, which can take the whole of an SAI session.
 var g_overrideRepairedAt: Date?
 
+/// What user.reg says about wintab32, remembered until the file changes.
+///
+/// The setup window asks this five times a second through
+/// bridgeOverrideInstalled(), and each time meant reading and searching the
+/// whole registry file on the thread the pen is read on (RefreshCache.swift).
+/// The answer is as fresh as before: a changed file is read again.
+let g_userRegOverride = FileStampCache<String?>()
+func userRegOverrideValue() -> String? {
+    g_userRegOverride.value(for: userRegPath()) {
+        readUserReg().flatMap { BridgeCheck.overrideValue(inUserReg: $0) }
+    }
+}
+
 /// Is this prefix set to load OUR wintab32 rather than Wine's built-in one?
 func bridgeOverrideInstalled() -> Bool {
-    if let text = readUserReg(),
-       BridgeCheck.overrideIsNative(BridgeCheck.overrideValue(inUserReg: text)) { return true }
+    if BridgeCheck.overrideIsNative(userRegOverrideValue()) { return true }
     // The file lags a repair: wineserver rewrites user.reg only when it exits,
     // so between repairing and that moment the file still names the value we
     // replaced — and while SAI is up, wineserver never exits, so it names it
