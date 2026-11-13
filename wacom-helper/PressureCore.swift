@@ -1,9 +1,9 @@
 // PressureCore.swift — the PURE logic of the pressure helper, extracted so it
 // can be unit-tested (tests/CoreTests.swift) without a tablet, permissions, or
-// an event tap. main.swift keeps only the OS glue (CGEventTap, UDP, AppKit).
+// an event tap. PenEngine.swift keeps only the OS glue (CGEventTap, UDP).
 //
-// Build: this file is compiled TOGETHER with main.swift:
-//   swiftc -O -o wacom-pressure-helper main.swift PressureCore.swift
+// Build: this file is compiled TOGETHER with the rest of the helper:
+//   swiftc -O -o wacom-pressure-helper $(bash ../tools/sources.sh helper)
 //
 // Everything here is deterministic input -> output. If you change behaviour
 // here, add/adjust a case in tests/CoreTests.swift.
