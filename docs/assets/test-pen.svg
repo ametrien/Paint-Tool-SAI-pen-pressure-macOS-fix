@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="496" viewBox="0 0 880 496" role="img" aria-labelledby="t d">
+<title id="t">Finding a pressure problem with Test pen</title>
+<desc id="d">If strokes come out all one width, open the Pen tab, press Test pen and press the pen on the tablet. If neither bar moves, macOS is not passing the pen on: check Input Monitoring for SAI Pen Pressure, then quit and reopen the app. If the top bar moves and the bottom one stays flat, Wine is not loading our bridge: press Repair in the Pressure bridge row on the Setup tab. If both bars move, the fault is inside SAI: turn on Use WinTab API, quit SAI fully and reopen it, and set the brush's Min Size below 100%. Still stuck: Copy problem report on the Setup tab and open an issue.</desc>
+<style>
+  text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .bg { fill: #ffffff; }
+  .h { font-size: 15px; font-weight: 600; }
+  .s { font-size: 12.5px; }
+  .l { font-size: 11.5px; }
+  .ct { fill: #E1F5EE; stroke: #0F6E56; }
+  .cp { fill: #EEEDFE; stroke: #534AB7; }
+  .cx { fill: #FAEEDA; stroke: #BA7517; }
+  .bg2 { fill: #F1EFE8; stroke: #5F5E5A; }
+  .bw { fill: #ffffff; stroke: #5F5E5A; }
+  .tt { fill: #085041; } .st { fill: #0F6E56; }
+  .tp { fill: #3C3489; } .sp { fill: #534AB7; }
+  .tx { fill: #633806; } .sx { fill: #854F0B; }
+  .tg { fill: #2C2C2A; } .sg { fill: #5F5E5A; }
+  .bar { fill: none; stroke: #888780; }
+  .fill { fill: #1D9E75; }
+  .a { stroke: #5F5E5A; stroke-width: 1.5; fill: none; }
+  .ah { fill: #5F5E5A; }
+  @media (prefers-color-scheme: dark) {
+    .bg { fill: #0d1117; }
+    .ct { fill: #04342C; stroke: #5DCAA5; }
+    .cp { fill: #26215C; stroke: #AFA9EC; }
+    .cx { fill: #412402; stroke: #EF9F27; }
+    .bg2 { fill: #2C2C2A; stroke: #B4B2A9; }
+    .bw { fill: #2C2C2A; stroke: #B4B2A9; }
+    .tt { fill: #E1F5EE; } .st { fill: #9FE1CB; }
+    .tp { fill: #EEEDFE; } .sp { fill: #CECBF6; }
+    .tx { fill: #FAEEDA; } .sx { fill: #FAC775; }
+    .tg { fill: #F1EFE8; } .sg { fill: #D3D1C7; }
+    .bar { stroke: #888780; }
+    .fill { fill: #5DCAA5; }
+    .a { stroke: #B4B2A9; }
+    .ah { fill: #B4B2A9; }
+  }
+</style>
+<defs>
+  <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M1 1L9 5L1 9z" class="ah"/>
+  </marker>
+</defs>
+<rect class="bg" x="0" y="0" width="880" height="496" rx="12"/>
+
+<!-- start -->
+<rect class="bg2" x="270" y="20" width="340" height="60" rx="8" stroke-width="1"/>
+<text class="h tg" x="440" y="45" text-anchor="middle">Strokes come out all one width</text>
+<text class="s sg" x="440" y="66" text-anchor="middle">or there is no pressure at all</text>
+<line class="a" x1="440" y1="80" x2="440" y2="102" marker-end="url(#ar)"/>
+
+<rect class="bw" x="270" y="104" width="340" height="60" rx="8" stroke-width="1"/>
+<text class="h tg" x="440" y="129" text-anchor="middle">Pen tab, Test pen</text>
+<text class="s sg" x="440" y="150" text-anchor="middle">press the pen on the tablet and watch both bars</text>
+
+<path class="a" d="M440 164 V184"/>
+<path class="a" d="M160 184 H720"/>
+<line class="a" x1="160" y1="184" x2="160" y2="202" marker-end="url(#ar)"/>
+<line class="a" x1="440" y1="184" x2="440" y2="202" marker-end="url(#ar)"/>
+<line class="a" x1="720" y1="184" x2="720" y2="202" marker-end="url(#ar)"/>
+
+<!-- outcomes, each with the two bars as the Pen tab draws them -->
+<rect class="bw" x="30" y="204" width="260" height="92" rx="8" stroke-width="1"/>
+<text class="h tg" x="160" y="228" text-anchor="middle">Neither bar moves</text>
+<text class="l sg" x="104" y="252" text-anchor="end">Sends</text>
+<rect class="bar" x="112" y="243" width="130" height="11" rx="3"/>
+<text class="l sg" x="104" y="276" text-anchor="end">Arrives</text>
+<rect class="bar" x="112" y="267" width="130" height="11" rx="3"/>
+
+<rect class="bw" x="310" y="204" width="260" height="92" rx="8" stroke-width="1"/>
+<text class="h tg" x="440" y="228" text-anchor="middle">Top moves, bottom stays flat</text>
+<text class="l sg" x="384" y="252" text-anchor="end">Sends</text>
+<rect class="fill" x="392" y="243" width="84" height="11" rx="3"/>
+<rect class="bar" x="392" y="243" width="130" height="11" rx="3"/>
+<text class="l sg" x="384" y="276" text-anchor="end">Arrives</text>
+<rect class="bar" x="392" y="267" width="130" height="11" rx="3"/>
+
+<rect class="bw" x="590" y="204" width="260" height="92" rx="8" stroke-width="1"/>
+<text class="h tg" x="720" y="228" text-anchor="middle">Both bars move</text>
+<text class="l sg" x="664" y="252" text-anchor="end">Sends</text>
+<rect class="fill" x="672" y="243" width="84" height="11" rx="3"/>
+<rect class="bar" x="672" y="243" width="130" height="11" rx="3"/>
+<text class="l sg" x="664" y="276" text-anchor="end">Arrives</text>
+<rect class="fill" x="672" y="267" width="84" height="11" rx="3"/>
+<rect class="bar" x="672" y="267" width="130" height="11" rx="3"/>
+
+<line class="a" x1="160" y1="296" x2="160" y2="318" marker-end="url(#ar)"/>
+<line class="a" x1="440" y1="296" x2="440" y2="318" marker-end="url(#ar)"/>
+<line class="a" x1="720" y1="296" x2="720" y2="318" marker-end="url(#ar)"/>
+
+<!-- where the fault is, and what to do -->
+<rect class="ct" x="30" y="320" width="260" height="112" rx="8" stroke-width="1"/>
+<text class="h tt" x="160" y="346" text-anchor="middle">macOS isn't passing it on</text>
+<text class="s st" x="160" y="372" text-anchor="middle">Turn on Input Monitoring for</text>
+<text class="s st" x="160" y="391" text-anchor="middle">SAI Pen Pressure in System</text>
+<text class="s st" x="160" y="410" text-anchor="middle">Settings, then reopen the app</text>
+
+<rect class="cx" x="310" y="320" width="260" height="112" rx="8" stroke-width="1"/>
+<text class="h tx" x="440" y="346" text-anchor="middle">Wine isn't loading the bridge</text>
+<text class="s sx" x="440" y="372" text-anchor="middle">On the Setup tab, press Repair</text>
+<text class="s sx" x="440" y="391" text-anchor="middle">in the Pressure bridge row</text>
+
+<rect class="cp" x="590" y="320" width="260" height="112" rx="8" stroke-width="1"/>
+<text class="h tp" x="720" y="346" text-anchor="middle">The fault is inside SAI</text>
+<text class="s sp" x="720" y="372" text-anchor="middle">Turn on Use WinTab API, then</text>
+<text class="s sp" x="720" y="391" text-anchor="middle">quit SAI fully and reopen it.</text>
+<text class="s sp" x="720" y="410" text-anchor="middle">Keep the brush's Min Size below 100%</text>
+
+<text class="s sg" x="440" y="470" text-anchor="middle">Still stuck? Copy problem report on the Setup tab and open an issue.</text>
+</svg>

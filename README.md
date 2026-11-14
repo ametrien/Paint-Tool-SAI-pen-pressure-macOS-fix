@@ -153,6 +153,10 @@ That is what most people do, and it works. It is also heavy for what you get.
 | Starting SAI | boot the VM, wait, then launch SAI | double-click |
 | Timelapse | screen-record the window, panels and cursor and all | **built in** — records the canvas itself |
 
+<p align="center">
+  <img src="docs/assets/vm-vs-bridge.svg" alt="Where pen pressure travels. In a virtual machine: tablet, then macOS, then virtual USB forwarded by the VM app, then a Windows driver inside the guest, then SAI in Windows; the virtual USB and the guest driver are where pressure gets lost or arrives late. With SAI Pen Pressure: tablet, then the tablet driver on macOS as usual, then SAI Pen Pressure, which adds your pen feel, then over UDP to our wintab32.dll inside SAI, then SAI in Wine, which asks for pen packets the Windows way." width="100%">
+</p>
+
 The tablet row is the one that decides it: in a VM your pen has to survive being forwarded through
 virtual USB and picked up again by a Windows driver inside the guest, which is exactly where
 pressure gets lost or arrives late. Latency you would never notice in a spreadsheet is intolerable
@@ -340,6 +344,10 @@ organised by how to tell which problem you have. If pressure is the problem, the
 **Test pen** shows two bars: what the app sends, and what actually arrives on the other side,
 inside Wine, where SAI would read it. If the top one moves and the bottom stays flat, the app
 will tell you what to press.
+
+<p align="center">
+  <img src="docs/assets/test-pen.svg" alt="Finding a pressure problem with Test pen. Strokes come out all one width, or there is no pressure: on the Pen tab press Test pen, press the pen on the tablet and watch both bars. Neither bar moves: macOS isn't passing the pen on, so turn on Input Monitoring for SAI Pen Pressure in System Settings and reopen the app. Top moves, bottom stays flat: Wine isn't loading the bridge, so press Repair in the Pressure bridge row on the Setup tab. Both bars move: the fault is inside SAI, so turn on Use WinTab API, quit SAI fully and reopen it, and keep the brush's Min Size below 100%. Still stuck: Copy problem report on the Setup tab and open an issue." width="100%">
+</p>
 
 If that doesn't sort it, **[open an issue](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/new/choose)**
 and start it with **Copy problem report** on the Setup tab:

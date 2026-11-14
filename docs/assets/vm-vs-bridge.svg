@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="428" viewBox="0 0 880 428" role="img" aria-labelledby="t d">
+<title id="t">Where pen pressure travels: a virtual machine or this project</title>
+<desc id="d">In a virtual machine the tablet goes through macOS, then the VM app forwards it over virtual USB to a Windows driver inside the guest, and only then to SAI; the virtual USB and guest driver are where pressure gets lost or arrives late. With SAI Pen Pressure the tablet stays on macOS with its usual driver, the app reads pressure and adds your pen feel, sends it over a local UDP connection to our wintab32.dll inside SAI, and SAI runs in Wine.</desc>
+<style>
+  text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .bg { fill: #ffffff; }
+  .h { font-size: 15px; font-weight: 600; }
+  .s { font-size: 12.5px; }
+  .l { font-size: 11.5px; font-weight: 600; }
+  .ct { fill: #E1F5EE; stroke: #0F6E56; }
+  .bt { fill: #ffffff; stroke: #0F6E56; }
+  .bp { fill: #ffffff; stroke: #534AB7; }
+  .bg2 { fill: #F1EFE8; stroke: #5F5E5A; }
+  .bw { fill: #ffffff; stroke: #5F5E5A; }
+  .bx { fill: #FAEEDA; stroke: #BA7517; }
+  .tt { fill: #085041; } .st { fill: #0F6E56; }
+  .tp { fill: #3C3489; } .sp { fill: #534AB7; }
+  .tg { fill: #2C2C2A; } .sg { fill: #5F5E5A; }
+  .tx { fill: #854F0B; }
+  .a { stroke: #5F5E5A; stroke-width: 1.5; fill: none; }
+  .ah { fill: #5F5E5A; }
+  .kx { stroke: #BA7517; stroke-width: 1.5; fill: none; }
+  .kt { stroke: #0F6E56; stroke-width: 1.5; fill: none; }
+  @media (prefers-color-scheme: dark) {
+    .bg { fill: #0d1117; }
+    .ct { fill: #04342C; stroke: #5DCAA5; }
+    .bt { fill: #085041; stroke: #5DCAA5; }
+    .bp { fill: #3C3489; stroke: #AFA9EC; }
+    .bg2 { fill: #2C2C2A; stroke: #B4B2A9; }
+    .bw { fill: #444441; stroke: #B4B2A9; }
+    .bx { fill: #412402; stroke: #EF9F27; }
+    .tt { fill: #E1F5EE; } .st { fill: #9FE1CB; }
+    .tp { fill: #EEEDFE; } .sp { fill: #CECBF6; }
+    .tg { fill: #F1EFE8; } .sg { fill: #D3D1C7; }
+    .tx { fill: #FAC775; }
+    .a { stroke: #B4B2A9; }
+    .ah { fill: #B4B2A9; }
+    .kx { stroke: #EF9F27; }
+    .kt { stroke: #5DCAA5; }
+  }
+</style>
+<defs>
+  <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M1 1L9 5L1 9z" class="ah"/>
+  </marker>
+</defs>
+<rect class="bg" x="0" y="0" width="880" height="428" rx="12"/>
+
+<!-- lane 1: virtual machine -->
+<rect class="bg2" x="20" y="20" width="840" height="184" rx="18" stroke-width="1"/>
+<text class="h tg" x="40" y="48">In a virtual machine</text>
+
+<rect class="bw" x="38" y="68" width="140" height="76" rx="8" stroke-width="1"/>
+<text class="h tg" x="108" y="100" text-anchor="middle">Tablet</text>
+<text class="s sg" x="108" y="122" text-anchor="middle">USB or Bluetooth</text>
+
+<rect class="bw" x="204" y="68" width="140" height="76" rx="8" stroke-width="1"/>
+<text class="h tg" x="274" y="100" text-anchor="middle">macOS</text>
+<text class="s sg" x="274" y="122" text-anchor="middle">hands it to the VM</text>
+
+<rect class="bx" x="370" y="68" width="140" height="76" rx="8" stroke-width="1"/>
+<text class="h tx" x="440" y="100" text-anchor="middle">Virtual USB</text>
+<text class="s tx" x="440" y="122" text-anchor="middle">the VM app forwards it</text>
+
+<rect class="bx" x="536" y="68" width="140" height="76" rx="8" stroke-width="1"/>
+<text class="h tx" x="606" y="100" text-anchor="middle">Windows driver</text>
+<text class="s tx" x="606" y="122" text-anchor="middle">inside the guest</text>
+
+<rect class="bw" x="702" y="68" width="140" height="76" rx="8" stroke-width="1"/>
+<text class="h tg" x="772" y="100" text-anchor="middle">SAI</text>
+<text class="s sg" x="772" y="122" text-anchor="middle">in Windows</text>
+
+<line class="a" x1="178" y1="106" x2="202" y2="106" marker-end="url(#ar)"/>
+<line class="a" x1="344" y1="106" x2="368" y2="106" marker-end="url(#ar)"/>
+<line class="a" x1="510" y1="106" x2="534" y2="106" marker-end="url(#ar)"/>
+<line class="a" x1="676" y1="106" x2="700" y2="106" marker-end="url(#ar)"/>
+
+<path class="kx" d="M370 156 V164 H676 V156"/>
+<text class="s tx" x="523" y="184" text-anchor="middle">where pressure gets lost or arrives late</text>
+
+<!-- lane 2: this project -->
+<rect class="ct" x="20" y="224" width="840" height="184" rx="18" stroke-width="1"/>
+<text class="h tt" x="40" y="252">With SAI Pen Pressure</text>
+
+<rect class="bt" x="38" y="272" width="140" height="76" rx="8" stroke-width="1"/>
+<text class="h tt" x="108" y="304" text-anchor="middle">Tablet</text>
+<text class="s st" x="108" y="326" text-anchor="middle">USB or Bluetooth</text>
+
+<rect class="bt" x="204" y="272" width="140" height="76" rx="8" stroke-width="1"/>
+<text class="h tt" x="274" y="304" text-anchor="middle">Tablet driver</text>
+<text class="s st" x="274" y="326" text-anchor="middle">on macOS, as usual</text>
+
+<rect class="bt" x="370" y="272" width="140" height="76" rx="8" stroke-width="1"/>
+<text class="h tt" x="440" y="304" text-anchor="middle">SAI Pen Pressure</text>
+<text class="s st" x="440" y="326" text-anchor="middle">adds your pen feel</text>
+
+<rect class="bp" x="536" y="272" width="140" height="76" rx="8" stroke-width="1"/>
+<text class="h tp" x="606" y="304" text-anchor="middle">wintab32.dll</text>
+<text class="s sp" x="606" y="326" text-anchor="middle">our DLL, inside SAI</text>
+
+<rect class="bp" x="702" y="272" width="140" height="76" rx="8" stroke-width="1"/>
+<text class="h tp" x="772" y="304" text-anchor="middle">SAI</text>
+<text class="s sp" x="772" y="326" text-anchor="middle">in Wine</text>
+
+<line class="a" x1="178" y1="310" x2="202" y2="310" marker-end="url(#ar)"/>
+<line class="a" x1="344" y1="310" x2="368" y2="310" marker-end="url(#ar)"/>
+<line class="a" x1="510" y1="310" x2="534" y2="310" marker-end="url(#ar)"/>
+<text class="l st" x="523" y="300" text-anchor="middle">UDP</text>
+<line class="a" x1="676" y1="310" x2="700" y2="310" marker-end="url(#ar)"/>
+
+<path class="kt" d="M38 360 V368 H510 V360"/>
+<text class="s st" x="274" y="388" text-anchor="middle">read on macOS, with the driver you already have</text>
+<path class="kt" d="M536 360 V368 H842 V360"/>
+<text class="s sp" x="689" y="388" text-anchor="middle">SAI asks for pen packets the Windows way</text>
+</svg>
