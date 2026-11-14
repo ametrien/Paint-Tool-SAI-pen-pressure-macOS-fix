@@ -24,6 +24,48 @@ cc -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all 
 "$WORK/test_wintab_core"
 
 echo ""
+echo "== wiring: zoom and wake on the pen port, files only as a fallback =="
+# The DLL's Win32 half cannot run here, so this reads the source. Each line
+# guards one way the file opens (or the getenv on SAI's thread) could come back
+# without any test of the pen noticing.
+ctl_fail=0
+W="$REPO/wintab-src/wintab32.c"
+hook="$(sed -n '/^static LRESULT CALLBACK click_hook_proc/,/^}/p' "$W")"
+if echo "$hook" | grep -v '^ *[/*]' | grep -q 'getenv('; then
+  echo "  FAIL wired: click_hook_proc calls getenv (it runs on SAI's thread for every message)"; ctl_fail=1
+else echo "  ok   wired: the message hook reads no environment variable"; fi
+echo "$hook" | grep -q 'g_want_pan' \
+  && echo "  ok   wired: the scroll rewrite is gated on its own flag" \
+  || { echo "  FAIL wired: the scroll rewrite no longer checks g_want_pan (WT_NO_SCROLL_PAN would stop working)"; ctl_fail=1; }
+prod="$(sed -n '/^static DWORD WINAPI producer/,/^}/p' "$W")"
+c_at="$(echo "$prod" | grep -n 'wtc_parse_control(' | head -1 | cut -d: -f1)"
+d_at="$(echo "$prod" | grep -n 'wtc_parse_datagram(' | head -1 | cut -d: -f1)"
+if [ -n "$c_at" ] && [ -n "$d_at" ] && [ "$c_at" -lt "$d_at" ]; then
+  echo "  ok   wired: the producer tries a control line before a pen sample"
+else echo "  FAIL wired: the producer does not parse control lines first"; ctl_fail=1; fi
+echo "$prod" | grep -q 'check_zoom(now, sock != INVALID_SOCKET)' \
+  && echo "  ok   wired: the zoom file is read only while the port is not ours" \
+  || { echo "  FAIL wired: check_zoom is not told whether the port is ours"; ctl_fail=1; }
+echo "$prod" | grep -q 'check_win32_wake(now, sock != INVALID_SOCKET)' \
+  && echo "  ok   wired: the wake file slows down while the port is ours" \
+  || { echo "  FAIL wired: check_win32_wake is not told whether the port is ours"; ctl_fail=1; }
+echo "$prod" | grep -q 'wtc_press_file_due(sock != INVALID_SOCKET' \
+  && echo "  ok   wired: the sample file follows wtc_press_file_due" \
+  || { echo "  FAIL wired: the sample file is read by a rule of its own again"; ctl_fail=1; }
+PE="$REPO/wacom-helper/PenEngine.swift"
+zoom="$(sed -n '/^func noteMagnify/,/^}/p' "$PE")"
+echo "$zoom" | grep -q 'PressureCore.zoomLine' \
+  && echo "  ok   wired: a pinch is sent as a datagram" \
+  || { echo "  FAIL wired: noteMagnify sends no zoom datagram"; ctl_fail=1; }
+if echo "$zoom" | grep -v '^ *//' | grep -q '\.write(toFile'; then
+  echo "  FAIL wired: noteMagnify writes the zoom file itself (it runs in the tap and waits for the disk)"; ctl_fail=1
+else echo "  ok   wired: the tap does not wait for the zoom file"; fi
+grep -q 'PressureCore.wakeLine' "$REPO/wacom-helper/AutoWake.swift" \
+  && echo "  ok   wired: a wake request is sent as a datagram" \
+  || { echo "  FAIL wired: bumpWin32Wake sends no wake datagram"; ctl_fail=1; }
+[ "$ctl_fail" = 0 ] || exit 1
+
+echo ""
 echo "== C core (timelapse_core.h) — under AddressSanitizer + UBSanitizer =="
 # The tile walk runs inside SAI's own process, where an out-of-bounds read is a
 # crash that costs the artist unsaved work. Sanitizers here are the substitute

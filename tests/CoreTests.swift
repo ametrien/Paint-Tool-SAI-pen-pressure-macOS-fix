@@ -332,6 +332,29 @@ struct CoreTests {
     expect(f.count == 10 && ((f[7] - f[6]) & 0x7FFF_FFFF) == 300,
            "wire: an interval survives the masking")
 
+    // --- control lines: zoom and wake on the pen port ------------------------
+    // tests/test_wintab_core.c parses these same strings.
+    expect(PressureCore.zoomLine(steps: 3) == "Z 3" && PressureCore.zoomLine(steps: -2) == "Z -2",
+           "control: a zoom line carries the change, signed")
+    expect(PressureCore.zoomLine(steps: 0) == nil, "control: no change, no line")
+    expect(PressureCore.zoomLine(steps: 500) == "Z 64" && PressureCore.zoomLine(steps: -500) == "Z -64",
+           "control: never more than the 64 steps the DLL accepts")
+    // THE TRAP: a bare counter starts again at 1 when the app restarts with
+    // SAI still open; the DLL has seen "1" and skips that wake.
+    expect(PressureCore.wakeToken(run: 1_731_600_000, seq: 12) == "r1731600000n12", "control: the wake token")
+    expect(PressureCore.wakeToken(run: 100, seq: 1) != PressureCore.wakeToken(run: 101, seq: 1),
+           "control: the first wake of a new run is not the first wake of the last one")
+    expect(PressureCore.wakeLine(token: "r1731600000n12") == "K r1731600000n12", "control: the wake line")
+    expect(PressureCore.wakeLine(token: PressureCore.wakeToken(run: Int(Int32.max) * 4, seq: 999_999)) != nil,
+           "control: a token from any real clock and count fits the DLL's 31 characters")
+    expect(PressureCore.wakeLine(token: "") == nil && PressureCore.wakeLine(token: "a b") == nil
+           && PressureCore.wakeLine(token: String(repeating: "7", count: 32)) == nil,
+           "control: a token the DLL would refuse is not sent")
+    // A control line can never look like a sample: a sample starts with a digit.
+    expect(PressureCore.zoomLine(steps: 1)!.first == "Z" && PressureCore.wakeLine(token: "1")!.first == "K"
+           && PressureCore.wireLine(seq: 0, p: 0, xf: 0, yf: 0, wf: 8, hf: 8, evUs: nil, txUs: 0, n: 0).first!.isNumber,
+           "control: lines start with a letter, samples with a digit")
+
     // Which clock is an event stamp in? Numbers from this Mac: one tick is
     // 125/3 ns, so the same moment reads 41.7x smaller in ticks.
     let nowNs: UInt64 = 118_185_242_797_833

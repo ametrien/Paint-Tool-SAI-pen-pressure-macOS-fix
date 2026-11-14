@@ -626,6 +626,8 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     var bouncing = false          // true while WE are re-activating (ignore our own events)
     var lastReactivate = Date.distantPast
     var wakeSeq = 0               // counts the wake requests sent to the DLL (bumpWin32Wake)
+    /// Different for every start of the app (PressureCore.wakeToken says why).
+    let wakeRun = Int(Date().timeIntervalSince1970)
 
     var statusItem: NSStatusItem?
     var screenNotice = BridgeCheck.ScreenNotice.none   // see watchScreenNotice (#37)
