@@ -387,6 +387,50 @@ Contributions welcome — especially testing on other tablets and Macs.
 
 ---
 
+## How it fits together
+
+<p align="center">
+  <img src="docs/assets/architecture.svg" alt="Architecture. On the left, your SAI folder and the tablet feed SAI Pen Pressure.app in /Applications: its Setup window copies SAI and your licence into the Wine prefix, its pen engine sends every pen sample over UDP to our wintab32.dll, and its SAI process part exchanges small control files with the DLL. On the right, Wine Staging.app in /Applications runs sai2.exe from the prefix ~/SAI2-pressure, which holds drive_c/SAI2 with sai2.exe and your licence (next to sai2.exe and in settings/), windows/system32/wintab32.dll, the drive_c/wt_*.txt control files, the registry files, and the timelapse frames. Below, the app keeps its settings and a copy of your licence in ~/Library/Application Support/SAIPenPressure, and a separate encoder turns the frames into videos in ~/Movies/SAI Timelapses." width="100%">
+</p>
+
+**The pen.** The tablet moves the cursor in every app, but the pressure stops at macOS. The app
+reads it through an event tap, applies your pen feel, and sends each sample over UDP
+(`127.0.0.1:47800`) to our `wintab32.dll`. Wine loads that DLL into `sai2.exe` in place of its
+own, so SAI asks it for pen packets the ordinary Windows way. If the port is busy, the DLL reads
+the newest sample from `C:\wt_pressure.txt` instead.
+
+**Where things live.**
+
+| What | Where |
+|---|---|
+| The app | `/Applications/SAI Pen Pressure.app` |
+| Wine | `/Applications/Wine Staging.app` (installed by the app if missing) |
+| SAI's own Windows drive (the Wine prefix) | `~/SAI2-pressure` |
+| SAI itself | `~/SAI2-pressure/drive_c/SAI2/` |
+| Your licence | the original `.slc` file from SYSTEMAX, copied to `~/SAI2-pressure/drive_c/SAI2/` **and** `~/SAI2-pressure/drive_c/SAI2/settings/`, because older and newer SAI builds read it from different folders |
+| A spare copy of the licence | `~/Library/Application Support/SAIPenPressure/license/`, so a rebuilt prefix gets it back |
+| Our DLL | `~/SAI2-pressure/drive_c/windows/system32/wintab32.dll`, replaced from the app on every launch when they differ |
+| App settings | `~/Library/Application Support/SAIPenPressure/` |
+| Timelapse videos | `~/Movies/SAI Timelapses/`, one folder per drawing |
+
+The SAI folder you pick during setup is only a source: SAI is copied into the prefix and runs
+from there.
+
+**Small files in `C:\`.** The two halves agree through a few text files in
+`~/SAI2-pressure/drive_c`: the pressure scale (`wt_pmax.txt`, written before SAI starts), the
+Wake SAI request (`wt_wake.txt`), pinch-to-zoom steps (`wt_zoom.txt`), and the DLL's own report
+(`wt_status.txt`), which is how the app knows the bridge really is loaded inside SAI.
+
+**The timelapse.** Because the DLL runs inside SAI, it can read the canvas straight from SAI's
+memory after a stroke and write it to `drive_c/sai-timelapse/frames/`. A separate encoder process
+turns those frames into H.264 video, so video work never slows the pen, and the Videos tab groups
+sessions of the same drawing into one video.
+
+The full story, with the reasons behind each choice, is in
+[How it works](https://ametrien.github.io/Paint-Tool-SAI-pen-pressure-macOS-fix/how-it-works).
+
+---
+
 ## Credit
 
 **The canvas timelapse is our own implementation, inspired by
