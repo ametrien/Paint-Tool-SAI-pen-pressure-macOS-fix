@@ -305,6 +305,105 @@ struct CoreTests {
     expect(PressureCore.classifyTablet(pressureSpans: [], hasVendorDigitizer: false)
              == .notATablet, "tablet: a trackpad-shaped device is not a tablet")
 
+    // --- the datagram's times, for the DLL's stroke-start trace --------------
+    // The six fields an older DLL reads come first and unchanged, so a new app
+    // with an old DLL still draws.
+    expect(PressureCore.wireLine(seq: 7, p: 512, xf: 100, yf: 200, wf: 11520, hf: 7200,
+                                 evUs: 1000, txUs: 1500, n: 42)
+             == "7 512 100 200 11520 7200 1000 1500 42 1", "wire: six sample fields, then ev, tx, n and 'ev is real'")
+    // THE TRAP: an event time we do not have must not travel as a number that
+    // looks like one. It used to be replaced by the send time, and a stamp
+    // that never changed went out as it was: both read in the DLL's trace as
+    // "the tablet was on time", which blames the app. Unknown is sent as
+    // unknown: flag 0.
+    expect(PressureCore.wireLine(seq: 7, p: 512, xf: 100, yf: 200, wf: 11520, hf: 7200,
+                                 evUs: nil, txUs: 1500, n: 42)
+             == "7 512 100 200 11520 7200 0 1500 42 0", "wire: no event time -> flag 0, never the send time")
+    // THE TRAP: the DLL reads these with a 32-bit sscanf (long is 32 bits on
+    // Windows). An uptime in microseconds passes 2^31 after 35 minutes; sent
+    // whole it would be read as garbage, and every interval after that as
+    // nonsense. So the three are sent modulo 2^31.
+    let up = 118_185_242_797          // a real uptime in microseconds, ~33 hours
+    let line = PressureCore.wireLine(seq: 1, p: 1, xf: 0, yf: 0, wf: 8, hf: 8,
+                                     evUs: up, txUs: up + 300, n: 0x1_0000_0005)
+    let f = line.split(separator: " ").compactMap { Int($0) }
+    expect(f.count == 10 && f[6] <= 0x7FFF_FFFF && f[7] <= 0x7FFF_FFFF && f[8] == 5 && f[9] == 1,
+           "wire: times and counter are sent modulo 2^31")
+    expect(f.count == 10 && ((f[7] - f[6]) & 0x7FFF_FFFF) == 300,
+           "wire: an interval survives the masking")
+
+    // Which clock is an event stamp in? Numbers from this Mac: one tick is
+    // 125/3 ns, so the same moment reads 41.7x smaller in ticks.
+    let nowNs: UInt64 = 118_185_242_797_833
+    let nowTicks: UInt64 = 2_836_445_827_148
+    func stampUs(_ stamp: UInt64) -> (us: Int, unit: PressureCore.StampUnit)? {
+        PressureCore.eventStampUs(stamp: stamp, nowNs: nowNs, numer: 125, denom: 3)
+    }
+    let nowUsT = Int(nowNs / 1000)
+    if let r = stampUs(nowTicks - 24_000) {
+        expect(r.unit == .ticks && r.us == nowUsT - 1000, "clock: a tick stamp 1 ms old reads as ticks, 1 ms ago")
+    } else { expect(false, "clock: a tick stamp 1 ms old is usable") }
+    if let r = stampUs(nowNs - 1_000_000) {
+        expect(r.unit == .nanoseconds && r.us == nowUsT - 1000, "clock: a nanosecond stamp 1 ms old reads as nanoseconds, 1 ms ago")
+    } else { expect(false, "clock: a nanosecond stamp 1 ms old is usable") }
+    // an event that waited a whole second in a queue is still told apart
+    expect(stampUs(nowTicks - 24_000_000)?.unit == .ticks, "clock: a tick stamp one second old is still ticks")
+    expect(stampUs(nowNs - 1_000_000_000)?.unit == .nanoseconds, "clock: a nanosecond stamp one second old is still nanoseconds")
+    // THE TRAP (field run of 2026-11-14): a stamp that is not a recent moment
+    // on EITHER clock. The old rule took whichever clock was "nearer" and
+    // believed it; every interval in the trace then read 0.0 ms. It must come
+    // back as nil. These three sit far from "now" both ways.
+    expect(stampUs(nowNs / 2) == nil, "clock: a stamp halfway back to startup is unusable, not 'nearest clock'")
+    expect(stampUs(nowNs - 10_000_000_000) == nil, "clock: a nanosecond stamp 10 s old is not this event")
+    expect(stampUs(nowTicks - 240_000_000) == nil, "clock: a tick stamp 10 s old is not this event")
+    expect(stampUs(nowNs + 1_000_000_000) == nil, "clock: a stamp one second in the future is unusable")
+    expect(stampUs(0) == nil, "clock: an event that was never stamped is unusable")
+    // THE SECOND TRAP (same session, 2026-11-14): a tablet proximity event
+    // stamped in MICROSECONDS. Real numbers from the log: 0.26 ms old. Read
+    // only as nanoseconds or ticks it came back "unusable" and the pen's
+    // samples went out with no time at all.
+    if let r = PressureCore.eventStampUs(stamp: 146_508_753_911, nowNs: 146_508_754_168_958,
+                                         numer: 125, denom: 3) {
+        expect(r.unit == .microseconds && r.us == 146_508_753_911,
+               "clock: the logged proximity stamp reads as microseconds, as it is")
+    } else { expect(false, "clock: the logged proximity stamp (microseconds) is usable") }
+    expect(stampUs(UInt64(nowUsT - 1000))?.unit == .microseconds, "clock: a microsecond stamp 1 ms old reads as microseconds")
+    expect(stampUs(UInt64(nowUsT - 1000))?.us == nowUsT - 1000, "clock: a microsecond stamp is taken as it is")
+    expect(stampUs(UInt64(nowUsT) - 10_000_000) == nil, "clock: a microsecond stamp 10 s old is not this event")
+    // the three units are told apart for the same moment
+    expect(stampUs(nowNs)?.unit == .nanoseconds && stampUs(nowTicks)?.unit == .ticks
+           && stampUs(UInt64(nowUsT))?.unit == .microseconds,
+           "clock: one moment in ns, ticks and us gives three different units, one time")
+    // the edges of "recent"
+    let maxAge = UInt64(PressureCore.eventStampMaxAgeUs) * 1000
+    expect(stampUs(nowNs - maxAge) != nil, "clock: exactly the oldest age allowed is still usable")
+    expect(stampUs(nowNs - maxAge - 1_000_000) == nil, "clock: 1 ms past the oldest age is not")
+    // a stamp read a moment AFTER 'now' was read (the two reads are not one instant)
+    expect(stampUs(nowNs + 1_000_000) != nil, "clock: a stamp 1 ms ahead of our own clock read is usable")
+    // with a 1/1 timebase both readings agree: it is simply nanoseconds
+    expect(PressureCore.eventStampUs(stamp: nowNs - 1_000_000, nowNs: nowNs, numer: 1, denom: 1)?.unit == .nanoseconds,
+           "clock: on a 1/1 timebase a stamp is nanoseconds")
+
+    // ticks -> microseconds: 24,000 ticks at 125/3 ns each is exactly 1 ms.
+    expect(PressureCore.eventStampUs(24_000, isTicks: true, numer: 125, denom: 3) == 1000,
+           "clock: 24000 ticks at 125/3 is 1000 microseconds")
+    // THE TRAP: read ticks as nanoseconds and every interval comes out 41.7x
+    // too short, so a 35 ms hole in the tablet's own samples would read as
+    // 0.8 ms and the tablet would be cleared of a delay it caused.
+    let a = PressureCore.eventStampUs(nowTicks, isTicks: true, numer: 125, denom: 3)
+    let b = PressureCore.eventStampUs(nowTicks + 840_000, isTicks: true, numer: 125, denom: 3)
+    expect(b - a == 35_000, "clock: 840000 ticks apart is 35 ms, not 0.84 ms")
+    expect(PressureCore.eventStampUs(nowNs, isTicks: false, numer: 125, denom: 3) == Int(nowNs / 1000),
+           "clock: a nanosecond stamp is only divided by 1000")
+    expect(PressureCore.eventStampUs(nowTicks, isTicks: true, numer: 125, denom: 3) == Int(nowNs / 1000),
+           "clock: this Mac's tick count converts to this Mac's uptime")
+    // a broken timebase must not divide by zero
+    expect(PressureCore.eventStampUs(5000, isTicks: true, numer: 1, denom: 0) == 5,
+           "clock: a zero timebase falls back instead of dividing by zero")
+    // no overflow near the top of the range
+    expect(PressureCore.eventStampUs(UInt64.max / 2, isTicks: true, numer: 125, denom: 3) > 0,
+           "clock: a huge stamp does not overflow the multiply")
+
     if failures > 0 { print("FAILED: \(failures) test(s)"); exit(1) }
         print("All PressureCore tests passed.")
     }
