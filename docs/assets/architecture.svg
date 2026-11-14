@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="880" height="750" viewBox="0 0 880 750" role="img" aria-labelledby="t d">
 <title id="t">How SAI Pen Pressure fits together</title>
-<desc id="d">The tablet feeds the SAI Pen Pressure app, which sends every pen sample over UDP to our wintab32.dll inside sai2.exe. SAI, its licence, our DLL, the control files and the timelapse frames all live in the Wine prefix ~/SAI2-pressure, and Wine Staging in /Applications runs sai2.exe from there. A separate encoder turns the frames into videos in ~/Movies.</desc>
+<desc id="d">The tablet feeds the SAI Pen Pressure app, which sends every pen sample, pinch-to-zoom step and wake request over UDP to our wintab32.dll inside sai2.exe. SAI, its licence, our DLL, the control files and the timelapse frames all live in the Wine prefix ~/SAI2-pressure, and Wine Staging in /Applications runs sai2.exe from there. A separate encoder turns the frames into videos in ~/Movies.</desc>
 <style>
   text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
   .bg { fill: #ffffff; }
@@ -61,7 +61,7 @@
 
 <rect class="bt" x="220" y="294" width="210" height="56" rx="8" stroke-width="1"/>
 <text class="h tt" x="325" y="317" text-anchor="middle">Pen engine</text>
-<text class="s st" x="325" y="337" text-anchor="middle">Event tap, pen feel, UDP 47800</text>
+<text class="s st" x="325" y="337" text-anchor="middle">Pen, zoom and wake on UDP 47800</text>
 
 <rect class="bt" x="220" y="366" width="210" height="56" rx="8" stroke-width="1"/>
 <text class="h tt" x="325" y="389" text-anchor="middle">SAI process</text>
@@ -97,7 +97,7 @@
 
 <rect class="bp" x="510" y="366" width="330" height="56" rx="8" stroke-width="1"/>
 <text class="m tp" x="675" y="389" text-anchor="middle">drive_c/wt_*.txt</text>
-<text class="s sp" x="675" y="409" text-anchor="middle">Pressure scale, wake, zoom, bridge status</text>
+<text class="s sp" x="675" y="409" text-anchor="middle">Pressure scale, bridge status, fallbacks</text>
 
 <rect class="bp" x="510" y="438" width="330" height="56" rx="8" stroke-width="1"/>
 <text class="m tp" x="675" y="461" text-anchor="middle">user.reg, system.reg</text>
