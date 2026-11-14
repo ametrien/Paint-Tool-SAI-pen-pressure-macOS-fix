@@ -3,6 +3,23 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](https://semver.org/).
 
+## [0.3.14] — 2026-11-14
+
+### Fixed
+- **The start of a stroke is no longer lost.** SAI starts a stroke on the click that comes from
+  the pen touch, but the first pen pressure reached SAI about 8 ms before that click, in every
+  stroke we measured. SAI lost those first points, so quick strokes and letters began late. Now
+  the first pressure points wait until SAI has taken the click, and then go straight in. Measured
+  in one SAI session, switching back and forth: with the fix, SAI got pressure before the click
+  in 0 of 52 strokes; without it, in 27 of 27. The first points arrive about 9 ms later than
+  before, which is when SAI starts the stroke anyway. If no click comes, they wait at most 30 ms.
+
+### Internal
+- The pen event's own time is now read correctly when macOS gives it in microseconds, so the
+  debug log can tell a late tablet from a late app.
+- The debug log can trace the start of each stroke: when each sample left the app, when SAI read
+  it, and when SAI took the click. Off unless debug logging is on.
+
 ## [0.3.13] — 2026-11-13
 
 ### Fixed

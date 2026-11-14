@@ -231,6 +231,8 @@ static int   g_dirty;      /* g_last holds a fresher sample than we've posted */
                               boxy fast curves (drops in-between points); higher = smoother
                               curves, more lag. Measuring SAI's draw rate to tune this. */
 static DWORD g_ring_time[RING_SZ];  /* GetTickCount when each serial was posted (latency probe) */
+/* g_posted is counted from two threads once the hold posts from SAI's own */
+static void bump_posted(void) { InterlockedIncrement((LONG volatile *)&g_posted); }
 
 /* ---- SCREENS (issue #37) ----------------------------------------------------
  * Re-read the Windows virtual desktop. Wine updates it the moment macOS
@@ -265,6 +267,136 @@ static int g_selfcheck = 1;
  * with hover-only samples so nothing ever clicks in SAI. Off by default: one
  * line per sample is far too much for normal debugging. */
 static int g_log_pos;
+/* Stroke-start trace (wtc_st_* in wintab_core.h): one "START ..." line per
+ * stroke in the debug log. On whenever the debug log is; WT_NO_START_TRACE=1
+ * turns it off. Touched from the producer thread and SAI's UI thread, always
+ * under g_cs. */
+static int g_trace_start;
+static WTC_STARTTRACE g_st;
+static WTC_MIDSTAT g_mid;          /* the rest of the stroke, for comparison */
+/* The app's times for the sample being emitted (see WTC_TIMES). Set by the
+ * producer just before emit_sample() and read only inside it, on that same
+ * thread. has = 0 for the file fallback, which carries no times. */
+static WTC_TIMES g_dg_tm;
+
+/* A pen-down that got no click (wtc_nc_* in wintab_core.h): what SAI's UI
+ * thread received meanwhile. All under g_cs, like the trace. */
+static WTC_NOCLICK g_nc;
+static int   g_mm_have;            /* a WM_MOUSEMOVE has been seen at all */
+static DWORD g_mm_tick;            /* ...and when the newest one was taken */
+static HWND  g_last_click_hwnd;    /* where the last real click into SAI went */
+
+/* One "NOCLICK ..." line. Runs on the producer thread, so it only uses calls
+ * that SEND NOTHING to SAI's UI thread: WindowFromPoint() asks every window it
+ * crosses (WM_NCHITTEST), and a UI thread that is busy would then hold up the
+ * pen from here. ChildWindowFromPointEx() is plain geometry. */
+static void log_noclick(const WTC_NOCLICK *tally, long move_age, int32_t sx, int32_t sy,
+                        unsigned waited_ms, HWND last_click) {
+    char tl[160], cls[64] = "?";
+    HWND root = g_hwnd ? GetAncestor(g_hwnd, GA_ROOT) : NULL;
+    HWND child = NULL, fg = GetForegroundWindow();
+    RECT wr = {0, 0, 0, 0};
+    POINT pt = { sx, sy }, cur = {0, 0};
+    int inside = 0;
+    GUITHREADINFO gti;
+    memset(&gti, 0, sizeof gti);
+    gti.cbSize = sizeof gti;
+    if (root) {
+        POINT c = pt;
+        inside = GetWindowRect(root, &wr) && PtInRect(&wr, pt);
+        ScreenToClient(root, &c);
+        child = ChildWindowFromPointEx(root, c, CWP_SKIPINVISIBLE | CWP_SKIPDISABLED);
+        if (child) GetClassNameA(child, cls, (int)sizeof cls);
+        GetGUIThreadInfo(GetWindowThreadProcessId(root, NULL), &gti);
+    }
+    GetCursorPos(&cur);
+    wtc_nc_format(tally, move_age, tl, sizeof tl);
+    log_line("NOCLICK pen-down at (%d,%d) got no click in %ums: %s | under pen: child=%p class=%s "
+             "inside-sai-window=%d main=%p last-click-went-to=%p | fg=%p (sai=%d) active=%p capture=%p "
+             "| cursor=(%ld,%ld) button=%s",
+             (int)sx, (int)sy, waited_ms, tl, (void *)child, cls, inside, (void *)root, (void *)last_click,
+             (void *)fg, (fg && root && GetAncestor(fg, GA_ROOT) == root) ? 1 : 0,
+             (void *)gti.hwndActive, (void *)gti.hwndCapture,
+             (long)cur.x, (long)cur.y, (GetAsyncKeyState(VK_LBUTTON) & 0x8000) ? "down" : "up");
+}
+
+/* Write out the stroke-start trace if it is due (or `force`). The line is built
+ * under the lock and written outside it, so SAI's thread never waits on disk. */
+static void st_report(DWORD now, int force) {
+    char line[2048];
+    int have = 0, lost = 0;
+    WTC_NOCLICK tally;
+    long move_age = -1;
+    int32_t sx = 0, sy = 0;
+    unsigned waited = 0;
+    HWND last_click = NULL;
+    if (!g_trace_start) return;
+    EnterCriticalSection(&g_cs);
+    if (g_st.active && (force || wtc_st_due(&g_st, now))) {
+        /* decided BEFORE formatting, which closes the trace */
+        lost = wtc_nc_lost(g_st.clicked, &g_nc);
+        tally = g_nc;
+        if (g_mm_have) move_age = (long)(DWORD)(now - g_mm_tick);
+        sx = g_st.pk[0].sx; sy = g_st.pk[0].sy;
+        waited = (unsigned)(DWORD)(now - g_st.t0);
+        last_click = g_last_click_hwnd;
+        wtc_st_format(&g_st, line, sizeof line);
+        have = 1;
+    }
+    LeaveCriticalSection(&g_cs);
+    if (have) log_line("%s", line);
+    if (have && lost) log_noclick(&tally, move_age, sx, sy, waited, last_click);
+}
+
+/* ---- HOLD THE FIRST PEN-DOWN PACKETS UNTIL THE CLICK ------------------------
+ * The rules and the reasons are in wintab_core.h (wtc_hold_*). Here: the state,
+ * all under g_cs because the producer thread fills the line and SAI's UI thread
+ * (the message hook) empties it; and the one place that posts held packets.
+ * The hold is always on; g_hold_on stays as a name so the hook's users read
+ * the same as before. */
+static HHOOK g_click_hook;         /* defined with the hook, further down */
+static WTC_HOLD g_hold;
+static const int g_hold_on = 1;   /* always: no switch (wintab_core.h) */
+static int   g_ld_have;            /* SAI has taken a left click at all */
+static DWORD g_ld_tick;            /* ...and when the newest one */
+static unsigned long g_hold_by[3]; /* holds ended by: 0 time limit, 1 click, 2 pen lifted */
+
+/* Post whatever is held, oldest first. Safe from either thread and safe to
+ * call when nothing is held. `only_if_expired`: do nothing unless the time
+ * limit has passed. */
+static void hold_release(int why, int only_if_expired) {
+    uint32_t ser[WTC_HOLD_CAP];
+    int n = 0, was = 0;
+    DWORD waited = 0, now = GetTickCount();
+    EnterCriticalSection(&g_cs);
+    if (g_hold.active && (!only_if_expired || wtc_hold_expired(&g_hold, now))) {
+        was = 1;
+        waited = now - g_hold.t0;
+        n = wtc_hold_release(&g_hold, ser);
+        g_hold_by[why]++;
+    }
+    LeaveCriticalSection(&g_cs);
+    if (!was || !g_hwnd) return;
+    for (int i = 0; i < n; i++) {
+        PostMessageW(g_hwnd, WT_PACKET, ser[i], (LPARAM)0xC0FFEE01);
+        bump_posted();
+    }
+    /* Only the time limit is worth a line: it means no click came, which is
+     * the case the hold cannot help. (Never log from the hook thread.) */
+    if (why == 0) log_line("HOLD: no click in %lums, posted %d held packet(s) as they were",
+                           (unsigned long)waited, n);
+}
+
+/* The hold is always on (wintab_core.h says why there is no switch). This
+ * only says so in the log, once, so a log shows which DLL it came from. */
+static void check_hold(DWORD now) {
+    static int said;
+    (void)now;
+    if (said) return;
+    said = 1;
+    log_line("HOLD: ON (first pen-down packets wait for SAI to take the click, at most %dms)",
+             WTC_HOLD_MAX_MS);
+}
 
 static void read_virtual(int *x, int *y, int *w, int *h) {
     *x = GetSystemMetrics(SM_XVIRTUALSCREEN);
@@ -337,6 +469,8 @@ static void emit_sample(const SAMPLE *s) {
     pk.cursor = 0;
     pk.buttons  = down ? 1 : 0;
     pk.pressure = down ? (UINT)s->press : 0;
+    /* screen position of this sample, for the stroke-start trace only */
+    static int32_t trX, trY;
 
     /* map position into the OUTPUT coordinate space of the context SAI
      * opened (WinTab packets are in lcOut coords). WinTab convention:
@@ -388,6 +522,7 @@ static void emit_sample(const SAMPLE *s) {
             if (GetCursorPos(&cur)) use = wtc_screen_to_sample(s, virt, cur.x, cur.y);
         }
 
+        if (g_trace_start) wtc_sample_to_screen(&use, virt, &trX, &trY);
         int32_t px, py;
         int inside = wtc_place(&use, virt, sys, oX, oY, eX, eY, IN_EXT, &px, &py);
         if (g_log_pos) {
@@ -435,10 +570,31 @@ static void emit_sample(const SAMPLE *s) {
      * point and the trail stays tight. Skipped points are on-path; SAI
      * interpolates. A pending fresh sample is flushed by flush_pending(). */
     UINT ser = 0; BOOL post;
+    int held = 0;
+    /* HOLD (wtc_hold_* in wintab_core.h). A lift ends it at once: the held
+     * packets go out first, then the pen-up below, in that order. Otherwise
+     * only the time limit is checked here. */
+    if (!down) hold_release(2, 0);
+    else       hold_release(0, 1);
     EnterCriticalSection(&g_cs);
     g_last = pk;
-    post = wtc_should_post(g_serial, g_fetched, transition, POST_WINDOW);
-    if (post) {
+    if (transition && down &&
+        wtc_hold_should_start(g_hold_on, g_click_hook != NULL, g_ld_have, GetTickCount(), g_ld_tick))
+        wtc_hold_start(&g_hold, GetTickCount());
+    if (down && g_hold.active) {
+        /* Gets its serial and its place in the ring now, so WTPacket can serve
+         * it and the trace knows it; only the PostMessage waits. */
+        uint32_t reuse = 0;
+        held = 1;
+        post = TRUE;                    /* it WILL be posted: not "merged" for the trace */
+        if (wtc_hold_add(&g_hold, g_serial, &reuse)) ser = g_serial++;
+        else ser = reuse;               /* line full: replaces the newest held one */
+        g_last_serial = ser;
+        g_ring_serial[ser % RING_SZ] = ser;
+        g_ring[ser % RING_SZ] = pk;
+        g_ring_time[ser % RING_SZ] = GetTickCount();
+        g_dirty = 0;
+    } else if ((post = wtc_should_post(g_serial, g_fetched, transition, POST_WINDOW)) != 0) {
         ser = g_serial++;
         g_last_serial = ser;
         g_ring_serial[ser % RING_SZ] = ser;
@@ -448,9 +604,40 @@ static void emit_sample(const SAMPLE *s) {
     } else {
         g_dirty = 1;          /* freshest not yet delivered; flush when SAI catches up */
     }
+    /* stroke-start trace: recorded BEFORE the PostMessage below, so SAI cannot
+     * fetch this serial before the trace knows it exists */
+    int st_prev = 0;
+    char mid_line[256]; mid_line[0] = '\0';
+    if (g_trace_start) {
+        DWORD t = GetTickCount();
+        if (transition && down) {
+            st_prev = g_st.active;          /* the last stroke's line is still open */
+            if (!st_prev) {
+                wtc_st_down_t(&g_st, t, post, ser, (int)pk.pressure, trX, trY, &g_dg_tm);
+                memset(&g_nc, 0, sizeof g_nc);      /* count mouse messages from this pen-down */
+            }
+            wtc_mid_down(&g_mid, t);
+        } else {
+            wtc_st_sample_t(&g_st, t, down, post, ser, (int)pk.pressure, trX, trY, &g_dg_tm);
+            if (down) wtc_mid_sample(&g_mid, t, trX, trY, &g_dg_tm);
+            else if (transition) wtc_mid_format(&g_mid, mid_line, sizeof mid_line);   /* pen-up */
+        }
+    }
     LeaveCriticalSection(&g_cs);
+    if (mid_line[0]) log_line("%s", mid_line);
+    if (st_prev) {
+        /* A new stroke inside the last one's report window: write the old line
+         * out first, then start the new trace. Done in two steps because the
+         * write happens outside the lock. */
+        st_report(GetTickCount(), 1);
+        EnterCriticalSection(&g_cs);
+        wtc_st_down_t(&g_st, GetTickCount(), post, ser, (int)pk.pressure, trX, trY, &g_dg_tm);
+        memset(&g_nc, 0, sizeof g_nc);
+        LeaveCriticalSection(&g_cs);
+    }
 
-    if (post) { PostMessageW(g_hwnd, WT_PACKET, ser, (LPARAM)0xC0FFEE01); g_posted++; }
+    if (post && !held) { PostMessageW(g_hwnd, WT_PACKET, ser, (LPARAM)0xC0FFEE01); bump_posted(); }
+    st_report(GetTickCount(), 0);
 }
 
 /* deliver the freshest pending packet once SAI has caught up — covers the case
@@ -470,7 +657,7 @@ static void flush_pending(void) {
         post = TRUE;
     }
     LeaveCriticalSection(&g_cs);
-    if (post) { PostMessageW(g_hwnd, WT_PACKET, ser, (LPARAM)0xC0FFEE01); g_posted++; }
+    if (post) { PostMessageW(g_hwnd, WT_PACKET, ser, (LPARAM)0xC0FFEE01); bump_posted(); }
 }
 
 /* ---- WIN32 WAKE ------------------------------------------------------------
@@ -844,6 +1031,29 @@ static void post_pan(HWND w, int rawX, int rawY) {
 static LRESULT CALLBACK click_hook_proc(int code, WPARAM wp, LPARAM lp) {
     MSG *m = (MSG *)lp;
     (void)wp;
+    /* HOLD: SAI is taking a left click off its queue right now, on this
+     * thread, and has not acted on it yet. Whatever pen-down packets were kept
+     * back are posted here, so they are the next thing SAI reads after the
+     * click. The click itself is not touched. Any window of SAI's counts: a
+     * click in a panel releases too, where waiting would gain nothing. */
+    if (code >= 0 && m && wp == PM_REMOVE &&
+        (m->message == WM_LBUTTONDOWN || m->message == WM_LBUTTONDBLCLK)) {
+        EnterCriticalSection(&g_cs);
+        g_ld_have = 1; g_ld_tick = GetTickCount();
+        LeaveCriticalSection(&g_cs);
+        hold_release(1, 0);
+    }
+    /* Diagnostic only, nothing is changed: count the mouse messages SAI takes
+     * off its queue, for the NOCLICK line (wtc_nc_* in wintab_core.h). Counted
+     * once each, when really taken (PM_REMOVE), not when merely peeked at. */
+    if (code >= 0 && m && g_trace_start && wp == PM_REMOVE && wtc_nc_is_mouse(m->message)) {
+        int same_root = g_hwnd && GetAncestor(m->hwnd, GA_ROOT) == GetAncestor(g_hwnd, GA_ROOT);
+        EnterCriticalSection(&g_cs);
+        wtc_nc_msg(&g_nc, m->message, same_root);
+        if (m->message == WM_MOUSEMOVE) { g_mm_have = 1; g_mm_tick = GetTickCount(); }
+        if (same_root && m->message == WM_LBUTTONDOWN) g_last_click_hwnd = m->hwnd;
+        LeaveCriticalSection(&g_cs);
+    }
     /* scroll -> pan, unless this is one of OUR pinch-zoom wheels */
     if (code >= 0 && m && g_hwnd && !getenv("WT_NO_SCROLL_PAN") &&
         (m->message == WM_MOUSEWHEEL || m->message == WM_MOUSEHWHEEL) &&
@@ -861,6 +1071,18 @@ static LRESULT CALLBACK click_hook_proc(int code, WPARAM wp, LPARAM lp) {
         (m->message == WM_LBUTTONDOWN || m->message == WM_LBUTTONUP ||
          m->message == WM_LBUTTONDBLCLK)) {
         DWORD dt = GetTickCount() - g_last_tip_tick;
+        /* stroke-start trace: where and when SAI takes the click that starts
+         * the stroke. Only clicks into SAI's own window, like the de-dup, and
+         * only when SAI takes the message off the queue: a PeekMessage that
+         * merely looks (PM_NOREMOVE) passes through here too, earlier. */
+        if (g_trace_start && wp == PM_REMOVE && m->message == WM_LBUTTONDOWN &&
+            GetAncestor(m->hwnd, GA_ROOT) == GetAncestor(g_hwnd, GA_ROOT)) {
+            POINT cp = { (short)LOWORD(m->lParam), (short)HIWORD(m->lParam) };
+            ClientToScreen(m->hwnd, &cp);
+            EnterCriticalSection(&g_cs);
+            wtc_st_click(&g_st, GetTickCount(), cp.x, cp.y);
+            LeaveCriticalSection(&g_cs);
+        }
         /* Decision lives in wintab_core.h so the test suite can reach it — the
          * g_want_dedup term is what #24 dropped, and inlining it here again is
          * how it would get dropped a third time. */
@@ -910,15 +1132,17 @@ static void ensure_click_dedup(void) {
     int want_dedup = getenv("WT_CLICK_DEDUP") && !getenv("WT_NO_CLICK_DEDUP");
     int want_pan   = !getenv("WT_NO_SCROLL_PAN");
     g_want_dedup = want_dedup;      /* the hook proc gates the EATING on this */
-    if (!want_dedup && !want_pan) return;
+    /* The hold (wtc_hold_*) is the third user of this hook, with its own flag
+     * as the warning above asks: g_hold_on. It only ever reads the click. */
+    if (!want_dedup && !want_pan && !g_hold_on) return;
     {   /* Log ONCE: this runs from producer housekeeping on every iteration, and
          * an unguarded line here drowned the log — a field capture came back
          * 2055 spam lines out of 2111, hiding the packet flow it exists to show. */
         static int said;
         if (!said) {
             said = 1;
-            log_line("msg hook: dedup=%s scroll-pan=%s", want_dedup ? "on" : "off",
-                     want_pan ? "on" : "off");
+            log_line("msg hook: dedup=%s scroll-pan=%s hold=%s", want_dedup ? "on" : "off",
+                     want_pan ? "on" : "off", g_hold_on ? "on" : "off");
         }
     }
     HWND root = GetAncestor(g_hwnd, GA_ROOT);
@@ -1021,9 +1245,12 @@ static DWORD WINAPI producer(LPVOID arg) {
 
         if (r > 0) {
             buf[r] = 0;
-            long sq = -1; int p=-1, x=0, y=0, w=0, h=0;
-            int n = sscanf(buf, "%ld %d %d %d %d %d", &sq, &p, &x, &y, &w, &h);
-            if (n >= 6 && p >= 0) {
+            /* parsed in wintab_core.h, where the tests can reach it; the
+             * times at the end are optional (an app from before they existed) */
+            WTC_DGRAM dg;
+            if (wtc_parse_datagram(buf, &dg)) {
+                long sq = dg.seq; int p = dg.p, x = dg.x, y = dg.y, w = dg.w, h = dg.h;
+                g_dg_tm = dg.tm;
                 recvCount++;
                 /* backlog probe DURING a stroke: how far ahead is what we've
                  * posted vs what SAI has actually pulled? A growing gap = SAI's
@@ -1081,11 +1308,14 @@ static DWORD WINAPI producer(LPVOID arg) {
          * pass the debounce, and the last stroke before a pause would go
          * unrecorded. The recv timeout makes this a steady ~10 Hz tick. */
         tl_on_pressure(0);
+        check_hold(now);                /* the hold: say once in the log that it is on */
+        hold_release(0, 1);             /* pen down and still, no click: the time limit */
         ensure_click_dedup();           /* pen-tap double-click fix, once hwnd exists */
         check_win32_wake(now);          /* helper asked us to restore Win32 focus? */
         check_zoom(now);                /* ...or asked us to zoom (pinch gesture) */
         refresh_virtual();              /* screens changed? (#37) tell SAI promptly */
         flush_pending();                /* pen still/lifted: deliver the final point */
+        st_report(now, 0);              /* a tap's START line: no samples follow it */
         if (now - lastStatus > 1000) {
             lastStatus = now;
             write_status(recvCount, g_posted);
@@ -1095,6 +1325,9 @@ static DWORD WINAPI producer(LPVOID arg) {
             log_line("producer: open=%d hwnd=%p posted=%lu recv=%lu gaps=%lu fetched=%u udp=%s",
                  g_open, g_hwnd, (unsigned long)g_posted, recvCount, gaps, g_fetched,
                  sock == INVALID_SOCKET ? "off" : (now - lastDatagram < 1000 ? "live" : "quiet"));
+            if (g_hold_on)
+                log_line("HOLD so far: ended by click=%lu time-limit=%lu pen-lifted=%lu",
+                         g_hold_by[1], g_hold_by[0], g_hold_by[2]);
         }
         /* file fallback only while the socket is quiet, and EDGE-TRIGGERED:
          * emit only when the file's contents change. A static file (e.g. the
@@ -1112,6 +1345,7 @@ static DWORD WINAPI producer(LPVOID arg) {
                 if (strcmp(b, lastFile) != 0) {
                     strcpy(lastFile, b);
                     SAMPLE s;
+                    g_dg_tm.has = 0;        /* the file carries no times */
                     if (parse_sample(b, &s)) emit_sample(&s);
                 }
             }
@@ -1199,6 +1433,7 @@ int WINAPI WTPacket(HANDLE ctx, UINT serial, LPVOID buf) {
     if (!buf) return 0;
     EnterCriticalSection(&g_cs);
     OURPKT pk = (g_ring_serial[serial % RING_SZ] == serial) ? g_ring[serial % RING_SZ] : g_last;
+    if (g_trace_start) wtc_st_fetch(&g_st, GetTickCount(), serial);
     LeaveCriticalSection(&g_cs);
     memcpy(buf, &pk, sizeof(pk));       /* 36 bytes, layout 0x15e2 */
     g_fetched = serial;                 /* track how current SAI is (backlog probe) */
@@ -1389,6 +1624,7 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID r) {
         /* logging is OFF unless WT_DEBUG is set: without a log file, log_line() is a
          * no-op (g_log stays NULL) so there's zero per-packet fflush overhead. */
         if (getenv("WT_DEBUG")) g_log = fopen("C:\\wtlog.txt", "w");
+        g_trace_start = g_log && !getenv("WT_NO_START_TRACE");
         /* Must happen before SAI calls WTInfo/WTOpen — it reads the pressure
          * axis exactly once, at open time. */
         load_max_press();
