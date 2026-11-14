@@ -249,6 +249,97 @@ enum PressureCore {
         secondsSincePenUp < latch && abs(xf - upX) <= radiusF && abs(yf - upY) <= radiusF
     }
 
+    // ---- STROKE-START DIAGNOSIS: when was each sample made, and when sent ----
+    //
+    // Each datagram to the DLL ends with three extra numbers so the DLL's
+    // stroke-start trace (wtc_st_* in wintab_core.h) can say WHERE a late
+    // sample lost its time: `ev` when macOS stamped the pen event, `tx` when
+    // we sent it, both in microseconds, and `n`, how many pen samples have
+    // reached emit() so far. `ev` late = the tablet, its radio or its driver.
+    // `ev` on time but `tx` late = this app. Both on time but late in the DLL
+    // = Wine. A jump in `n` larger than the jump in seq = samples our own
+    // rules dropped (dedup, deadband, the pen-up latch, the menu strip).
+    //
+    // All three are sent modulo 2^31 so they fit the DLL's 32-bit sscanf on
+    // Windows, where `long` is 32 bits. The DLL only ever subtracts two of
+    // them a few milliseconds apart, modulo 2^31 again, so the wrap (every
+    // 35 minutes for the times) is harmless.
+    //
+    // A DLL from before this reads the first six fields and ignores the rest.
+    static let wireMask = 0x7FFF_FFFF
+
+    //
+    // The tenth field says whether `ev` is a real event time (1) or not (0):
+    // nil here, sent as 0 with a 0 in the ev place. See eventStampUs for why
+    // an unknown time is never sent as if it were known.
+    static func wireLine(seq: Int, p: Int, xf: Int, yf: Int, wf: Int, hf: Int,
+                         evUs: Int?, txUs: Int, n: Int) -> String {
+        "\(seq) \(p) \(xf) \(yf) \(wf) \(hf) \((evUs ?? 0) & wireMask) \(txUs & wireMask) \(n & wireMask) \(evUs == nil ? 0 : 1)"
+    }
+
+    /// A pen event's own time in microseconds, or nil when its stamp cannot
+    /// be used.
+    ///
+    /// Apple documents CGEvent.timestamp as "roughly, nanoseconds since
+    /// startup". On Apple silicon one mach tick is 125/3 ns, and whether the
+    /// stamp is in ticks or in nanoseconds is not something to take on trust:
+    /// a wrong guess stretches or shrinks every interval 41.7x. So the stamp is
+    /// tried as both, and the reading that lands on a RECENT moment wins: an
+    /// event in the tap is at most moments old.
+    ///
+    /// THE TRAP, and why this is asked for EVERY event rather than decided
+    /// once: the first version looked at one event, took whichever clock was
+    /// nearer, and trusted every stamp after that. In the field run of
+    /// 2026-11-14 the stamps then came out the same on every sample, and the
+    /// day before the same Mac had been judged "ticks", that day
+    /// "nanoseconds": the stamps were not near "now" on either clock. A stamp
+    /// like that must come back as nil ("unknown"), because a made-up time
+    /// reads in the DLL's trace as "the tablet delivered on time", which
+    /// blames this app for delays that may be the tablet's.
+    ///
+    /// THE SECOND TRAP: there are three units, not two. The same session of
+    /// 2026-11-14 logged a gesture event (type 29) stamped in nanoseconds, a
+    /// mouse move (type 5) in ticks and a tablet proximity event (type 24) in
+    /// MICROSECONDS: raw=146508753911 against nowNs=146508754168958, 0.26 ms
+    /// old. Tried only as nanoseconds or ticks it was "unusable", so pen
+    /// events carried no time. Microseconds are now the third reading.
+    ///
+    /// Nanoseconds are tried first, so a 1/1 timebase (where both readings
+    /// agree) is simply nanoseconds. The three readings are 1000x and 41.7x
+    /// apart, so outside the first seconds after startup at most one of them
+    /// can land within eventStampMaxAgeUs of now.
+    static let eventStampMaxAgeUs = 2_000_000     // older than this is not "this event"
+    static let eventStampAheadUs  = 5_000         // clock reads are not simultaneous
+
+    enum StampUnit { case nanoseconds, ticks, microseconds }
+
+    static func eventStampUs(stamp: UInt64, nowNs: UInt64, numer: UInt32, denom: UInt32)
+        -> (us: Int, unit: StampUnit)? {
+        guard stamp != 0 else { return nil }      // an event that was never stamped
+        let nowUs = Int(truncatingIfNeeded: nowNs / 1000)
+        func recent(_ us: Int) -> Bool {
+            us <= nowUs + eventStampAheadUs && nowUs - us <= eventStampMaxAgeUs
+        }
+        let asNs = eventStampUs(stamp, isTicks: false, numer: numer, denom: denom)
+        if recent(asNs) { return (asNs, .nanoseconds) }
+        let asTicks = eventStampUs(stamp, isTicks: true, numer: numer, denom: denom)
+        if recent(asTicks) { return (asTicks, .ticks) }
+        let asUs = Int(truncatingIfNeeded: stamp)
+        if recent(asUs) { return (asUs, .microseconds) }
+        return nil
+    }
+
+    /// An event stamp in microseconds, given which clock it is in.
+    static func eventStampUs(_ stamp: UInt64, isTicks: Bool, numer: UInt32, denom: UInt32) -> Int {
+        guard isTicks, denom != 0 else { return Int(truncatingIfNeeded: stamp / 1000) }
+        // Whole part and remainder separately, so the multiply cannot overflow
+        // for any uptime (the plain `stamp * numer / denom` would only after
+        // centuries on today's timebases, but a timebase is not ours to assume).
+        let d = UInt64(denom), n = UInt64(numer)
+        let ns = (stamp / d) &* n &+ (stamp % d) * n / d
+        return Int(truncatingIfNeeded: ns / 1000)
+    }
+
     /// Union of all display bounds = the full virtual desktop, in the global
     /// top-left-origin space CGEvent.location uses. The pen position is
     /// reported within THIS combined space so a 2nd monitor maps correctly

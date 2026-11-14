@@ -147,10 +147,57 @@ func writeFile(_ s: String) {
     penFile.write(s)
 }
 
+// ---- times for the DLL's stroke-start trace (PressureCore.wireLine says why) --
+// The stamp macOS put on the pen event being handled right now, in
+// microseconds; nil outside the tap (keepalive, the pen-up latch timer), where
+// there is no event, and nil for an event whose stamp cannot be used. nil is
+// sent as "unknown", never as a made-up time.
+var g_evUs: Int?
+// How many pen samples have reached emit(). Compared with seq by the DLL: the
+// difference is what our own rules dropped.
+var g_emitCalls = 0
+let g_timebase: mach_timebase_info_data_t = {
+    var tb = mach_timebase_info_data_t()
+    mach_timebase_info(&tb)
+    return tb
+}()
+
+func nowUs() -> Int { Int(truncatingIfNeeded: clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000) }
+
+// What the stamps turned out to be, said in the log ONCE per kind (usable in
+// nanoseconds, in ticks, in microseconds, unusable), with the raw numbers, so
+// a trace full of "ev+?" comes with its own explanation. 0 ns, 1 ticks,
+// 2 microseconds, 3 unusable. Never more than four lines a session: this runs
+// in the tap.
+var g_evSaid = [false, false, false, false]
+
+func eventUs(_ event: CGEvent) -> Int? {
+    let stamp = event.timestamp
+    let nowNs = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+    let got = PressureCore.eventStampUs(stamp: stamp, nowNs: nowNs,
+                                        numer: g_timebase.numer, denom: g_timebase.denom)
+    let kind: Int
+    switch got?.unit {
+    case .nanoseconds?: kind = 0
+    case .ticks?: kind = 1
+    case .microseconds?: kind = 2
+    case nil: kind = 3
+    }
+    if !g_evSaid[kind] {
+        g_evSaid[kind] = true
+        let what = ["usable, in nanoseconds", "usable, in mach ticks", "usable, in microseconds",
+                    "UNUSABLE (not a recent time in ns, ticks or us); sent as unknown"][kind]
+        wlog("pen event stamp \(what): raw=\(stamp) nowNs=\(nowNs) nowTicks=\(mach_absolute_time()) continuousTicks=\(mach_continuous_time()) type=\(event.type.rawValue) timebase \(g_timebase.numer)/\(g_timebase.denom)")
+    }
+    return got?.us
+}
+
 func send(_ p: Int, _ xf: Int, _ yf: Int) {
     seq += 1
     let wf = Int(vW * 8), hf = Int(vH * 8)
-    sendUDP("\(seq) \(p) \(xf) \(yf) \(wf) \(hf)")   // UDP: seq + sample
+    let tx = nowUs()
+    sendUDP(PressureCore.wireLine(seq: seq, p: p, xf: xf, yf: yf, wf: wf, hf: hf,
+                                  evUs: g_evUs, txUs: tx, n: g_emitCalls))   // UDP: seq + sample + times
     writeFile("\(p) \(xf) \(yf) \(wf) \(hf)")        // file: sample (no seq)
     lastSendMs = CFAbsoluteTimeGetCurrent()
 }
@@ -218,6 +265,7 @@ func flushPendingUp() {
 }
 
 func emit(pressure: Int, loc: CGPoint) {
+    g_emitCalls += 1
     // Over SAI's menu strip: go silent so SAI treats the pen as a plain mouse.
     if !g_saiStrip.isEmpty && g_saiStrip.contains(loc) {
         g_pendingUp = nil                      // strip ends the touch right here
@@ -349,6 +397,11 @@ func isTabletMouse(_ e: CGEvent) -> Bool {
 var g_onWakeHotKey: (() -> Void)?
 
 let tapCallback: CGEventTapCallBack = { _, type, event, _ in
+    // For the stroke-start trace: every send made while this event is handled
+    // carries the event's own stamp. Cleared on the way out so a timer's send
+    // (keepalive, pen-up latch) is never given a stale one.
+    g_evUs = eventUs(event)
+    defer { g_evUs = nil }
     // Auto-wake trigger #2: a click. When SAI is ALREADY frontmost but stuck,
     // clicking it fires no app-activation notification at all, so the wizard
     // never hears about it — this is the only signal we get.
