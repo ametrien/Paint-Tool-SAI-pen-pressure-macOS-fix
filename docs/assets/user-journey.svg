@@ -1,0 +1,148 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="1060" viewBox="0 0 880 1060" role="img" aria-labelledby="t d">
+<title id="t">A session with SAI Pen Pressure, step by step</title>
+<desc id="d">Sequence diagram. The first time, you open the app and pick your SAI folder; it installs Wine if needed and copies SAI and your licence into the prefix, then you allow Input Monitoring. Every time, you press Launch SAI: the app updates our DLL, reads the tablet's pressure levels, starts the encoder if recording is on, and starts sai2.exe in Wine, which loads our wintab32.dll. While you draw, the tablet's pressure reaches the app through the event tap, goes over UDP to the DLL, and SAI draws with it; after each stroke the DLL writes a canvas frame for the encoder. When you save and quit SAI, the app stops the encoder, files the video under its drawing, and quits; the video is in ~/Movies and in the Videos tab.</desc>
+<style>
+  text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .bg { fill: #ffffff; }
+  .h { font-size: 15px; font-weight: 600; }
+  .s { font-size: 12.5px; }
+  .l { font-size: 13px; }
+  .ph { font-size: 13px; font-weight: 600; }
+  .ct { fill: #E1F5EE; stroke: #0F6E56; }
+  .cp { fill: #EEEDFE; stroke: #534AB7; }
+  .cg { fill: #F1EFE8; stroke: #5F5E5A; }
+  .band { fill: #F1EFE8; }
+  .tt { fill: #085041; } .st { fill: #0F6E56; }
+  .tp { fill: #3C3489; } .sp { fill: #534AB7; }
+  .tg { fill: #2C2C2A; } .sg { fill: #5F5E5A; }
+  .lab { fill: #2C2C2A; paint-order: stroke; stroke: #ffffff; stroke-width: 5px; stroke-linejoin: round; }
+  .life { stroke: #B4B2A9; stroke-width: 1; stroke-dasharray: 4 4; }
+  .a { stroke: #5F5E5A; stroke-width: 1.5; fill: none; }
+  .ad { stroke: #5F5E5A; stroke-width: 1.5; fill: none; stroke-dasharray: 5 4; }
+  .ah { fill: #5F5E5A; }
+  @media (prefers-color-scheme: dark) {
+    .bg { fill: #0d1117; }
+    .ct { fill: #085041; stroke: #5DCAA5; }
+    .cp { fill: #3C3489; stroke: #AFA9EC; }
+    .cg { fill: #2C2C2A; stroke: #B4B2A9; }
+    .band { fill: #2C2C2A; }
+    .tt { fill: #E1F5EE; } .st { fill: #9FE1CB; }
+    .tp { fill: #EEEDFE; } .sp { fill: #CECBF6; }
+    .tg { fill: #F1EFE8; } .sg { fill: #D3D1C7; }
+    .lab { fill: #F1EFE8; stroke: #0d1117; }
+    .life { stroke: #5F5E5A; }
+    .a, .ad { stroke: #B4B2A9; }
+    .ah { fill: #B4B2A9; }
+  }
+</style>
+<defs>
+  <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M1 1L9 5L1 9z" class="ah"/>
+  </marker>
+</defs>
+<rect class="bg" x="0" y="0" width="880" height="1060" rx="12"/>
+
+<!-- lifelines -->
+<line class="life" x1="80" y1="70" x2="80" y2="1040"/>
+<line class="life" x1="210" y1="70" x2="210" y2="1040"/>
+<line class="life" x1="370" y1="70" x2="370" y2="1040"/>
+<line class="life" x1="540" y1="70" x2="540" y2="1040"/>
+<line class="life" x1="680" y1="70" x2="680" y2="1040"/>
+<line class="life" x1="800" y1="70" x2="800" y2="1040"/>
+
+<!-- participants -->
+<rect class="cg" x="25" y="20" width="110" height="50" rx="8" stroke-width="1"/>
+<text class="h tg" x="80" y="50" text-anchor="middle">You</text>
+<rect class="cg" x="155" y="20" width="110" height="50" rx="8" stroke-width="1"/>
+<text class="h tg" x="210" y="50" text-anchor="middle">Tablet</text>
+<rect class="ct" x="290" y="20" width="160" height="50" rx="8" stroke-width="1"/>
+<text class="h tt" x="370" y="41" text-anchor="middle">SAI Pen Pressure</text>
+<text class="s st" x="370" y="59" text-anchor="middle">the app</text>
+<rect class="cp" x="480" y="20" width="120" height="50" rx="8" stroke-width="1"/>
+<text class="h tp" x="540" y="41" text-anchor="middle">SAI</text>
+<text class="s sp" x="540" y="59" text-anchor="middle">running in Wine</text>
+<rect class="cp" x="620" y="20" width="120" height="50" rx="8" stroke-width="1"/>
+<text class="h tp" x="680" y="41" text-anchor="middle">Our DLL</text>
+<text class="s sp" x="680" y="59" text-anchor="middle">inside SAI</text>
+<rect class="cg" x="750" y="20" width="110" height="50" rx="8" stroke-width="1"/>
+<text class="h tg" x="805" y="41" text-anchor="middle">Encoder</text>
+<text class="s sg" x="805" y="59" text-anchor="middle">makes the video</text>
+
+<!-- phase 1 -->
+<rect class="band" x="20" y="86" width="840" height="26" rx="6"/>
+<text class="ph tg" x="32" y="104">The first time</text>
+
+<text class="l lab" x="225" y="134" text-anchor="middle">Open the app, pick your SAI folder</text>
+<line class="a" x1="80" y1="142" x2="366" y2="142" marker-end="url(#ar)"/>
+
+<rect class="ct" x="240" y="158" width="260" height="66" rx="6" stroke-width="1"/>
+<text class="s st" x="370" y="178" text-anchor="middle">Installs Wine if it is missing,</text>
+<text class="s st" x="370" y="196" text-anchor="middle">copies SAI and your licence</text>
+<text class="s st" x="370" y="214" text-anchor="middle">into ~/SAI2-pressure</text>
+
+<text class="l lab" x="225" y="244" text-anchor="middle">Allow Input Monitoring, reopen the app</text>
+<line class="a" x1="80" y1="252" x2="366" y2="252" marker-end="url(#ar)"/>
+
+<!-- phase 2 -->
+<rect class="band" x="20" y="274" width="840" height="26" rx="6"/>
+<text class="ph tg" x="32" y="292">Every time you start</text>
+
+<text class="l lab" x="225" y="322" text-anchor="middle">Launch SAI</text>
+<line class="a" x1="80" y1="330" x2="366" y2="330" marker-end="url(#ar)"/>
+
+<rect class="ct" x="235" y="346" width="270" height="66" rx="6" stroke-width="1"/>
+<text class="s st" x="370" y="366" text-anchor="middle">Updates our DLL if it changed,</text>
+<text class="s st" x="370" y="384" text-anchor="middle">asks the tablet how many pressure</text>
+<text class="s st" x="370" y="402" text-anchor="middle">levels it has, saves that for the DLL</text>
+
+<text class="l lab" x="585" y="434" text-anchor="middle">Start the encoder, if recording is on</text>
+<line class="a" x1="370" y1="442" x2="796" y2="442" marker-end="url(#ar)"/>
+
+<text class="l lab" x="455" y="470" text-anchor="middle">Start sai2.exe in Wine</text>
+<line class="a" x1="370" y1="478" x2="536" y2="478" marker-end="url(#ar)"/>
+
+<text class="l lab" x="610" y="506" text-anchor="middle">Load wintab32.dll</text>
+<line class="a" x1="540" y1="514" x2="676" y2="514" marker-end="url(#ar)"/>
+
+<text class="l lab" x="310" y="542" text-anchor="middle">First time only: turn on Use WinTab API in SAI</text>
+<line class="a" x1="80" y1="550" x2="536" y2="550" marker-end="url(#ar)"/>
+
+<!-- phase 3 -->
+<rect class="band" x="20" y="572" width="840" height="26" rx="6"/>
+<text class="ph tg" x="32" y="590">While you draw</text>
+
+<text class="l lab" x="145" y="622" text-anchor="middle">Draw a stroke</text>
+<line class="a" x1="80" y1="630" x2="206" y2="630" marker-end="url(#ar)"/>
+
+<text class="l lab" x="290" y="658" text-anchor="middle">Pressure (event tap)</text>
+<line class="a" x1="210" y1="666" x2="366" y2="666" marker-end="url(#ar)"/>
+
+<text class="l lab" x="525" y="694" text-anchor="middle">Every sample, over UDP</text>
+<line class="a" x1="370" y1="702" x2="676" y2="702" marker-end="url(#ar)"/>
+
+<text class="l lab" x="610" y="730" text-anchor="middle">Pen packets</text>
+<line class="a" x1="680" y1="738" x2="544" y2="738" marker-end="url(#ar)"/>
+
+<text class="l lab" x="740" y="766" text-anchor="middle">Canvas frame</text>
+<line class="ad" x1="680" y1="774" x2="796" y2="774" marker-end="url(#ar)"/>
+
+<!-- phase 4 -->
+<rect class="band" x="20" y="796" width="840" height="26" rx="6"/>
+<text class="ph tg" x="32" y="814">When you close SAI</text>
+
+<text class="l lab" x="310" y="846" text-anchor="middle">Save your drawing, quit SAI</text>
+<line class="a" x1="80" y1="854" x2="536" y2="854" marker-end="url(#ar)"/>
+
+<text class="l lab" x="455" y="882" text-anchor="middle">Wine process ends</text>
+<line class="ad" x1="540" y1="890" x2="374" y2="890" marker-end="url(#ar)"/>
+
+<text class="l lab" x="585" y="918" text-anchor="middle">Stop, finish the video</text>
+<line class="a" x1="370" y1="926" x2="796" y2="926" marker-end="url(#ar)"/>
+
+<rect class="ct" x="240" y="942" width="260" height="48" rx="6" stroke-width="1"/>
+<text class="s st" x="370" y="962" text-anchor="middle">Files the video with its drawing,</text>
+<text class="s st" x="370" y="980" text-anchor="middle">then the app quits too</text>
+
+<text class="l lab" x="225" y="1012" text-anchor="middle">Timelapse saved in ~/Movies</text>
+<line class="ad" x1="370" y1="1020" x2="84" y2="1020" marker-end="url(#ar)"/>
+</svg>

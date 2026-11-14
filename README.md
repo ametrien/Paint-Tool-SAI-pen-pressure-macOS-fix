@@ -426,6 +426,14 @@ memory after a stroke and write it to `drive_c/sai-timelapse/frames/`. A separat
 turns those frames into H.264 video, so video work never slows the pen, and the Videos tab groups
 sessions of the same drawing into one video.
 
+**A session, step by step.** Setup happens once. After that, **Launch SAI** prepares the bridge
+and starts SAI, every pen sample goes from the tablet through the app to our DLL while you draw,
+and closing SAI finishes the video and quits the app with it.
+
+<p align="center">
+  <img src="docs/assets/user-journey.svg" alt="Sequence diagram of a session, with six participants: you, the tablet, the app, SAI running in Wine, our DLL inside SAI, and the encoder. The first time: you open the app and pick your SAI folder; the app installs Wine if it is missing and copies SAI and your licence into ~/SAI2-pressure; you allow Input Monitoring and reopen the app. Every time you start: you press Launch SAI; the app updates our DLL if it changed and saves the tablet's pressure levels for it, starts the encoder if recording is on, and starts sai2.exe in Wine, which loads wintab32.dll; the first time only, you turn on Use WinTab API in SAI. While you draw: your stroke's pressure reaches the app through the event tap, every sample goes over UDP to our DLL, which hands pen packets to SAI, and a canvas frame goes to the encoder. When you close SAI: you save and quit SAI, the Wine process ends, the app stops the encoder so it finishes the video, files the video with its drawing and quits; the timelapse is saved in ~/Movies." width="100%">
+</p>
+
 The full story, with the reasons behind each choice, is in
 [How it works](https://ametrien.github.io/Paint-Tool-SAI-pen-pressure-macOS-fix/how-it-works).
 
