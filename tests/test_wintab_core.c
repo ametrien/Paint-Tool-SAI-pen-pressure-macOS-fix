@@ -1174,6 +1174,83 @@ int main(void) {
         }
     }
 
+    /* ---- CONTROL DATAGRAMS: zoom and wake on the pen port -------------------
+     * The strings are the ones PressureCore.zoomLine / wakeLine produce
+     * (tests/CoreTests.swift pins those), so the two sides are tested against
+     * the same bytes. */
+    {
+        WTC_CONTROL c;
+        EXPECT(wtc_parse_control("Z 3", &c) && c.kind == WTC_CTL_ZOOM && c.zoom == 3, "control: Z 3 zooms in 3");
+        EXPECT(wtc_parse_control("Z -2", &c) && c.kind == WTC_CTL_ZOOM && c.zoom == -2, "control: Z -2 zooms out 2");
+        EXPECT(wtc_parse_control("Z -64\n", &c) && c.zoom == -64, "control: the largest step, with a newline");
+        EXPECT(!wtc_parse_control("Z 0", &c), "control: a zoom of 0 is nothing");
+        EXPECT(!wtc_parse_control("Z 65", &c) && !wtc_parse_control("Z 9999999999", &c),
+               "control: more than 64 steps is not a pinch");
+        EXPECT(!wtc_parse_control("Z", &c) && !wtc_parse_control("Z ", &c) && !wtc_parse_control("Z x", &c)
+               && !wtc_parse_control("Z3", &c) && !wtc_parse_control("Z 3 4", &c) && !wtc_parse_control("Z 3x", &c)
+               && !wtc_parse_control("", &c) && !wtc_parse_control("Z -", &c),
+               "control: a malformed zoom is refused whole");
+        EXPECT(wtc_parse_control("K r1731600000n12", &c) && c.kind == WTC_CTL_WAKE
+               && strcmp(c.wake, "r1731600000n12") == 0, "control: K carries the wake token");
+        EXPECT(!wtc_parse_control("K ", &c) && !wtc_parse_control("K a b", &c) && !wtc_parse_control("K a-b", &c),
+               "control: a wake token is letters and digits only");
+        EXPECT(wtc_parse_control("K 1234567890123456789012345678901", &c) && strlen(c.wake) == 31,
+               "control: a 31-character token fits");
+        EXPECT(!wtc_parse_control("K 12345678901234567890123456789012", &c) && c.wake[0] == '\0',
+               "control: a 32-character token is refused, not cut short");
+
+        /* THE TRAP: neither kind of line may be taken for the other. A pen
+         * sample read as a zoom would zoom the canvas mid-stroke; a control
+         * line read as a sample would put a dot on it. */
+        WTC_DGRAM d;
+        EXPECT(!wtc_parse_control("7 512 100 200 11520 7200 1000 1500 42 1", &c)
+               && !wtc_parse_control("0", &c) && !wtc_parse_control("2000 10 10 80 80", &c),
+               "control: a pen sample is never a control line");
+        EXPECT(!wtc_parse_datagram("Z 3", &d) && !wtc_parse_datagram("Z -64", &d)
+               && !wtc_parse_datagram("K r1731600000n12", &d) && !wtc_parse_datagram("K 7 512 100 200 11520 7200", &d),
+               "control: a control line is never a pen sample (an older DLL just ignores it)");
+        WTC_SAMPLE fs;
+        EXPECT(!wtc_parse_sample("Z 3", &fs) && !wtc_parse_sample("K r1n1", &fs),
+               "control: nor a sample from the fallback file");
+
+        /* The wake token, by datagram and by file, acts once. */
+        char last[32] = "";
+        EXPECT(wtc_wake_datagram("r5n1", last, sizeof last, 0),
+               "wake: the FIRST token by datagram is a real request (a datagram cannot be left over)");
+        EXPECT(!wtc_wake_requested("r5n1", last, sizeof last, 0), "wake: the same token read from the file: not again");
+        EXPECT(!wtc_wake_datagram("r5n1", last, sizeof last, 0), "wake: nor from a repeated datagram");
+        EXPECT(wtc_wake_datagram("r5n2", last, sizeof last, 0), "wake: the next token wakes");
+        EXPECT(wtc_wake_requested("r5n3", last, sizeof last, 0), "wake: a token seen first in the file wakes");
+        EXPECT(!wtc_wake_datagram("r5n3", last, sizeof last, 0), "wake: ...and its datagram, arriving late, does not");
+        /* the file alone still ignores what was there at start */
+        char cold[32] = "";
+        EXPECT(!wtc_wake_requested("r4n9", cold, sizeof cold, 0), "wake: the file's value at start is still an old request");
+        char probe[32] = "";
+        EXPECT(!wtc_wake_datagram("r5n1", probe, sizeof probe, 1) && strcmp(probe, "r5n1") == 0,
+               "wake: never in the Test pen probe, by datagram either");
+        EXPECT(!wtc_wake_datagram("", last, sizeof last, 0) && !wtc_wake_datagram(NULL, last, sizeof last, 0),
+               "wake: an empty token is nothing");
+
+        /* How often the fallback files are opened. THE TRAP: these opens are
+         * the cost being removed; a rule that still says "every tick" while
+         * the port is ours brings all of them back without any test of the
+         * pen noticing. */
+        EXPECT(!wtc_zoom_file_wanted(1) && wtc_zoom_file_wanted(0), "poll: the zoom file only while the port is not ours");
+        EXPECT(wtc_wake_file_every(1) == 1000 && wtc_wake_file_every(0) == 150,
+               "poll: the wake file once a second with the port, every 150 ms without");
+        EXPECT(!wtc_press_file_due(1, 10400, 10000, 0) && !wtc_press_file_due(0, 10500, 10000, 0),
+               "poll: the sample file is left alone for 500 ms after a datagram");
+        EXPECT(wtc_press_file_due(0, 10501, 10000, 10500), "poll: port not ours: the sample file at every idle tick");
+        EXPECT(wtc_press_file_due(1, 10501, 10000, 10251) && !wtc_press_file_due(1, 10501, 10000, 10252),
+               "poll: port ours: the sample file four times a second, not at every tick");
+        {
+            int opens = 0; uint32_t last_read = 0;
+            for (uint32_t t = 20000; t < 21000; t += 15)
+                if (wtc_press_file_due(1, t, 10000, last_read)) { opens++; last_read = t; }
+            EXPECT(opens == 4, "poll: one idle second with the port is 4 opens of the sample file (it was 67)");
+        }
+    }
+
     if (failures) { printf("FAILED: %d test(s)\n", failures); return 1; }
     printf("All wintab_core tests passed.\n");
     return 0;

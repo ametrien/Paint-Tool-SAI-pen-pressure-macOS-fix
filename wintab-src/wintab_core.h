@@ -421,6 +421,102 @@ static int wtc_wake_requested(const char *marker, char *last, size_t cap, int ho
     return !first;
 }
 
+/* CONTROL DATAGRAMS. Pinch to zoom and "wake SAI" used to reach the DLL only
+ * through two small files, which the producer opened again and again to see
+ * whether they had changed: wt_zoom.txt every 30 ms and wt_wake.txt every
+ * 150 ms, for as long as the pen was not drawing. Each open is a round trip to
+ * wineserver, the one process SAI's own thread also waits on. Now the app says
+ * it on the pen port, where the producer is already listening:
+ *
+ *   "Z <steps>"   zoom by this many steps NOW (signed, never 0). A change, not
+ *                 a running total, so nothing has to remember the last value
+ *                 and a restarted app cannot make SAI jump by the difference;
+ *   "K <token>"   wake request; the token is what wt_wake.txt holds too.
+ *
+ * The files are still written by the app and still read here, but only as a
+ * fallback: the zoom file while the pen port is NOT ours (then no datagram can
+ * arrive), the wake file once a second.
+ *
+ * THE TRAP: a control line must never be taken for a pen sample, nor a sample
+ * for a control line. A sample starts with a digit (its sequence number), a
+ * control line with a letter and a space; wtc_parse_datagram() refuses the
+ * second and this refuses the first. The DLL and the app always ship together
+ * (the app copies its DLL into the prefix at every launch), but an OLDER DLL
+ * simply ignores these lines and keeps reading the files. */
+#define WTC_CTL_ZOOM 1
+#define WTC_CTL_WAKE 2
+#define WTC_ZOOM_MAX_STEPS 64        /* per datagram; anything larger is not a pinch */
+typedef struct { int kind; int zoom; char wake[32]; } WTC_CONTROL;
+
+static int wtc_ctl_only_space(const char *p) {
+    while (*p == ' ' || *p == '\r' || *p == '\n' || *p == '\t') p++;
+    return *p == '\0';
+}
+
+/* Returns 1 and fills `c` for a well-formed control line, else 0. */
+static int wtc_parse_control(const char *buf, WTC_CONTROL *c) {
+    if (!buf || !c) return 0;
+    memset(c, 0, sizeof *c);
+    /* buf[0] first: on an empty line buf[1] is past the end (the sanitizer
+     * run of the tests caught exactly that) */
+    if (buf[0] == '\0' || buf[1] != ' ') return 0;
+    if (buf[0] == 'Z') {
+        const char *p = buf + 2;
+        int neg = 0;
+        long v = 0;
+        int digits = 0;
+        if (*p == '-') { neg = 1; p++; } else if (*p == '+') p++;
+        while (*p >= '0' && *p <= '9' && digits < 6) { v = v * 10 + (*p - '0'); p++; digits++; }
+        if (digits == 0 || !wtc_ctl_only_space(p)) return 0;
+        if (v == 0 || v > WTC_ZOOM_MAX_STEPS) return 0;
+        c->kind = WTC_CTL_ZOOM;
+        c->zoom = neg ? -(int)v : (int)v;
+        return 1;
+    }
+    if (buf[0] == 'K') {
+        const char *p = buf + 2;
+        size_t n = 0;
+        while (((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z'))
+               && n < sizeof c->wake - 1) c->wake[n++] = *p++;
+        c->wake[n] = '\0';
+        if (n == 0 || !wtc_ctl_only_space(p)) { c->wake[0] = '\0'; return 0; }
+        c->kind = WTC_CTL_WAKE;
+        return 1;
+    }
+    return 0;
+}
+
+/* A wake request that arrived as a DATAGRAM. Unlike the file's contents, a
+ * datagram cannot be left over from a previous session, so even the first
+ * token ever seen is a real request. `last` is shared with
+ * wtc_wake_requested(), so the same token read from the file a moment later
+ * does not wake a second time. */
+static int wtc_wake_datagram(const char *token, char *last, size_t cap, int host_is_probe) {
+    if (!token || !token[0] || !last || cap == 0) return 0;
+    if (strcmp(token, last) == 0) return 0;
+    snprintf(last, cap, "%s", token);
+    return !host_is_probe;
+}
+
+/* How often the fallback files are read (ms). `port_ours`: the pen port is
+ * bound by this process, so datagrams can arrive. */
+#define WTC_POLL_ZOOM_FILE_MS   30     /* only while the port is not ours */
+#define WTC_POLL_WAKE_FILE_MS   150    /* port not ours: the file is the only way */
+#define WTC_POLL_WAKE_LIVE_MS   1000   /* port ours: a safety net behind the datagram */
+#define WTC_POLL_PRESS_LIVE_MS  250    /* the sample file while the port is ours and quiet */
+static int wtc_zoom_file_wanted(int port_ours) { return !port_ours; }
+static uint32_t wtc_wake_file_every(int port_ours) {
+    return port_ours ? WTC_POLL_WAKE_LIVE_MS : WTC_POLL_WAKE_FILE_MS;
+}
+/* The sample file is read when the stream has been quiet for 500 ms: at every
+ * idle tick while the port is not ours (it is then the pen), four times a
+ * second while it is (it is then only the "echo 0 > file" switch). */
+static int wtc_press_file_due(int port_ours, uint32_t now, uint32_t last_datagram, uint32_t last_read) {
+    if ((uint32_t)(now - last_datagram) <= 500) return 0;
+    if (!port_ours) return 1;
+    return (uint32_t)(now - last_read) >= WTC_POLL_PRESS_LIVE_MS;
+}
+
 /* PEN PORT RETRY. The producer binds 127.0.0.1:47800 to receive the helper's
  * samples. Until 2026-11-11 it tried once, at load: if anything else held the
  * port (a leftover probe did), SAI stayed in "file mode only" for the whole

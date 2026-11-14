@@ -268,6 +268,36 @@ enum PressureCore {
     // A DLL from before this reads the first six fields and ignores the rest.
     static let wireMask = 0x7FFF_FFFF
 
+    // CONTROL LINES on the same port (wtc_parse_control in wintab_core.h says
+    // why): a pinch and a wake request used to reach the DLL only through two
+    // files it had to keep opening. A sample line starts with a digit, a
+    // control line with a letter and a space, so neither is taken for the other.
+
+    /// "Z <steps>": zoom by this many steps now. A change, not a running
+    /// total. nil for no change. More than 64 either way is sent as 64, the
+    /// most the DLL accepts in one line.
+    static let zoomMaxSteps = 64
+    static func zoomLine(steps: Int) -> String? {
+        guard steps != 0 else { return nil }
+        return "Z \(max(-zoomMaxSteps, min(zoomMaxSteps, steps)))"
+    }
+
+    /// What one wake request is called, in the datagram and in wt_wake.txt
+    /// alike, so the DLL knows them for the same request. `run` is different
+    /// for every start of the app. THE TRAP: a bare counter starts again at 1
+    /// when the app restarts while SAI stays open, the DLL has seen "1"
+    /// before, and that wake is silently skipped.
+    static func wakeToken(run: Int, seq: Int) -> String { "r\(run)n\(seq)" }
+
+    /// "K <token>": wake request. The token is letters and digits only, at
+    /// most 31 of them (the DLL's limit); anything else gives nil.
+    static func wakeLine(token: String) -> String? {
+        guard !token.isEmpty, token.utf8.count <= 31,
+              token.utf8.allSatisfy({ ($0 >= 48 && $0 <= 57) || ($0 >= 65 && $0 <= 90) || ($0 >= 97 && $0 <= 122) })
+        else { return nil }
+        return "K \(token)"
+    }
+
     //
     // The tenth field says whether `ev` is a real event time (1) or not (0):
     // nil here, sent as 0 with a 0 in the ev place. See eventStampUs for why

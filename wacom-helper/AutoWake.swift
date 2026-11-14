@@ -114,7 +114,12 @@ extension SetupController {
     // the canvas is dead to pen AND mouse while the menu bar still works.
     func bumpWin32Wake() {
         wakeSeq += 1
-        try? "\(wakeSeq)".write(toFile: "\(appPrefix)/drive_c/wt_wake.txt", atomically: true, encoding: .ascii)
+        // The same name for the request on both roads, so the DLL acts on it
+        // once: the datagram gets there at once, the file is the fallback it
+        // reads when the pen port is not SAI's (and once a second otherwise).
+        let token = PressureCore.wakeToken(run: wakeRun, seq: wakeSeq)
+        if let line = PressureCore.wakeLine(token: token) { sendUDP(line) }
+        try? token.write(toFile: "\(appPrefix)/drive_c/wt_wake.txt", atomically: true, encoding: .ascii)
     }
 
     func bounceToSAI(_ target: NSRunningApplication) {

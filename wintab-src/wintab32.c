@@ -864,12 +864,28 @@ static void post_zoom(int steps) {
     log_line("pinch: posted %d wheel step(s) at (%ld,%ld)", dir * n, (long)pt.x, (long)pt.y);
 }
 
-static void check_zoom(DWORD now) {
+/* Switches read ONCE, at load (DllMain). They used to be getenv() calls on the
+ * producer's idle tick and, for the scroll one, on SAI's own thread for every
+ * message it took off its queue. */
+static int g_no_pinch_zoom, g_no_win32_wake;
+
+/* Pinch as a control datagram ("Z <steps>", wintab_core.h): the normal way. */
+static void zoom_datagram(int steps) {
+    if (g_no_pinch_zoom) return;
+    post_zoom(steps);
+}
+
+/* Pinch through wt_zoom.txt: only while the pen port is not ours, when no
+ * datagram can reach us. `port_ours` forgets the file's value, so the total
+ * that built up while datagrams did the work is not replayed as one big zoom
+ * the next time the port is lost. */
+static void check_zoom(DWORD now, int port_ours) {
     static DWORD lastCheck;
     static long lastVal;
     static int primed;
-    if (getenv("WT_NO_PINCH_ZOOM")) return;
-    if (now - lastCheck < 30) return;       /* responsive: a pinch is a live gesture */
+    if (g_no_pinch_zoom) return;
+    if (!wtc_zoom_file_wanted(port_ours)) { primed = 0; return; }
+    if (now - lastCheck < WTC_POLL_ZOOM_FILE_MS) return;   /* responsive: a pinch is a live gesture */
     lastCheck = now;
     FILE *f = fopen("C:\\wt_zoom.txt", "rb");
     if (!f) return;
@@ -886,13 +902,25 @@ static void check_zoom(DWORD now) {
     }
 }
 
-static void check_win32_wake(DWORD now) {
+/* The newest wake token acted on or seen, shared by the datagram and the file
+ * so one request never wakes twice. Producer thread only. */
+static char g_wake_last[32];
+
+/* Wake as a control datagram ("K <token>", wintab_core.h): the normal way. */
+static void wake_datagram(const char *token) {
+    if (g_no_win32_wake) return;
+    if (wtc_wake_datagram(token, g_wake_last, sizeof g_wake_last, g_host_is_probe))
+        win32_wake();
+}
+
+static void check_win32_wake(DWORD now, int port_ours) {
     static DWORD lastCheck;
-    static char lastVal[32];
     /* ON by default (the wake now runs on SAI's UI thread via the hook, so the
      * earlier wrong-thread hazard is gone). Opt out with WT_NO_WIN32_WAKE=1. */
-    if (getenv("WT_NO_WIN32_WAKE")) return;
-    if (now - lastCheck < 150) return;
+    if (g_no_win32_wake) return;
+    /* The datagram is the fast way; the file is read 150 ms apart only while
+     * the port is not ours, else once a second as a safety net. */
+    if (now - lastCheck < wtc_wake_file_every(port_ours)) return;
     lastCheck = now;
     FILE *f = fopen("C:\\wt_wake.txt", "rb");
     if (!f) return;
@@ -902,7 +930,7 @@ static void check_win32_wake(DWORD now) {
     b[n] = 0;
     /* once per new request, never for the one left from before we started,
      * and never in the Test pen probe. lastVal must be at least as big as b. */
-    if (wtc_wake_requested(b, lastVal, sizeof lastVal, g_host_is_probe))
+    if (wtc_wake_requested(b, g_wake_last, sizeof g_wake_last, g_host_is_probe))
         win32_wake();
 }
 
@@ -946,6 +974,10 @@ static unsigned long g_clicks_eaten;
  * asked for de-dup" — click_hook_proc must consult this, or enabling #24
  * silently re-arms the #19 stroke-eater for everyone. */
 static int g_want_dedup;
+static int g_want_pan;     /* scroll -> pan was asked for (it is, unless WT_NO_SCROLL_PAN).
+                            * Read once at hook install: the hook runs on SAI's
+                            * thread for every message SAI takes, and used to
+                            * call getenv() there each time. */
 
 /* ---- TWO-FINGER SCROLL PANS INSTEAD OF ZOOMING (issue #24) ----------------
  * winemac.drv turns a two-finger scroll into WM_MOUSEWHEEL, and SAI zooms on
@@ -1055,8 +1087,8 @@ static LRESULT CALLBACK click_hook_proc(int code, WPARAM wp, LPARAM lp) {
         LeaveCriticalSection(&g_cs);
     }
     /* scroll -> pan, unless this is one of OUR pinch-zoom wheels */
-    if (code >= 0 && m && g_hwnd && !getenv("WT_NO_SCROLL_PAN") &&
-        (m->message == WM_MOUSEWHEEL || m->message == WM_MOUSEHWHEEL) &&
+    if (code >= 0 && m && (m->message == WM_MOUSEWHEEL || m->message == WM_MOUSEHWHEEL) &&
+        g_hwnd && g_want_pan &&
         !(LOWORD(m->wParam) & ZOOM_TAG)) {
         int raw = (short)HIWORD(m->wParam);          /* keep sub-notch precision */
         HWND root = GetAncestor(g_hwnd, GA_ROOT);
@@ -1132,6 +1164,7 @@ static void ensure_click_dedup(void) {
     int want_dedup = getenv("WT_CLICK_DEDUP") && !getenv("WT_NO_CLICK_DEDUP");
     int want_pan   = !getenv("WT_NO_SCROLL_PAN");
     g_want_dedup = want_dedup;      /* the hook proc gates the EATING on this */
+    g_want_pan = want_pan;          /* ...and the scroll rewrite on this: its own flag */
     /* The hold (wtc_hold_*) is the third user of this hook, with its own flag
      * as the warning above asks: g_hold_on. It only ever reads the click. */
     if (!want_dedup && !want_pan && !g_hold_on) return;
@@ -1248,7 +1281,12 @@ static DWORD WINAPI producer(LPVOID arg) {
             /* parsed in wintab_core.h, where the tests can reach it; the
              * times at the end are optional (an app from before they existed) */
             WTC_DGRAM dg;
-            if (wtc_parse_datagram(buf, &dg)) {
+            WTC_CONTROL ctl;
+            if (wtc_parse_control(buf, &ctl)) {
+                /* not a pen sample: the app asking for a zoom or a wake */
+                if (ctl.kind == WTC_CTL_ZOOM) zoom_datagram(ctl.zoom);
+                else                          wake_datagram(ctl.wake);
+            } else if (wtc_parse_datagram(buf, &dg)) {
                 long sq = dg.seq; int p = dg.p, x = dg.x, y = dg.y, w = dg.w, h = dg.h;
                 g_dg_tm = dg.tm;
                 recvCount++;
@@ -1311,8 +1349,9 @@ static DWORD WINAPI producer(LPVOID arg) {
         check_hold(now);                /* the hold: say once in the log that it is on */
         hold_release(0, 1);             /* pen down and still, no click: the time limit */
         ensure_click_dedup();           /* pen-tap double-click fix, once hwnd exists */
-        check_win32_wake(now);          /* helper asked us to restore Win32 focus? */
-        check_zoom(now);                /* ...or asked us to zoom (pinch gesture) */
+        /* both arrive as datagrams; these read the fallback files */
+        check_win32_wake(now, sock != INVALID_SOCKET);
+        check_zoom(now, sock != INVALID_SOCKET);
         refresh_virtual();              /* screens changed? (#37) tell SAI promptly */
         flush_pending();                /* pen still/lifted: deliver the final point */
         st_report(now, 0);              /* a tap's START line: no samples follow it */
@@ -1334,8 +1373,10 @@ static DWORD WINAPI producer(LPVOID arg) {
          * last pen-up sample sitting there while you use the mouse) must NOT
          * keep re-emitting hover packets — that told SAI a pen was present and
          * blocked mouse painting. `echo 0 > file` kill switch still works. */
-        if (now - lastDatagram > 500) {
+        static DWORD lastFileRead;
+        if (wtc_press_file_due(sock != INVALID_SOCKET, now, lastDatagram, lastFileRead)) {
             static char lastFile[128];
+            lastFileRead = now;
             FILE *f = fopen("C:\\wt_pressure.txt", "rb");
             if (f) {
                 char b[128];
@@ -1619,6 +1660,8 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID r) {
             g_host_is_probe = wtc_host_is_probe(exe);
         }
         if (getenv("WT_NO_CTX_NOTIFY")) g_notify_ctx = 0;
+        g_no_pinch_zoom = getenv("WT_NO_PINCH_ZOOM") != NULL;
+        g_no_win32_wake = getenv("WT_NO_WIN32_WAKE") != NULL;
         if (getenv("WT_NO_SELFCHECK")) g_selfcheck = 0;
         if (getenv("WT_LOG_POS")) g_log_pos = 1;
         /* logging is OFF unless WT_DEBUG is set: without a log file, log_line() is a

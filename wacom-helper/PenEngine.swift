@@ -131,13 +131,19 @@ var g_zoomSteps = 0
 func noteMagnify(_ mag: Double) {
     guard !pinchZoomOff, mag != 0 else { return }
     g_zoomAccum += mag
+    let before = g_zoomSteps
     var changed = false
     while g_zoomAccum >=  zoomStep { g_zoomSteps += 1; g_zoomAccum -= zoomStep; changed = true }
     while g_zoomAccum <= -zoomStep { g_zoomSteps -= 1; g_zoomAccum += zoomStep; changed = true }
     guard changed else { return }
-    try? "\(g_zoomSteps)".write(toFile: "\(appPrefix)/drive_c/wt_zoom.txt",
-                                atomically: true, encoding: .ascii)
+    // The DLL hears it at once, on the pen port ("Z <steps>"): it used to find
+    // out by opening wt_zoom.txt every 30 ms. The file is still written, for
+    // the case where the port is not SAI's, but no longer here: this is the
+    // tap, and it used to wait for the disk on every zoom step.
+    if let line = PressureCore.zoomLine(steps: g_zoomSteps - before) { sendUDP(line) }
+    zoomFile.write("\(g_zoomSteps)")
 }
+let zoomFile = LatestFileWriter(path: "\(appPrefix)/drive_c/wt_zoom.txt")
 
 // The sample file is written OFF the pen path (LatestFileWriter.swift says why
 // and what it guarantees). The tap hands the newest sample over and moves on;
