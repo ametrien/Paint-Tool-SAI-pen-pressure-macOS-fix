@@ -521,6 +521,62 @@ do {
     expect(bytes < 8_000, "persistence: one drawing costs well under 8 KB of index")
 }
 
+// MARK: - what is being recorded right now
+
+do {
+    // A session in progress: numbered segments plus the sidecar.
+    let live = ["session 2026-11-15 1203.Sketch.000.mp4",
+                "session 2026-11-15 1203.Sketch.001.mp4",
+                "session 2026-11-15 1203.Sketch.json"]
+    expect(LibraryCore.unfinishedSessions(in: live) == ["session 2026-11-15 1203.Sketch"],
+           "live: segments plus a sidecar are one session being recorded")
+
+    // THE TRAP: a FINISHED video waiting to be filed has the same sidecar and
+    // no number. Counting it would say "Recording now" about a recording that
+    // has ended.
+    expect(LibraryCore.unfinishedSessions(in: ["session A.Sketch.mp4", "session A.Sketch.json"]).isEmpty,
+           "live: a finished video waiting to be filed is not being recorded")
+    expect(LibraryCore.unfinishedSessions(in: ["session A.Sketch.000.mp4"]).isEmpty,
+           "live: a segment with no sidecar has nothing to show")
+    expect(LibraryCore.unfinishedSessions(in: []).isEmpty, "live: an empty staging folder is nothing")
+    // A dot in the canvas name must not cut the name short, or the sidecar is
+    // looked for under the wrong name and the session goes unseen.
+    expect(LibraryCore.unfinishedSessions(in: ["s.my.cat v2.003.mp4", "s.my.cat v2.json"]) == ["s.my.cat v2"],
+           "live: a canvas name with dots in it keeps its whole name")
+    expect(LibraryCore.unfinishedSessions(in: ["s.A.000.mp4", "s.A.json", "s.B.000.mp4", "s.B.json"])
+               == ["s.A", "s.B"], "live: two open canvases are two sessions")
+    expect(LibraryCore.unfinishedSessions(in: ["s.A.v2.mp4", "s.A.json", "s.A.٣.mp4"]).isEmpty,
+           "live: only ASCII digits mark a segment")
+
+    let one = [LiveSession(title: "Sketch", continues: false)]
+    let more = [LiveSession(title: "Sketch", continues: true)]
+    expect(LibraryCore.liveNote(one, recording: true) == "Recording now: Sketch",
+           "live: the line names the canvas being recorded")
+    // THE TRAP: no frame count. A number in this line changes with every
+    // stroke, so the tab would have to reread and redraw it while you draw.
+    expect(LibraryCore.liveNote(one, recording: true).allSatisfy { !$0.isNumber },
+           "live: the line carries no number that would need constant updating")
+    // With no encoder running the same files are a leftover: "now" is untrue.
+    expect(LibraryCore.liveNote(one, recording: false) == "Not a video yet: Sketch",
+           "live: without the encoder it does not claim to be recording")
+    expect(LibraryCore.liveNote([LiveSession(title: " ", continues: false)], recording: true)
+               == "Recording now: Untitled", "live: a canvas with no name is Untitled")
+    expect(LibraryCore.liveNote(one + [LiveSession(title: "B", continues: true)], recording: true)
+               == "Recording now: 2 canvases", "live: several canvases are counted, not listed")
+    expect(LibraryCore.liveNote([], recording: true).isEmpty && LibraryCore.liveHint([], recording: true).isEmpty,
+           "live: nothing in staging says nothing")
+    expect(LibraryCore.liveHint(one, recording: true) == "Appears here when SAI closes.",
+           "live: the hint says when the video arrives")
+    expect(LibraryCore.liveHint(more, recording: true) == "Added to this drawing's video when SAI closes.",
+           "live: a continuation says which video it joins")
+    expect(LibraryCore.liveHint(one, recording: false) == "Left from an earlier session.",
+           "live: a leftover says so")
+    for t in [LibraryCore.liveNote(one, recording: true), LibraryCore.liveNote(one, recording: false),
+              LibraryCore.liveHint(one, recording: true), LibraryCore.liveHint(one, recording: false)] {
+        expect(!t.contains("\u{2014}"), "live: no em dash in \"\(t)\"")
+    }
+}
+
 if failures > 0 {
     print("FAILED: \(failures) test(s)")
     exit(1)

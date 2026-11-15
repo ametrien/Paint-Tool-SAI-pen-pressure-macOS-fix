@@ -351,6 +351,15 @@ func runSelfTestIfAsked() {
             print("menu[" + c.libMenu(for: card).items.map { $0.title }.joined(separator: "|") + "]")
             c.libDeselectAll()
         }
+        // The "Recording now" line. SAIPP_SELFTEST_LIVE stands in for the
+        // encoder: "1" is running, "0" is not. There is no encoder here.
+        if let live = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_LIVE"] {
+            c.refreshLibraryLive(recording: live == "1")
+            w.layoutIfNeeded()
+            print("live[\(c.libLiveLabel.stringValue)|\(c.libLiveHint.stringValue)|"
+                  + "\(c.libLiveRow.isHidden ? "hidden" : "shown")|\(c.libLiveButton.title)]")
+            print("pulse=\(c.livePulseIsOn ? "on" : "off")")
+        }
         print("bar[" + [c.libPlayButton, c.libExportButton, c.libRevealButton, c.libDeleteButton]
                   .map { "\($0!.title)=\($0!.isEnabled ? "on" : "off")" }.joined(separator: "|") + "]")
 

@@ -416,6 +416,19 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     var libExportButton: NSButton!
     var libRevealButton: NSButton!
     var libDeleteButton: NSButton!
+    // The line above the grid about the session still being recorded.
+    var libLiveRow: NSStackView!
+    var libLiveDot: NSTextField!
+    var libLiveLabel: NSTextField!
+    var libLiveHint: NSTextField!
+    var libLiveButton: NSButton!
+    /// What that line last showed, so it is only touched when it changes.
+    var libLiveShown = ""
+    /// Which sessions were in staging at the last look, and what they were.
+    var libLiveKey = ""
+    var libLiveSessions: [LiveSession] = []
+    var libLiveTick = 0
+    var libMakingVideo = false
     // The Keys tab (KeysUI.swift). Nothing cached: the settings file is read on
     // every change, so it is the only copy of the truth.
     var keysTab: NSStackView!
@@ -758,6 +771,15 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         // back to the window refreshes it at once (applicationDidBecomeActive)
         // and within a second in any case.
         guard windowIsOnScreen() else { return }
+        // The Videos tab's "Recording now" line, only while that tab is the one
+        // being looked at, and only every fifth second: it says that a
+        // recording is going on, not how far along it is, so nothing in it
+        // changes quickly. One directory listing each time. The grid itself
+        // (stills, video lengths) is NOT rebuilt here.
+        if (tabView?.selectedTabViewItem?.identifier as? String) == "Videos" {
+            libLiveTick += 1
+            if libLiveTick % 5 == 0 { refreshLibraryLive() }
+        }
         // The STATUS ROWS always update, even while SAI is running (issue #12).
         // They used to be skipped entirely once `running` was set, so changing
         // the SAI folder or installing a licence mid-session showed no change at

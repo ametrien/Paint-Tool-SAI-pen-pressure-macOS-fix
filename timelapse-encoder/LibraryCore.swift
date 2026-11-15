@@ -374,6 +374,71 @@ enum LibraryCore {
     }
 }
 
+// MARK: - what is being recorded right now
+
+/// One session that is still in staging: being recorded, or left over and not
+/// made into a video yet. What the Videos tab says about it while you draw.
+struct LiveSession: Equatable {
+    var title: String
+    /// True when its opening frame certainly continues a drawing in the library.
+    var continues: Bool
+}
+
+extension LibraryCore {
+    /// The sessions in staging that are not a video yet, as the name each one's
+    /// files start with: segments are "<prefix>.NNN.mp4", the sidecar is
+    /// "<prefix>.json".
+    ///
+    /// THE TRAP: a session counts only with BOTH a numbered segment and a
+    /// sidecar. A finished video waiting to be filed is "<prefix>.mp4" plus the
+    /// same sidecar, and calling that "recording now" would announce a
+    /// recording that ended. A segment without a sidecar has no name and no
+    /// frame count to show.
+    static func unfinishedSessions(in names: [String]) -> [String] {
+        let all = Set(names)
+        var out = Set<String>()
+        for n in names where n.hasSuffix(".mp4") {
+            let stem = n.dropLast(4)
+            guard let dot = stem.lastIndex(of: ".") else { continue }
+            let digits = stem[stem.index(after: dot)...]
+            guard !digits.isEmpty, digits.allSatisfy({ $0.isASCII && $0.isNumber }) else { continue }
+            let prefix = String(stem[..<dot])
+            if !prefix.isEmpty, all.contains(prefix + ".json") { out.insert(prefix) }
+        }
+        return out.sorted()
+    }
+
+    /// The line the Videos tab shows. Empty when there is nothing to say.
+    /// `recording` is whether the encoder is running: without it the same
+    /// files are a leftover, and "now" would be untrue.
+    ///
+    /// No frame count, on purpose: a number that grows with every stroke would
+    /// have to be read and redrawn all the time, while somebody is drawing.
+    /// This line only changes when a recording starts or ends.
+    static func liveNote(_ sessions: [LiveSession], recording: Bool) -> String {
+        guard !sessions.isEmpty else { return "" }
+        let head = recording ? "Recording now" : "Not a video yet"
+        let what: String
+        if sessions.count == 1 {
+            let t = sessions[0].title.trimmingCharacters(in: .whitespacesAndNewlines)
+            what = t.isEmpty ? "Untitled" : t
+        } else {
+            what = "\(sessions.count) canvases"
+        }
+        return "\(head): \(what)"
+    }
+
+    /// The small print under that line: when it turns into a video.
+    static func liveHint(_ sessions: [LiveSession], recording: Bool) -> String {
+        guard !sessions.isEmpty else { return "" }
+        guard recording else { return "Left from an earlier session." }
+        if sessions.count == 1, sessions[0].continues {
+            return "Added to this drawing's video when SAI closes."
+        }
+        return "Appears here when SAI closes."
+    }
+}
+
 // MARK: - naming
 
 extension LibraryCore {

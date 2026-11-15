@@ -1412,6 +1412,68 @@ echo "$layout" | grep -q "0 MB" \
   || echo "  ok   tab: small videos are sized in KB, not rounded to 0 MB"
 
 
+# While you draw, the session sits in the hidden staging folder until SAI
+# closes. The tab used to show nothing about it, so a drawing in progress looked
+# like recording was not working. It now says one line above the grid.
+# The idle tab first: no session in staging, so no line.
+idle=$(SAIPP_CONFIG_DIR="$TAB/cfg" SAIPP_SELFTEST_TABLAYOUT=1 SAIPP_SELFTEST_LIVE=1 "$WORK/helper-lib" 2>/dev/null)
+echo "$idle" | grep -q "^live\[||hidden|Make video now\]" \
+  && echo "  ok   live: with nothing being recorded the tab has no recording line" \
+  || { echo "  FAIL live: $(echo "$idle" | grep '^live' || echo 'no live line reported')"; tab_fail=1; }
+# Then a REAL session in progress: the real encoder watching real frames,
+# stopped the way the app stops it. What it leaves behind (a numbered segment
+# and the sidecar) is exactly what is on disk while somebody draws. The frames
+# carry on the drawing recorded above, 13 marks after its 12.
+LIVET="$WORK/livetab"; mkdir -p "$LIVET/cfg" "$LIVET/frames"
+cp -R "$E2E/videos" "$LIVET/videos"; mkdir -p "$LIVET/videos/.recording"
+printf '%s' "$LIVET/videos" > "$LIVET/cfg/timelapse-folder.txt"
+mkart 13 15 F00D Sketch 64 48 "$LIVET/frames"
+"$WORK/enc-live" --frames "$LIVET/frames" --out "$LIVET/videos/.recording/session 2026-07-29 1000.mp4" \
+    --fps 5 --watch > "$LIVET/log" 2>&1 &
+LIVEPID=$!; WATCHERS="$WATCHERS $LIVEPID"
+for _ in $(seq 1 100); do
+  [ -z "$(ls "$LIVET/frames" 2>/dev/null)" ] && break
+  sleep 0.1
+done
+kill -TERM "$LIVEPID" 2>/dev/null || true; wait "$LIVEPID" 2>/dev/null || true
+before=$(ls "$LIVET/videos/.recording" | sort)
+live=$(SAIPP_CONFIG_DIR="$LIVET/cfg" SAIPP_SELFTEST_TABLAYOUT=1 SAIPP_SELFTEST_LIVE=1 "$WORK/helper-lib" 2>/dev/null)
+echo "$live" | grep -q "^live\[Recording now: Sketch|Added to this drawing's video when SAI closes.|shown|Make video now\]" \
+  && echo "  ok   live: a session being recorded is named, and says which video it joins" \
+  || { echo "  FAIL live: $(echo "$live" | grep '^live' || echo 'no live line reported')"; echo "    staging: $before"; tab_fail=1; }
+# THE TRAP: the same files with no encoder running are a leftover. Saying
+# "Recording now" then would be untrue.
+left=$(SAIPP_CONFIG_DIR="$LIVET/cfg" SAIPP_SELFTEST_TABLAYOUT=1 SAIPP_SELFTEST_LIVE=0 "$WORK/helper-lib" 2>/dev/null)
+echo "$left" | grep -q "^live\[Not a video yet: Sketch|Left from an earlier session.|shown|Make video now\]" \
+  && echo "  ok   live: without the encoder the same files are a leftover, not a recording" \
+  || { echo "  FAIL live: $(echo "$left" | grep '^live' || echo 'no live line reported')"; tab_fail=1; }
+# The red dot pulses while recording, so it reads as "live" at a glance.
+# THE TRAP: it must NOT pulse for a leftover or on an idle tab. A pulsing red
+# dot says "recording" whatever the words beside it say.
+# (Reduce Motion in System Settings keeps it still, so then it is not checked.)
+if [ "$(defaults read com.apple.universalaccess reduceMotion 2>/dev/null)" = "1" ]; then
+  echo "  skip live: Reduce Motion is on, the dot stays still by design"
+else
+  echo "$live" | grep -q "^pulse=on" \
+    && echo "  ok   live: the dot pulses while a recording is going on" \
+    || { echo "  FAIL live: the dot does not pulse while recording"; tab_fail=1; }
+fi
+echo "$left" | grep -q "^pulse=off" \
+  && echo "  ok   live: a leftover session does not pulse" \
+  || { echo "  FAIL live: the dot pulses for a session nobody is recording"; tab_fail=1; }
+echo "$idle" | grep -q "^pulse=off" \
+  && echo "  ok   live: nothing pulses on an idle tab" \
+  || { echo "  FAIL live: the dot pulses with nothing being recorded"; tab_fail=1; }
+# Looking must not touch the recording: this runs while you draw.
+[ "$(ls "$LIVET/videos/.recording" | sort)" = "$before" ] \
+  && echo "  ok   live: showing the line leaves the staging folder exactly as it was" \
+  || { echo "  FAIL live: staging changed: $(ls "$LIVET/videos/.recording")"; tab_fail=1; }
+# And the grid still lists the drawing from before, with its own facts.
+echo "$live" | grep -qE "[0-9]+ sessions? · " \
+  && echo "  ok   live: the drawings already made are still listed under the line" \
+  || { echo "  FAIL live: the drawing row is gone while recording"; tab_fail=1; }
+
+
 # Select all, then delete: everything goes to the Trash (a test folder here),
 # the index forgets it, and nothing stays selected.
 DEL="$WORK/delall"; mkdir -p "$DEL/cfg" "$DEL/trash"

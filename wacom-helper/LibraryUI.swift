@@ -182,6 +182,37 @@ extension SetupController {
         libFooter = lbl("", 11, color: .tertiaryLabelColor)
         tab.addArrangedSubview(libFooter)
 
+        // What is being recorded right now. A session lives in the hidden
+        // staging folder until SAI closes, so without this the tab showed
+        // nothing at all about a drawing in progress, and looked as if
+        // recording was not working.
+        libLiveLabel = lbl("", 12, bold: true)
+        libLiveLabel.lineBreakMode = .byTruncatingTail
+        libLiveLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        libLiveHint = lbl("", 11, color: .secondaryLabelColor)
+        let liveText = NSStackView(views: [libLiveLabel, libLiveHint])
+        liveText.orientation = .vertical
+        liveText.alignment = .leading
+        liveText.spacing = 2
+        let liveSpacer = NSView()
+        liveSpacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+        libLiveButton = NSButton(title: "Make video now", target: self, action: #selector(libMakeVideoNow))
+        libLiveButton.bezelStyle = .rounded
+        libLiveButton.controlSize = .small
+        libLiveButton.font = NSFont.systemFont(ofSize: 11)
+        libLiveButton.toolTip = "Makes the video of what is recorded so far. Recording carries on afterwards."
+        libLiveDot = lbl("●", 12, color: .systemRed)
+        libLiveDot.wantsLayer = true
+        libLiveRow = NSStackView(views: [libLiveDot, liveText, liveSpacer, libLiveButton])
+        libLiveRow.orientation = .horizontal
+        libLiveRow.alignment = .centerY
+        libLiveRow.spacing = 8
+        libLiveRow.translatesAutoresizingMaskIntoConstraints = false
+        libLiveRow.widthAnchor.constraint(equalToConstant: SetupController.libListWidth).isActive = true
+        libLiveRow.isHidden = true
+        libLiveShown = ""
+        tab.addArrangedSubview(libLiveRow)
+
         let grid = LibraryGridView()
         grid.owner = self
         libStack = grid
@@ -295,6 +326,7 @@ extension SetupController {
         applyLibrarySelection()
 
         defer { fitLibraryHeight() }
+        refreshLibraryLive(fresh: true)
         if drawings.isEmpty && loose.isEmpty {
             libStack.addArrangedSubview(
                 lbl("Nothing recorded yet. Draw in SAI with recording on, and your "
@@ -318,6 +350,104 @@ extension SetupController {
         }
         libFooter.stringValue = parts.joined(separator: " · ")
         libFooter.isHidden = false
+    }
+
+    /// The sessions still in staging.
+    ///
+    /// The usual call costs one directory listing and nothing else: the
+    /// sidecars are only opened when the SET of sessions changed, which is
+    /// when a recording starts or ends. `fresh` forgets that, for a tab that
+    /// has just been rebuilt from disk.
+    func liveSessions(fresh: Bool = false) -> [LiveSession] {
+        let store = libStore ?? makeLibraryStore()
+        let staging = store.stagingDir
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: staging)) ?? []
+        let prefixes = LibraryCore.unfinishedSessions(in: names)
+        let key = staging + "\n" + prefixes.joined(separator: "\n")
+        if !fresh, key == libLiveKey { return libLiveSessions }
+        libLiveKey = key
+        libLiveSessions = readLiveSessions(prefixes, staging: staging, store: store)
+        return libLiveSessions
+    }
+
+    private func readLiveSessions(_ prefixes: [String], staging: String, store: LibraryStore) -> [LiveSession] {
+        let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
+        return prefixes.compactMap { prefix in
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: staging)
+                                           .appendingPathComponent(prefix + ".json")),
+                  let side = try? dec.decode(SessionSidecar.self, from: data) else { return nil }
+            // The same question filing asks when SAI closes, asked early, so the
+            // line can say the frames are going into a drawing already listed.
+            // Only a certain match counts: "might be" is asked about later.
+            var continues = false
+            if case .same = LibraryCore.classify(opening: side.opening, title: side.title, path: nil,
+                                                 candidates: store.lib.drawings,
+                                                 sessionFile: prefix + ".mp4", declined: store.lib) {
+                continues = true
+            }
+            return LiveSession(title: side.title, continues: continues)
+        }
+    }
+
+    /// Bring the "Recording now" line up to date. Called every few seconds
+    /// while the Videos tab is showing, so it must stay cheap: it lists one
+    /// folder, and touches the views only when the text changed. `recording`
+    /// is whether the encoder is running; the tests pass it, the app asks.
+    func refreshLibraryLive(recording: Bool? = nil, fresh: Bool = false) {
+        guard libLiveRow != nil else { return }
+        let sessions = liveSessions(fresh: fresh)
+        let rec = recording ?? (g_liveEncoder?.isRunning ?? false)
+        let note = libMakingVideo ? "Making the video" : LibraryCore.liveNote(sessions, recording: rec)
+        let hint = libMakingVideo ? "" : LibraryCore.liveHint(sessions, recording: rec)
+        let shown = note + "\n" + hint
+        guard shown != libLiveShown else { return }
+        let hadOne = !libLiveShown.isEmpty && libLiveShown != "\n"
+        libLiveShown = shown
+        libLiveLabel.stringValue = note
+        libLiveHint.stringValue = hint
+        libLiveHint.isHidden = hint.isEmpty
+        libLiveButton.isEnabled = !libMakingVideo
+        setLivePulse(rec && !note.isEmpty && !libMakingVideo)
+        if libLiveRow.isHidden != note.isEmpty {
+            libLiveRow.isHidden = note.isEmpty
+            applyLayout()
+        }
+        // The session has just gone from staging: SAI closed, or a video was
+        // made. That is the moment its drawing appears or grows, so the grid is
+        // rebuilt once, here, not on every tick.
+        if note.isEmpty && hadOne { refreshLibraryTab() }
+    }
+
+    /// The red dot breathes while a recording is going on, and only then.
+    ///
+    /// A Core Animation on the dot's layer, deliberately: the window server
+    /// fades it, so no timer fires and no code of ours runs per frame on the
+    /// thread the pen is read on. A leftover session gets a still grey dot,
+    /// because a pulsing red one says "recording" whatever the words say.
+    /// With Reduce Motion on, the dot stays red and still.
+    func setLivePulse(_ on: Bool) {
+        guard let dot = libLiveDot else { return }
+        dot.textColor = on || libMakingVideo ? .systemRed : .tertiaryLabelColor
+        let key = "pulse"
+        let moving = on && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        guard moving else { dot.layer?.removeAnimation(forKey: key); return }
+        guard dot.layer?.animation(forKey: key) == nil else { return }
+        let a = CABasicAnimation(keyPath: "opacity")
+        a.fromValue = 1.0
+        a.toValue = 0.35              // light: it dims, it never disappears
+        a.duration = 1.4
+        a.autoreverses = true
+        a.repeatCount = .infinity
+        a.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        // Survives the window being minimized and brought back.
+        a.isRemovedOnCompletion = false
+        dot.layer?.add(a, forKey: key)
+    }
+    var livePulseIsOn: Bool { libLiveDot?.layer?.animation(forKey: "pulse") != nil }
+
+    /// The button on that line: the video so far, without leaving the tab.
+    @objc func libMakeVideoNow() {
+        makeVideoNow(revealInFinder: false)
     }
 
     /// Cards in rows of three, in the order given.

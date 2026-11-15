@@ -25,7 +25,11 @@ extension SetupController {
     /// segments into one video per canvas, and applies the chosen length.
     /// Anything captured after the encoder stopped is encoded first, so the
     /// last few strokes are not lost.
-    @objc func makeTimelapseVideo() {
+    @objc func makeTimelapseVideo() { makeVideoNow(revealInFinder: true) }
+
+    /// `revealInFinder` is off for the Videos tab's button: the video shows up
+    /// in the grid right there, and a Finder window on top of it is noise.
+    func makeVideoNow(revealInFinder: Bool) {
         let frames = timelapseFrameCount()
         let segments = timelapseSegmentCount()
         guard frames > 0 || segments > 0 else {
@@ -38,6 +42,8 @@ extension SetupController {
             alertUser("The timelapse encoder is missing from the app bundle.")
             return
         }
+        libMakingVideo = true
+        refreshLibraryLive()
         stopLiveEncoder()          // it holds the segments open
 
         DispatchQueue.global(qos: .userInitiated).async {
@@ -74,12 +80,17 @@ extension SetupController {
                     if made.count > 1 {
                         alertUser("Made \(made.count) videos, one per canvas.\n\nIn \(prettyPath(timelapseOutputFolder()))")
                     }
-                    NSWorkspace.shared.activateFileViewerSelecting(made.map { URL(fileURLWithPath: $0) })
+                    if revealInFinder {
+                        NSWorkspace.shared.activateFileViewerSelecting(made.map { URL(fileURLWithPath: $0) })
+                    }
                     self.askAboutPendingSessions()
                 } else {
                     alertUser("Could not build the video.\n\n\(log)")
                 }
+                self.libMakingVideo = false
                 self.refreshRecordingTab()
+                // The new video belongs in the grid whichever tab asked for it.
+                self.refreshLibraryTab()
             }
         }
     }

@@ -3,6 +3,23 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+Not in a build yet. Move this under the next version number when it is released,
+and mention it in the release notes.
+
+### Added
+- **The Videos tab shows a recording in progress.** While you draw, a line above the grid reads
+  "Recording now" with the canvas name and a softly pulsing red dot, and says the video appears
+  when SAI closes, or that it is added to a drawing already listed. Before, the tab showed
+  nothing about a drawing until SAI closed, which looked as if recording was not working.
+- **Make video now** on that line makes the video of what is recorded so far without leaving
+  the tab. Recording carries on afterwards.
+- The line costs almost nothing while you draw: it is checked every five seconds, only while the
+  Videos tab is on screen, by listing one folder. It shows no frame count, so nothing in it
+  changes between the start and the end of a recording. The dot is faded by the window server,
+  and stays still with Reduce Motion on.
+
 ## [0.3.15] — 2026-11-15
 
 ### Added
