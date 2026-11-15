@@ -27,18 +27,17 @@ Yes. It should work on any Apple Silicon Mac, with any tablet that macOS itself 
 app reads the standard tablet events macOS gives every app, and nothing in it is tied to one Mac or
 one tablet. The stroke in the screenshot above was drawn with it.
 
-What it has been checked on so far:
+Users have reported it working on:
 
-- Mac: **Apple M3 Pro**, **macOS Tahoe 26.6.2 (25G83)**
+- Macs: **M5 MacBook Air** and **M3 Pro MacBook Pro**, on **macOS Tahoe 26**
+- Tablets: **Wacom Intuos S**, over USB and Bluetooth (CTL-4100 and CTL-4100WL)
+- Displays: one screen, two screens mirrored, two screens extended, a screen connected while SAI is
+  open, and an external LG UltraFine
 - Wine: **Wine Staging 11.16 (Gcenx) with the Retina patch**, the build Setup installs
 - SAI: **PaintTool SAI Ver.2 (64-bit)**
-- Tablet: **Wacom Intuos BT S (CTL-4100WL)**, over USB and Bluetooth
-- Displays: one screen, two screens mirrored, and two screens extended, including a screen
-  connected while SAI is open
 
-Users have also reported it working on an M5 MacBook Air with a USB Intuos S, and with an external
-LG UltraFine display. If you try another Mac or tablet, a short report as an issue helps the next
-person, whether it worked or not (see [CONTRIBUTING](CONTRIBUTING.md)).
+If you try another Mac or tablet, a short report as an issue helps the next person, whether it
+worked or not (see [CONTRIBUTING](CONTRIBUTING.md)).
 
 **Check it on your own Mac in a minute:** the Pen tab's **Test pen** shows the pressure the app
 sends and the pressure that arrives on SAI's side. Both bars move when it works.
