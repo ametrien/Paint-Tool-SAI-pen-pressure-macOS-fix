@@ -46,7 +46,11 @@ It does not download SAI or a licence for you: you point it at a SAI folder you 
 
 ### Pen
 
-<p align="center"><a href="docs/assets/screenshots/pen.png"><img src="docs/assets/screenshots/pen.png" alt="The Pen tab: pressure levels, the pen feel preset, the pen feel curve with its plot, Ignore light touch, Full width at, and Test pen." width="70%"></a></p>
+<p align="center">
+  <a href="docs/assets/screenshots/pen.png"><img src="docs/assets/screenshots/pen.png" alt="The Pen tab: pressure levels, the pen feel preset, the pen feel curve with its plot, Ignore light touch, Full width at, and the Test pen button." width="49%"></a>
+  <a href="docs/assets/screenshots/pen-test.png"><img src="docs/assets/screenshots/pen-test.png" alt="The Pen tab during Test pen: a sending bar at 1549 of 4095 and a receiving bar showing packets and the peak that reached SAI." width="49%"></a><br>
+  <sub>Left: the Pen tab. Right: the same tab with Test pen running.</sub>
+</p>
 
 How the pen feels in SAI. Pen feel changes apply instantly, without restarting SAI.
 
