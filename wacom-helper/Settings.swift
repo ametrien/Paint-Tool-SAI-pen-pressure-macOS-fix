@@ -108,6 +108,11 @@ func storedTimelapseLengthIndex() -> Int {
     else { return 3 }          // "Everything" — never silently drop someone's work
     return i
 }
+/// The export length the Export dialog was last left on.
+func storeTimelapseLengthIndex(_ i: Int) {
+    try? String(max(0, min(i, 3)))
+        .write(toFile: appSupport() + "/timelapse-length.txt", atomically: true, encoding: .utf8)
+}
 /// Seconds for the chosen length, or 0 meaning "keep every frame".
 func timelapseMaxSeconds() -> Int {
     [30, 60, 120, 0][storedTimelapseLengthIndex()]

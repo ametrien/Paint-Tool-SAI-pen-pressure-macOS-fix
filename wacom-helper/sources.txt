@@ -36,6 +36,7 @@ wacom-helper/RecordingUI.swift
 wacom-helper/RecordingActions.swift
 wacom-helper/LibraryStore.swift
 wacom-helper/LibraryUI.swift
+wacom-helper/LibrarySelection.swift
 wacom-helper/KeysCore.swift
 wacom-helper/KeysUI.swift
 wacom-helper/DisplayCore.swift
@@ -45,4 +46,6 @@ wacom-helper/WinePatchCore.swift
 wacom-helper/WinePatch.swift
 wacom-helper/WineStatusCore.swift
 wacom-helper/WineUI.swift
+wacom-helper/StatsCore.swift
+wacom-helper/StatsUI.swift
 timelapse-encoder/LibraryCore.swift

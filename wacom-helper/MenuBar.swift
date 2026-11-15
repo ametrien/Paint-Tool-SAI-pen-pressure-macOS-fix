@@ -98,6 +98,15 @@ extension SetupController {
         }
         add("Wake SAI window (if stuck)   ⌃⌥⌘Space", #selector(wakeSAI))
         menu.addItem(.separator())
+        // Today's drawing, filled in again each time the menu opens (menuWillOpen,
+        // StatsUI.swift): the menu-bar menu is built once and kept, so a title
+        // set only here would freeze at whatever it said at the last rebuild.
+        let today = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        today.isEnabled = false
+        today.tag = statsMenuTag
+        menu.addItem(today)
+        fillStatsMenuItem(menu)
+        menu.delegate = self
         let frames = timelapseFrameCount()
         add(timelapseOn ? "Recording timelapse" : "Timelapse recording is off",
             #selector(toggleTimelapse(_:)), state: timelapseOn ? .on : .off)

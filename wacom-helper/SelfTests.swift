@@ -260,6 +260,56 @@ func runSelfTestIfAsked() {
         exit(0)
     }
 
+    /// Self-test hook: render a tab to PNGs, light and dark, for looking at a
+    /// design without starting the app or SAI. SAIPP_SELFTEST_TAB_PNG names the
+    /// tab ("Statistics" or "Videos") and SAIPP_SELFTEST_PNG_OUT the path stem;
+    /// it writes <stem>-light.png and <stem>-dark.png from the settings in
+    /// SAIPP_CONFIG_DIR. SAIPP_SELFTEST_SELECT=n selects the first n videos.
+    if let which = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_TAB_PNG"],
+       let out = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_PNG_OUT"] {
+        _ = NSApplication.shared
+        loadStats()
+        for (name, look) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            let c = SetupController()
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: c.rowWidth + 88, height: 560),
+                             styleMask: [.titled], backing: .buffered, defer: false)
+            w.appearance = NSAppearance(named: look)
+            let tab = which == "Videos" ? c.buildLibraryTab() : c.buildStatsTab()
+            if which == "Videos", let n = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_SELECT"].flatMap(Int.init) {
+                for k in c.libOrder.prefix(n) { c.libSelection.click(k, modifier: .toggle, order: c.libOrder) }
+                c.applyLibrarySelection()
+            }
+            if which == "Statistics" {
+                c.statsBars.setMode(ProcessInfo.processInfo.environment["SAIPP_SELFTEST_CHART"] == "hours" ? .hours : .days)
+            }
+            tab.translatesAutoresizingMaskIntoConstraints = true
+            tab.autoresizingMask = [.width, .height]
+            tab.frame = w.contentView!.bounds
+            w.contentView?.addSubview(tab)
+            w.layoutIfNeeded()
+            let v = w.contentView!
+            guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
+            v.cacheDisplay(in: v.bounds, to: rep)
+            // cacheDisplay leaves the window background out, so paint it under
+            // the snapshot: otherwise dark mode is white text on nothing.
+            let img = NSImage(size: v.bounds.size)
+            img.lockFocus()
+            // Fixed greys close to the system window backgrounds: a dynamic
+            // colour resolved inside lockFocus came out light in both modes.
+            (name == "dark" ? NSColor(white: 0.16, alpha: 1) : NSColor(white: 0.93, alpha: 1)).setFill()
+            NSRect(origin: .zero, size: v.bounds.size).fill()
+            rep.draw(in: NSRect(origin: .zero, size: v.bounds.size), from: .zero, operation: .sourceOver,
+                     fraction: 1, respectFlipped: true, hints: nil)
+            img.unlockFocus()
+            if let tiff = img.tiffRepresentation, let r = NSBitmapImageRep(data: tiff) {
+                try? r.representation(using: .png, properties: [:])?
+                    .write(to: URL(fileURLWithPath: "\(out)-\(name).png"))
+            }
+            print("\(out)-\(name).png")
+        }
+        exit(0)
+    }
+
     if let dir = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_TABLAYOUT"] {
         _ = NSApplication.shared
         let c = SetupController()
@@ -295,6 +345,27 @@ func runSelfTestIfAsked() {
         }
         let drawn = c.libStore?.lib.drawings.count ?? 0
         print("rows drawings=\(drawn) loose=\(hoverRows(tab) - drawn)")
+        // The right-click menu of the first card, and the bar under the grid:
+        // menus are not subviews, so the dump above cannot show them.
+        if let k = c.libOrder.first, let card = c.libCards[k] {
+            print("menu[" + c.libMenu(for: card).items.map { $0.title }.joined(separator: "|") + "]")
+            c.libDeselectAll()
+        }
+        print("bar[" + [c.libPlayButton, c.libExportButton, c.libRevealButton, c.libDeleteButton]
+                  .map { "\($0!.title)=\($0!.isEnabled ? "on" : "off")" }.joined(separator: "|") + "]")
+
+        // Select everything and delete it without the question, as the Delete
+        // button does after "Move to Trash". Run with SAIPP_TRASH_DIR so the
+        // files land in a test folder, never the real Trash.
+        if ProcessInfo.processInfo.environment["SAIPP_SELFTEST_DELETEALL"] != nil {
+            c.libSelectAll()
+            print("selected \(c.libSelection.count) bar[\(c.libStatus.stringValue)|\(c.libDeleteButton.title)]")
+            let failed = c.deleteLibraryKeys(c.libSelection.ordered(c.libOrder), ask: false)
+            print("failed \(failed.count)")
+            w.layoutIfNeeded()
+            let left = c.libStore?.lib.drawings.count ?? 0
+            print("after delete drawings=\(left) loose=\(hoverRows(tab) - left) selected=\(c.libSelection.count)")
+        }
 
         // Changing the videos folder must reload the list in place — the whole point
         // being that you do not have to quit the app to see the other folder.

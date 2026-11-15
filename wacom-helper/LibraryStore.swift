@@ -310,6 +310,19 @@ final class LibraryStore {
         save()
     }
 
+    /// Move a drawing's folder (its pieces and its video) to the Trash and
+    /// forget it. Returns false, and keeps it in the library, when it could not
+    /// be moved: a drawing must never vanish from the list while its files stay.
+    @discardableResult
+    func trash(_ id: String) -> Bool {
+        guard let d = lib.drawing(id: id) else { return false }
+        do { try moveToTrash(folderURL(d)) } catch { return false }
+        lib.drawings.removeAll { $0.id == id }
+        lib.pending.removeAll { $0.drawingId == id || $0.candidateId == id }
+        save()
+        return true
+    }
+
     // MARK: - rebuilding
 
     /// Rebuild one drawing's combined video from its pieces. Cheap (the encoder
@@ -346,4 +359,15 @@ final class LibraryStore {
         p.waitUntilExit()
         return p.terminationStatus == 0
     }
+}
+
+/// Move a file or folder to the Trash. SAIPP_TRASH_DIR, for tests only, sends
+/// it to that folder instead, so a test run never fills the real Trash.
+func moveToTrash(_ url: URL) throws {
+    if let dir = ProcessInfo.processInfo.environment["SAIPP_TRASH_DIR"] {
+        let dest = URL(fileURLWithPath: dir).appendingPathComponent(url.lastPathComponent)
+        try FileManager.default.moveItem(at: url, to: dest)
+        return
+    }
+    try FileManager.default.trashItem(at: url, resultingItemURL: nil)
 }
