@@ -8,7 +8,7 @@
 Run **PaintTool SAI Ver.2** on a Mac with **real pen pressure**, and record a **timelapse of your
 canvas** while you draw. Free and open source.
 
-- **[Does it work?](#does-it-work):** what it is tested on, and how to check it on your own Mac.
+- **[What you need](#what-you-need):** a Mac, a tablet and your own SAI, and the setups users have reported working.
 - **[Get started](#get-started):** download, drag to Applications, follow the setup window.
 - **[What you get](#what-you-get):** pressure and pen feel, Mac shortcuts, sharp text on Retina screens, Chinese, Japanese and Korean text, timelapse.
 - **[What it does not do](#what-it-does-not-do):** SAI and its licence are not included, pressure only, and the limits that belong to SAI or Wine.
@@ -21,11 +21,14 @@ canvas** while you draw. Free and open source.
   <img src="docs/assets/screenshots/sai-on-mac.png" alt="PaintTool SAI Ver.2 running on a MacBook next to SAI Pen Pressure, with a pressure-sensitive pen stroke on the canvas" width="88%">
 </p>
 
-## Does it work?
+## What you need
 
-Yes. It should work on any Apple Silicon Mac, with any tablet that macOS itself recognises: the
-app reads the standard tablet events macOS gives every app, and nothing in it is tied to one Mac or
-one tablet. The stroke in the screenshot above was drawn with it.
+- **A Mac with Apple Silicon.** Intel Macs are untested.
+- **A pen tablet that macOS itself recognises.** The app reads the standard tablet events macOS
+  gives every app, so nothing in it is tied to one tablet.
+- **Your own copy of PaintTool SAI Ver.2**, and a licence from SYSTEMAX if you want to save.
+
+Wine is installed for you during setup.
 
 Users have reported it working on:
 
