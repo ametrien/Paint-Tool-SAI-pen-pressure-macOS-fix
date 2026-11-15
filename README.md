@@ -23,7 +23,11 @@ canvas** while you draw. Free and open source.
 
 ## Does it work?
 
-Yes, on the setup below. The stroke in the screenshot above was drawn with it.
+Yes. It should work on any Apple Silicon Mac, with any tablet that macOS itself recognises: the
+app reads the standard tablet events macOS gives every app, and nothing in it is tied to one Mac or
+one tablet. The stroke in the screenshot above was drawn with it.
+
+What it has been checked on so far:
 
 - Mac: **Apple M3 Pro**, **macOS Tahoe 26.6.2 (25G83)**
 - Wine: **Wine Staging 11.16 (Gcenx) with the Retina patch**, the build Setup installs
@@ -33,8 +37,8 @@ Yes, on the setup below. The stroke in the screenshot above was drawn with it.
   connected while SAI is open
 
 Users have also reported it working on an M5 MacBook Air with a USB Intuos S, and with an external
-LG UltraFine display. Other tablets, Macs and display setups are untested; reports are welcome as
-issues (see [CONTRIBUTING](CONTRIBUTING.md)).
+LG UltraFine display. If you try another Mac or tablet, a short report as an issue helps the next
+person, whether it worked or not (see [CONTRIBUTING](CONTRIBUTING.md)).
 
 **Check it on your own Mac in a minute:** the Pen tab's **Test pen** shows the pressure the app
 sends and the pressure that arrives on SAI's side. Both bars move when it works.
