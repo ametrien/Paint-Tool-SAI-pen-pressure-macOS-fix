@@ -21,10 +21,10 @@ canvas** while you draw. Free and open source.
 
 ## What it looks like
 
-Six tabs, one window.
+Seven tabs, one window.
 
 <p align="center">
-  <a href="docs/assets/screenshots/all-tabs.png"><img src="docs/assets/screenshots/all-tabs.png" alt="All six tabs side by side. Top row: Setup, with Launch and Wake SAI; Pen, with pressure levels, pen feel presets, the curve and two more feel sliders, and a live test; Keys, with what each Option and Command key sends. Bottom row: Recording, with the timelapse switch and save folder; Videos, one video per drawing; Advanced, with developer mode, automatic updates, sharp text on Retina screens, the Language menu with the font in use, and the Wine in use." width="100%"></a>
+  <a href="docs/assets/screenshots/all-tabs.png"><img src="docs/assets/screenshots/all-tabs.png" alt="All seven tabs. Top row: Setup, with Launch and Wake SAI; Pen, with pressure levels, pen feel presets, the curve and two more feel sliders, and Test pen; Keys, with what each Option and Command key sends; Recording, with the timelapse switches and save folder. Bottom row: Videos, a grid of drawings with a bar for the selection; Statistics, with today, the last 7 days, the streak and a chart of the last two weeks; Advanced, with developer mode, automatic updates, sharp text on Retina screens, the Language menu with the font in use, and the Wine in use." width="100%"></a>
 </p>
 <p align="center"><sub>Full size:
   <a href="docs/assets/screenshots/setup.png">Setup</a> ·
@@ -32,6 +32,7 @@ Six tabs, one window.
   <a href="docs/assets/screenshots/keys.png">Keys</a> ·
   <a href="docs/assets/screenshots/recording.png">Recording</a> ·
   <a href="docs/assets/screenshots/videos.png">Videos</a> ·
+  <a href="docs/assets/screenshots/statistics.png">Statistics</a> ·
   <a href="docs/assets/screenshots/advanced.png">Advanced</a></sub></p>
 
 ### Setup
@@ -84,12 +85,36 @@ apply the next time SAI starts.
 
 ### Videos
 
-One video per drawing, even when you work on it over several evenings. Hover over a still to play
-it. **Export…** saves a copy at 30 seconds, 1 or 2 minutes, or full length. **More** renames the
-drawing, lists its sessions (to take out one that was filed with the wrong drawing), rebuilds the
-video, or deletes it.
+One video per drawing, even when you work on it over several evenings, shown as a grid of stills.
+Hover over a still to play it, double-click to open it.
+
+- **Select** the way Finder does: click one, ⌘-click to add or remove one, Shift-click for a
+  range, ⌘A for all.
+- The bar under the grid acts on the selection: **Play**, **Export…** (a copy at 30 seconds, 1 or
+  2 minutes, or full length), **Show in Finder** and **Delete…**.
+- **Delete** asks once, says exactly what goes, and moves it to the Trash, so a wrong click can be
+  undone. Several videos can go at once.
+- **Right-click** a video to rename the drawing, list its sessions (to take out one that was filed
+  with the wrong drawing) or rebuild the video.
 
 It does not edit videos beyond choosing their length.
+
+### Statistics
+
+How much you draw, counted while SAI is the app in front, whether or not you record.
+
+- **Today**, **Last 7 days** and your **streak** of days in a row, plus all-time totals and your
+  best day.
+- A chart with two views: **Days**, the last two weeks, and **Hours**, which hours of the day you
+  drew in over the last 30 days.
+- **Export CSV…** saves every day as a row for a spreadsheet: strokes, drawing and pen time,
+  average stroke, strokes per minute, sessions, the longest session, first and last stroke, and
+  minutes in each hour.
+- The menu bar shows today's total once you have drawn.
+
+Drawing time is the time the pen is down plus short pauses between strokes. A pause over a minute
+is a break and is not counted, and nor is time with SAI open but not drawing. It counts strokes and
+time, not what you drew or in which canvas.
 
 ### Advanced
 
@@ -129,6 +154,12 @@ It does not edit videos beyond choosing their length.
 - Records the **canvas, not the screen**: no panels, no cursor, and no camera lurching when you zoom or pan
 - Layer opacity and blend modes come through; **several open canvases become one video each**
 - Pick a target length; it encodes as you draw, so it costs megabytes rather than gigabytes
+
+**Drawing statistics**
+
+- **Time and strokes per day**, a streak, and which hours of the day you draw in
+- Counted from the pen itself, so it works with recording off, and stays on your Mac
+- **Export CSV…** with every day and every hour, for your own charts
 
 **Setup and upkeep**
 
