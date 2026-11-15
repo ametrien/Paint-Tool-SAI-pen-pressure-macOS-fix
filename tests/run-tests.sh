@@ -16,6 +16,15 @@ WATCHERS=""
 # The quit tests' fake probes can ignore SIGTERM, so they are SIGKILLed by path.
 trap 'for p in $WATCHERS; do kill -TERM "$p" 2>/dev/null || true; kill -CONT "$p" 2>/dev/null || true; done; pkill -KILL -f "$WORK/quit/" 2>/dev/null || true; rm -rf "$WORK"' EXIT
 
+echo "== This script: no \$name directly before a non-ASCII character =="
+# bash 3.2 in a UTF-8 locale takes the first byte of "…" or "→" as part of the
+# variable name: a dollar name written right before "…" expands to nothing
+# plus two broken bytes, and grep then fails. It passed in a C-locale
+# shell and failed on CI. Write \${total}… instead.
+if LC_ALL=C grep -nE '\$[A-Za-z_][A-Za-z0-9_]*[^ -~[:space:]]' "$0" | grep -v "LC_ALL=C grep -nE"; then
+  echo "  FAIL script: brace those variables, as \${name}"; exit 1
+else echo "  ok   script: every variable before a non-ASCII character is braced"; fi
+
 echo "== C core (wintab_core.h) — under AddressSanitizer + UBSanitizer =="
 # Sanitizers turn any out-of-bounds / divide-by-zero / integer-UB into a hard
 # failure, so CI catches memory bugs in the pure logic, not just wrong answers.
@@ -1413,7 +1422,11 @@ ndraw=$(ls -d "$DEL/videos"/*/ | wc -l | tr -d ' ')
 out=$(SAIPP_CONFIG_DIR="$DEL/cfg" SAIPP_TRASH_DIR="$DEL/trash" SAIPP_SELFTEST_TABLAYOUT=1 \
       SAIPP_SELFTEST_DELETEALL=1 "$WORK/helper-lib" 2>/dev/null)
 total=$((ndraw + 1))
-echo "$out" | grep -q "^selected $total bar\[$total selected|Delete $total…\]" \
+# ${total}, braced: bash 3.2 in a UTF-8 locale (CI's, not every Mac
+# terminal's) reads the first byte of "…" as part of the name, so the name
+# expands to nothing plus two broken bytes, and grep fails with "illegal byte
+# sequence". The check near the top of this file keeps it from coming back.
+echo "$out" | grep -q "^selected ${total} bar\[${total} selected|Delete ${total}…\]" \
   && echo "  ok   delete: select all selects every video, and the bar says how many" \
   || { echo "  FAIL delete: $(echo "$out" | grep '^selected')"; tab_fail=1; }
 echo "$out" | grep -q "^after delete drawings=0 loose=0 selected=0" \
