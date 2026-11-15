@@ -442,6 +442,7 @@ extension SetupController {
                               ("Keys", buildKeysTab()),
                               ("Recording", recordingTab!),
                               ("Videos", buildLibraryTab()),
+                              ("Statistics", buildStatsTab()),
                               ("Advanced", devSection!)] {
             // NSTabViewItem positions its view with the autoresizing mask, not
             // constraints. Leaving translatesAutoresizingMaskIntoConstraints

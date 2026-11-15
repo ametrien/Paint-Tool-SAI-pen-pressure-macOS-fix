@@ -200,6 +200,7 @@ func eventUs(_ event: CGEvent) -> Int? {
 
 func send(_ p: Int, _ xf: Int, _ yf: Int) {
     seq += 1
+    statsNote(pressure: p)    // drawing stats: one compare unless the pen went down or up
     let wf = Int(vW * 8), hf = Int(vH * 8)
     let tx = nowUs()
     sendUDP(PressureCore.wireLine(seq: seq, p: p, xf: xf, yf: yf, wf: wf, hf: hf,

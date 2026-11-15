@@ -3,6 +3,36 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](https://semver.org/).
 
+## [0.3.15] — 2026-11-15
+
+### Added
+- **Statistics tab: how much you draw.** Today, the last 7 days and your streak of days in a
+  row, all-time totals and your best day. A chart shows either the last two weeks, one bar per
+  day, or which hours of the day you drew in over the last 30 days. It is counted from the pen
+  while SAI is the app in front, so it works with recording off. Drawing time is the time the pen
+  is down plus short pauses between strokes; a pause over a minute is a break. Counting costs
+  the pen one comparison per sample, and the numbers are saved off the pen's path.
+- **Export CSV…** in Statistics saves every day as a row for a spreadsheet: strokes, drawing and
+  pen time, average stroke, strokes per minute, sessions, the longest session, first and last
+  stroke, and minutes in each hour of the day. Numbers use a dot for decimals whatever the Mac's
+  language, so every row has the same columns.
+- **Today's drawing in the menu bar**, for example "Today: 1 h 12 min, 340 strokes", once you
+  have drawn that day.
+
+### Changed
+- **The Videos tab is a grid you can select in.** Bigger stills, three across. Click to select,
+  ⌘-click or Shift-click for more, ⌘A for all, double-click to open. One bar under the grid has
+  Play, Export…, Show in Finder and Delete… for the selection, and a right-click on a video has
+  Rename, Sessions and Rebuild video. Before, every video carried its own three buttons, and
+  deleting five meant five trips through the same menu.
+- **Deleting videos moves them to the Trash**, several at once after one question that says
+  exactly what goes. Deleting a drawing used to remove its files for good.
+- **The export length is chosen in the Export dialog**, which remembers the last choice. The
+  separate Export length setting under the list is gone.
+- **Zoom and wake reach SAI over the pen's own connection.** Inside SAI, the bridge used to check
+  two small files many times a second for a pinch or a wake request, each check a round trip
+  through Wine. They now arrive with the pen samples, and the files are only read as a fallback.
+
 ## [0.3.14] — 2026-11-14
 
 ### Fixed

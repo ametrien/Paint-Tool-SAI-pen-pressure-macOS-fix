@@ -399,7 +399,6 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     var recCheck: NSButton!
     var recMakeBtn: NSButton!
     var recDiscardBtn: NSButton!
-    var recLengthPopup: NSPopUpButton!
     var recFolderLabel: NSTextField!
     // The Timelapses tab (LibraryUI.swift). libStore is a cache of the index for
     // the buttons to act on; refreshLibraryTab() reloads it from disk, so the
@@ -408,6 +407,15 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     var libStack: NSStackView!
     var libFooter: NSTextField!
     var libScrollHeight: NSLayoutConstraint!
+    // The Videos grid: which cards are selected, and the bar that acts on them.
+    var libSelection = LibrarySelection()
+    var libOrder: [String] = []
+    var libCards: [String: LibraryCardView] = [:]
+    var libStatus: NSTextField!
+    var libPlayButton: NSButton!
+    var libExportButton: NSButton!
+    var libRevealButton: NSButton!
+    var libDeleteButton: NSButton!
     // The Keys tab (KeysUI.swift). Nothing cached: the settings file is read on
     // every change, so it is the only copy of the truth.
     var keysTab: NSStackView!
@@ -418,6 +426,11 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     /// Set when a key changes while SAI is open; cleared once SAI has closed,
     /// because the next start picks the change up on its own.
     var keysNeedSAIRestart = false
+    // The Stats tab (StatsUI.swift). The numbers live in g_stats.
+    var statsCards: [StatCardView] = []
+    var statsBars: StatsBarsView!
+    var statsFooter: NSTextField!
+    var statsExportButton: NSButton!
     // Advanced › Display (test), DisplayUI.swift: Retina mode and SAI's language.
     var retinaCheck: NSButton!
     var displayHint: NSTextField!
@@ -483,6 +496,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
 
     func applicationDidFinishLaunching(_ note: Notification) {
         logSessionHeader()
+        startStats()
         NSApp.activate(ignoringOtherApps: true)
         reqs = [
             Req(title: "Wine (runs SAI on Mac)", detail: "Gcenx Wine Staging in /Applications", fixTitle: "Install Wine…",
@@ -689,11 +703,13 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     func applicationWillTerminate(_ note: Notification) {
         stopChildrenBeforeExit()        // the encoder AND the Test pen probe
         finalizeTimelapseNow()
+        saveStatsNow()
     }
 
     func tabView(_ tabView: NSTabView, didSelect item: NSTabViewItem?) {
         refreshRecordingTab()
         if item?.identifier as? String == "Videos" { refreshLibraryTab() }
+        if item?.identifier as? String == "Statistics" { refreshStatsTab() }
         // The console only refreshed while the old "Settings" disclosure was
         // open, so in the tabbed layout it showed as an empty black box.
         if item?.identifier as? String == "Advanced" { updateConsole() }
@@ -722,6 +738,9 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         }
         if (tabView?.selectedTabViewItem?.identifier as? String) == "Recording" {
             refreshRecordingTab()
+        }
+        if (tabView?.selectedTabViewItem?.identifier as? String) == "Statistics" {
+            refreshStatsTab()
         }
         // Keep the live encoder alive for as long as SAI is. It used to start
         // only from launchSAIApp(), so restarting the app while SAI was already

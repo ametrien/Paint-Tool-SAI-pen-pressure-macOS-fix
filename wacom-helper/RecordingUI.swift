@@ -221,10 +221,6 @@ extension SetupController {
         recApplyPending = saiProcessRunning()
         refreshRecordingTab()
     }
-    @objc func recLengthChanged() {
-        try? String(recLengthPopup.indexOfSelectedItem)
-            .write(toFile: appSupport() + "/timelapse-length.txt", atomically: true, encoding: .utf8)
-    }
     @objc func chooseTimelapseFolder() {
         let p = NSOpenPanel()
         p.canChooseDirectories = true; p.canChooseFiles = false; p.allowsMultipleSelection = false

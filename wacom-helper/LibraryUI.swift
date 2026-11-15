@@ -1,4 +1,4 @@
-// LibraryUI.swift — the Timelapses tab, and the question the library asks.
+// LibraryUI.swift: the Videos tab, and the question the library asks.
 //
 // A drawing made over several evenings is several session pieces plus one
 // combined video, and none of that is visible from the Recording tab, which is
@@ -163,6 +163,10 @@ extension SetupController {
 
     // MARK: - the tab
 
+    static let libColumns = 3
+    static let libGap: CGFloat = 12
+    static let libListWidth: CGFloat = 540
+
     func buildLibraryTab() -> NSStackView {
         let tab = NSStackView()
         tab.orientation = .vertical
@@ -171,25 +175,28 @@ extension SetupController {
         tab.edgeInsets = NSEdgeInsets(top: 18, left: 24, bottom: 18, right: 24)
         tab.addArrangedSubview(lbl("Your videos", 18, bold: true))
         tab.addArrangedSubview(
-            lbl("One video per drawing. Hover over a still to play it.",
+            lbl("One video per drawing. Hover over a still to play it, double-click to open it.",
                 11, color: .secondaryLabelColor))
         // The totals sit under the heading, where they read as a summary of the
-        // list, not under the export setting, where they read as part of it.
+        // grid, not beside the buttons, where they read as part of them.
         libFooter = lbl("", 11, color: .tertiaryLabelColor)
         tab.addArrangedSubview(libFooter)
 
-        libStack = NSStackView()
+        let grid = LibraryGridView()
+        grid.owner = self
+        libStack = grid
         libStack.orientation = .vertical
         libStack.alignment = .leading
-        libStack.spacing = 12
+        libStack.spacing = 14
+        libStack.edgeInsets = NSEdgeInsets(top: 2, left: 0, bottom: 2, right: 0)
         // A stack view used as a documentView must be laid out by constraints.
         // Left on autoresizing translation it keeps its zero frame, and every
-        // row inside it is present, unhidden, and drawn at (0,0,0,0) — the tab
+        // card inside it is present, unhidden, and drawn at (0,0,0,0): the tab
         // renders as a blank rectangle. This is the same trap the tab bar in
         // SetupWindow.swift documents, in the opposite direction.
         libStack.translatesAutoresizingMaskIntoConstraints = false
         let scroll = NSScrollView()
-        // THE TRAP: NSClipView is not flipped, so a list shorter than the
+        // THE TRAP: NSClipView is not flipped, so a grid shorter than the
         // scroll view settles at the BOTTOM of it. One drawing showed up a
         // hand's width below the heading with nothing above it.
         scroll.contentView = TopAnchoredClipView()
@@ -205,52 +212,71 @@ extension SetupController {
             // content scroll vertically instead of squashing to fit.
             libStack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
         ])
-        // An exact height, never a minimum: with a minimum the list grew to fill
-        // the tab and pushed the controls below it off the bottom. The constant
+        // An exact height, never a minimum: with a minimum the grid grew to fill
+        // the tab and pushed the bar below it off the bottom. The constant
         // follows the content (see refreshLibraryTab) up to a cap, so one drawing
         // is not followed by a screenful of nothing.
         libScrollHeight = scroll.heightAnchor.constraint(equalToConstant: 300)
         libScrollHeight.isActive = true
-        scroll.widthAnchor.constraint(equalToConstant: 540).isActive = true
+        scroll.widthAnchor.constraint(equalToConstant: SetupController.libListWidth).isActive = true
         tab.addArrangedSubview(scroll)
+        tab.setCustomSpacing(12, after: scroll)
 
-        // The export default lives here rather than with the recording
-        // settings: nothing about recording is capped any more, and a control
-        // sitting next to the thing it governs needs less explaining.
-        let lenRow = NSStackView(); lenRow.orientation = .horizontal
-        lenRow.alignment = .centerY; lenRow.spacing = 8
-        lenRow.addArrangedSubview(lbl("Export length", 12, bold: true))
-        recLengthPopup = NSPopUpButton()
-        recLengthPopup.addItems(withTitles: LibraryExport.choiceTitles)
-        recLengthPopup.selectItem(at: storedTimelapseLengthIndex())
-        recLengthPopup.target = self; recLengthPopup.action = #selector(recLengthChanged)
-        lenRow.addArrangedSubview(recLengthPopup)
-        recLengthPopup.toolTip = "The length Export… starts with. The video here always stays full length."
-        tab.setCustomSpacing(16, after: scroll)
-        tab.addArrangedSubview(lenRow)
+        // What the selection can do, in one place under the grid. Before this,
+        // every row carried its own Play, Export and More, so a list of twenty
+        // drawings was sixty buttons, and deleting five meant five trips
+        // through the same menu and the same question.
+        let bar = NSStackView()
+        bar.orientation = .horizontal
+        bar.alignment = .centerY
+        bar.spacing = 6
+        libStatus = lbl("", 11, color: .secondaryLabelColor)
+        libStatus.lineBreakMode = .byTruncatingTail
+        libStatus.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        bar.addArrangedSubview(libStatus)
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+        bar.addArrangedSubview(spacer)
+        func barButton(_ t: String, _ sel: Selector) -> NSButton {
+            let b = NSButton(title: t, target: self, action: sel)
+            b.bezelStyle = .rounded
+            b.controlSize = .small
+            b.font = NSFont.systemFont(ofSize: 11)
+            bar.addArrangedSubview(b)
+            return b
+        }
+        libPlayButton = barButton("Play", #selector(libPlaySelected))
+        libExportButton = barButton("Export…", #selector(libExportSelected))
+        libRevealButton = barButton("Show in Finder", #selector(libRevealSelected))
+        libDeleteButton = barButton("Delete…", #selector(libDeleteSelected))
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        bar.widthAnchor.constraint(equalToConstant: SetupController.libListWidth).isActive = true
+        tab.addArrangedSubview(bar)
 
         libraryTab = tab
         refreshLibraryTab()
         return tab
     }
 
-    /// Rebuild the list from the index on disk. Cheap enough to call on every
+    /// Rebuild the grid from the index on disk. Cheap enough to call on every
     /// tab switch, which keeps it honest: the index is the truth, and this view
-    /// never holds state of its own.
+    /// holds no state of its own beyond which cards are selected.
     func refreshLibraryTab() {
         guard libStack != nil else { return }
         let store = makeLibraryStore()
         libStore = store
         for v in libStack.arrangedSubviews { v.removeFromSuperview() }
+        libCards = [:]
+        libOrder = []
 
         let drawings = store.lib.drawings.sorted {
             ($0.lastDrawn ?? .distantPast) > ($1.lastDrawn ?? .distantPast)
         }
-        for d in drawings { libStack.addArrangedSubview(row(for: d, store: store)) }
+        addGrid(drawings.map { card(for: $0, store: store) })
 
         // Videos that are simply IN the folder: everything recorded before
         // drawings existed as a concept, and anything a rebuild has not claimed.
-        // They are real videos, and a list that ignores them while announcing
+        // They are real videos, and a grid that ignores them while announcing
         // "nothing recorded yet" is telling somebody their work is gone.
         let loose = looseVideos(in: store.videosDir)
         if !loose.isEmpty {
@@ -261,8 +287,12 @@ extension SetupController {
             libStack.addArrangedSubview(
                 lbl("Made before this update, so they are not grouped into drawings. "
                     + "Recordings from now on are.", 11, color: .secondaryLabelColor))
-            for url in loose { libStack.addArrangedSubview(looseRow(url)) }
+            addGrid(loose.map { looseCard($0) })
         }
+
+        // A deleted or regrouped video must not stay selected while invisible.
+        libSelection.keep(only: libOrder)
+        applyLibrarySelection()
 
         defer { fitLibraryHeight() }
         if drawings.isEmpty && loose.isEmpty {
@@ -290,11 +320,27 @@ extension SetupController {
         libFooter.isHidden = false
     }
 
-    /// Size the list to what it holds, up to a cap; past the cap it scrolls.
+    /// Cards in rows of three, in the order given.
+    private func addGrid(_ cards: [LibraryCardView]) {
+        let cols = SetupController.libColumns
+        for start in stride(from: 0, to: cards.count, by: cols) {
+            let row = NSStackView(views: Array(cards[start..<min(start + cols, cards.count)]))
+            row.orientation = .horizontal
+            row.alignment = .top
+            row.spacing = SetupController.libGap
+            libStack.addArrangedSubview(row)
+        }
+        for c in cards {
+            libCards[c.key] = c
+            libOrder.append(c.key)
+        }
+    }
+
+    /// Size the grid to what it holds, up to a cap; past the cap it scrolls.
     private func fitLibraryHeight() {
         guard let h = libScrollHeight else { return }
         libStack.layoutSubtreeIfNeeded()
-        let want = min(max(libStack.fittingSize.height, 60), 340)
+        let want = min(max(libStack.fittingSize.height, 60), 400)
         if abs(h.constant - want) > 0.5 {
             h.constant = want
             applyLayout()
@@ -307,81 +353,211 @@ extension SetupController {
         "\(n) \(noun)\(n == 1 ? "" : "s")"
     }
 
-    /// One drawing: a poster frame, what it is, and what can be done to it.
-    private func row(for d: Drawing, store: LibraryStore) -> NSView {
-        let box = NSStackView()
-        box.orientation = .horizontal
-        box.alignment = .top
-        box.spacing = 12
+    private var libCardWidth: CGFloat {
+        let cols = CGFloat(SetupController.libColumns)
+        return ((SetupController.libListWidth - (cols - 1) * SetupController.libGap) / cols).rounded(.down)
+    }
 
-        let thumb = HoverVideoView(url: store.videoURL(d), image: poster(for: store.videoURL(d)))
-        thumb.translatesAutoresizingMaskIntoConstraints = false
-        thumb.widthAnchor.constraint(equalToConstant: 96).isActive = true
-        thumb.heightAnchor.constraint(equalToConstant: 72).isActive = true
-        box.addArrangedSubview(thumb)
-
-        let col = NSStackView()
-        col.orientation = .vertical
-        col.alignment = .leading
-        col.spacing = 3
-
-        let title = lbl(d.title.isEmpty ? d.folder : d.title, 13, bold: true)
-        col.addArrangedSubview(title)
-
+    /// One drawing: its still, its name, and two short lines of facts.
+    private func card(for d: Drawing, store: LibraryStore) -> LibraryCardView {
+        let url = store.videoURL(d)
+        var first = [counted(d.pieces.count, "session"), counted(d.totalFrames, "frame")]
+        let length = prettyDuration(videoSeconds(url))
+        if !length.isEmpty { first.append(length) }
+        var second: [String] = []
+        let size = prettyFileSize(fileSize(url))
+        if !size.isEmpty { second.append(size) }
         let f = DateFormatter(); f.dateStyle = .medium; f.timeStyle = .none
-        var parts = [counted(d.pieces.count, "session"), counted(d.totalFrames, "frame")]
-        let length = prettyDuration(videoSeconds(store.videoURL(d)))
-        if !length.isEmpty { parts.append(length) }
-        let size = prettyFileSize(fileSize(store.videoURL(d)))
-        if !size.isEmpty { parts.append(size) }
-        if let last = d.lastDrawn { parts.append("last drawn \(f.string(from: last))") }
-        col.addArrangedSubview(lbl(parts.joined(separator: " · "), 11, color: .secondaryLabelColor))
-
+        if let last = d.lastDrawn { second.append(f.string(from: last)) }
         // A session waiting on an answer is shown on the drawing itself, not
         // only in a prompt that may have been dismissed.
+        var warning: String?
         if let p = store.lib.pending.first(where: { $0.drawingId == d.id }),
            let other = store.lib.drawing(id: p.candidateId) {
-            let ask = lbl("Might continue “\(other.title)”", 11, color: .systemOrange)
-            col.addArrangedSubview(ask)
+            warning = "Might continue “\(other.title)”"
         }
+        let c = LibraryCardView(key: LibrarySelection.drawingKey(d.id), url: url, image: poster(for: url),
+                                title: d.title.isEmpty ? d.folder : d.title,
+                                lines: [first.joined(separator: " · "), second.joined(separator: " · ")],
+                                warning: warning, width: libCardWidth)
+        wire(c)
+        return c
+    }
 
-        let buttons = NSStackView()
-        buttons.orientation = .horizontal
-        buttons.spacing = 6
-        func button(_ t: String, _ sel: Selector) -> NSButton {
-            let b = NSButton(title: t, target: self, action: sel)
-            b.bezelStyle = .rounded
-            b.controlSize = .small
-            b.font = NSFont.systemFont(ofSize: 11)
-            b.identifier = NSUserInterfaceItemIdentifier(d.id)
-            return b
-        }
-        // Play and Export are what people come here for. The rest are repairs
-        // and housekeeping: six equal buttons in a row made Delete exactly as
-        // prominent as Play, and the row ran past the edge of the list.
-        buttons.addArrangedSubview(button("Play", #selector(libPlay(_:))))
-        buttons.addArrangedSubview(button("Export…", #selector(libExport(_:))))
-        let more = NSPopUpButton(frame: .zero, pullsDown: true)
-        more.bezelStyle = .rounded
-        more.controlSize = .small
-        more.font = NSFont.systemFont(ofSize: 11)
-        more.addItem(withTitle: "More")            // a pull-down's title is item 0
-        func item(_ t: String, _ sel: Selector) {
+    /// A loose video. It has no pieces behind it, so its menu offers no
+    /// Rebuild and no Sessions: buttons that cannot work are worse than fewer.
+    private func looseCard(_ url: URL) -> LibraryCardView {
+        var first: [String] = []
+        let length = prettyDuration(videoSeconds(url))
+        if !length.isEmpty { first.append(length) }
+        let size = prettyFileSize(fileSize(url))
+        if !size.isEmpty { first.append(size) }
+        let f = DateFormatter(); f.dateStyle = .medium; f.timeStyle = .short
+        let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        let c = LibraryCardView(key: LibrarySelection.fileKey(url.path), url: url, image: poster(for: url),
+                                title: url.deletingPathExtension().lastPathComponent,
+                                lines: [first.joined(separator: " · "), date.map { f.string(from: $0) } ?? ""],
+                                warning: nil, width: libCardWidth)
+        wire(c)
+        return c
+    }
+
+    private func wire(_ c: LibraryCardView) {
+        c.onClick = { [weak self] card, event in self?.libClicked(card, event) }
+        c.onDoubleClick = { [weak self] card in self?.libOpen(card.key) }
+        c.menuProvider = { [weak self] card in self?.libMenu(for: card) }
+    }
+
+    // MARK: - selection
+
+    func libClicked(_ card: LibraryCardView, _ event: NSEvent) {
+        let flags = event.modifierFlags
+        let mod: LibrarySelection.Modifier = flags.contains(.shift) ? .range
+            : (flags.contains(.command) ? .toggle : .none)
+        libSelection.click(card.key, modifier: mod, order: libOrder)
+        // So Delete, ⌘A and Escape reach the grid.
+        libStack.window?.makeFirstResponder(libStack)
+        applyLibrarySelection()
+    }
+
+    func libSelectAll() {
+        libSelection.selectAll(libOrder)
+        applyLibrarySelection()
+    }
+
+    func libDeselectAll() {
+        libSelection.clear()
+        applyLibrarySelection()
+    }
+
+    /// Paint the selection onto the cards and the bar.
+    func applyLibrarySelection() {
+        for (k, c) in libCards { c.isSelected = libSelection.contains(k) }
+        let sel = libSelection.ordered(libOrder)
+        libStatus?.stringValue = libOrder.isEmpty ? "" : LibrarySelection.status(selected: sel.count)
+        libPlayButton?.isEnabled = sel.count == 1
+        libExportButton?.isEnabled = sel.count == 1 && LibrarySelection.drawingId(sel[0]) != nil
+        libRevealButton?.isEnabled = !sel.isEmpty
+        libDeleteButton?.isEnabled = !sel.isEmpty
+        libDeleteButton?.title = sel.count > 1 ? "Delete \(sel.count)…" : "Delete…"
+    }
+
+    /// Right-click. Several selected: what can be done to all of them. One:
+    /// everything that can be done to it.
+    func libMenu(for card: LibraryCardView) -> NSMenu {
+        libSelection.rightClick(card.key)
+        applyLibrarySelection()
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        func item(_ t: String, _ sel: Selector, _ ident: String? = nil) {
             let i = NSMenuItem(title: t, action: sel, keyEquivalent: "")
             i.target = self
-            i.identifier = NSUserInterfaceItemIdentifier(d.id)
-            more.menu?.addItem(i)
+            if let ident { i.identifier = NSUserInterfaceItemIdentifier(ident) }
+            menu.addItem(i)
         }
-        item("Rename…", #selector(libRename(_:)))
-        item("Sessions…", #selector(libSessions(_:)))
-        item("Rebuild video", #selector(libRebuild(_:)))
-        more.menu?.addItem(.separator())
-        item("Delete…", #selector(libDelete(_:)))
-        buttons.addArrangedSubview(more)
-        col.addArrangedSubview(buttons)
+        let sel = libSelection.ordered(libOrder)
+        if sel.count > 1 {
+            item("Show \(sel.count) in Finder", #selector(libRevealSelected))
+            menu.addItem(.separator())
+            item("Delete \(sel.count) Videos…", #selector(libDeleteSelected))
+            return menu
+        }
+        if let id = LibrarySelection.drawingId(card.key) {
+            item("Play", #selector(libPlay(_:)), id)
+            item("Export…", #selector(libExport(_:)), id)
+            item("Show in Finder", #selector(libRevealSelected))
+            menu.addItem(.separator())
+            item("Rename…", #selector(libRename(_:)), id)
+            item("Sessions…", #selector(libSessions(_:)), id)
+            item("Rebuild video", #selector(libRebuild(_:)), id)
+        } else if let path = LibrarySelection.filePath(card.key) {
+            item("Play", #selector(libPlayFile(_:)), path)
+            item("Show in Finder", #selector(libRevealSelected))
+        }
+        menu.addItem(.separator())
+        item("Delete…", #selector(libDeleteSelected))
+        return menu
+    }
 
-        box.addArrangedSubview(col)
-        return box
+    /// Double-click, Return or Space, or Play in the bar.
+    func libOpen(_ key: String) {
+        if let id = LibrarySelection.drawingId(key), let d = libStore?.lib.drawing(id: id) {
+            playDrawing(d)
+        } else if let path = LibrarySelection.filePath(key) {
+            NSWorkspace.shared.open(URL(fileURLWithPath: path))
+        }
+    }
+
+    @objc func libPlaySelected() {
+        let sel = libSelection.ordered(libOrder)
+        guard sel.count == 1 else { return }
+        libOpen(sel[0])
+    }
+
+    @objc func libExportSelected() {
+        let sel = libSelection.ordered(libOrder)
+        guard sel.count == 1, let id = LibrarySelection.drawingId(sel[0]),
+              let d = libStore?.lib.drawing(id: id) else { return }
+        exportDrawing(d)
+    }
+
+    @objc func libRevealSelected() {
+        guard let store = libStore else { return }
+        let urls: [URL] = libSelection.ordered(libOrder).compactMap { key in
+            if let id = LibrarySelection.drawingId(key), let d = store.lib.drawing(id: id) {
+                let v = store.videoURL(d)
+                return FileManager.default.fileExists(atPath: v.path) ? v : store.folderURL(d)
+            }
+            return LibrarySelection.filePath(key).map { URL(fileURLWithPath: $0) }
+        }
+        if !urls.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(urls) }
+    }
+
+    @objc func libDeleteSelected() {
+        deleteLibraryKeys(libSelection.ordered(libOrder), ask: true)
+    }
+
+    /// Delete several at once, after one question that says exactly what goes.
+    ///
+    /// To the Trash, never unlinked: these are videos somebody may have spent
+    /// evenings making, and a selection one Shift-click too wide should be one
+    /// trip to the Trash from being undone.
+    @discardableResult
+    func deleteLibraryKeys(_ keys: [String], ask: Bool) -> [String] {
+        guard let store = libStore, !keys.isEmpty else { return [] }
+        let drawings = keys.compactMap(LibrarySelection.drawingId).compactMap { store.lib.drawing(id: $0) }
+        let files = keys.compactMap(LibrarySelection.filePath)
+        let names = drawings.map { $0.title.isEmpty ? $0.folder : $0.title }
+            + files.map { URL(fileURLWithPath: $0).deletingPathExtension().lastPathComponent }
+        if ask {
+            let alert = NSAlert()
+            alert.messageText = LibrarySelection.deleteTitle(names: names)
+            var text = LibrarySelection.deleteDetail(drawings: drawings.count,
+                                                     sessions: drawings.reduce(0) { $0 + $1.pieces.count },
+                                                     older: files.count)
+            if names.count > 1 {
+                let shown = names.prefix(6).joined(separator: ", ")
+                text += "\n\n" + shown + (names.count > 6 ? ", and \(names.count - 6) more" : "")
+            }
+            alert.informativeText = text
+            alert.addButton(withTitle: "Move to Trash")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return [] }
+        }
+        var failed: [String] = []
+        for d in drawings where !store.trash(d.id) { failed.append(d.title) }
+        for p in files {
+            do { try moveToTrash(URL(fileURLWithPath: p)) }
+            catch { failed.append(URL(fileURLWithPath: p).lastPathComponent) }
+        }
+        libSelection.clear()
+        refreshLibraryTab()
+        // Only said out loud when a person asked: `ask: false` is the tests'
+        // path, and a modal alert there would hang the run.
+        if !failed.isEmpty && ask {
+            alertUser("Could not move these to the Trash: " + failed.joined(separator: ", ") + ".")
+        }
+        return failed
     }
 
     /// How long a video runs. Read from the file rather than worked out from
@@ -453,81 +629,9 @@ extension SetupController {
             }
     }
 
-    /// A loose video, with the actions that actually apply to it. No Rebuild and
-    /// no Sessions: it has no pieces behind it, and offering buttons that cannot
-    /// work is worse than offering fewer.
-    private func looseRow(_ url: URL) -> NSView {
-        let box = NSStackView()
-        box.orientation = .horizontal
-        box.alignment = .top
-        box.spacing = 12
-
-        let thumb = HoverVideoView(url: url, image: poster(for: url))
-        thumb.translatesAutoresizingMaskIntoConstraints = false
-        thumb.widthAnchor.constraint(equalToConstant: 96).isActive = true
-        thumb.heightAnchor.constraint(equalToConstant: 72).isActive = true
-        box.addArrangedSubview(thumb)
-
-        let col = NSStackView()
-        col.orientation = .vertical
-        col.alignment = .leading
-        col.spacing = 3
-        col.addArrangedSubview(lbl(url.deletingPathExtension().lastPathComponent, 13, bold: true))
-
-        let f = DateFormatter(); f.dateStyle = .medium; f.timeStyle = .short
-        let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
-            .contentModificationDate
-        var parts: [String] = []
-        let length = prettyDuration(videoSeconds(url))
-        if !length.isEmpty { parts.append(length) }
-        let size = prettyFileSize(fileSize(url))
-        if !size.isEmpty { parts.append(size) }
-        if let date { parts.append(f.string(from: date)) }
-        col.addArrangedSubview(lbl(parts.joined(separator: " · "), 11, color: .secondaryLabelColor))
-
-        let buttons = NSStackView()
-        buttons.orientation = .horizontal
-        buttons.spacing = 6
-        func button(_ t: String, _ sel: Selector) -> NSButton {
-            let b = NSButton(title: t, target: self, action: sel)
-            b.bezelStyle = .rounded
-            b.controlSize = .small
-            b.font = NSFont.systemFont(ofSize: 11)
-            // The path travels on the button, since a loose video has no id.
-            b.identifier = NSUserInterfaceItemIdentifier(url.path)
-            return b
-        }
-        buttons.addArrangedSubview(button("Play", #selector(libPlayFile(_:))))
-        buttons.addArrangedSubview(button("Show in Finder", #selector(libRevealFile(_:))))
-        buttons.addArrangedSubview(button("Delete…", #selector(libDeleteFile(_:))))
-        col.addArrangedSubview(buttons)
-
-        box.addArrangedSubview(col)
-        return box
-    }
-
     @objc func libPlayFile(_ sender: Any?) {
-        guard let path = (sender as? NSButton)?.identifier?.rawValue else { return }
+        guard let path = (sender as? NSUserInterfaceItemIdentification)?.identifier?.rawValue else { return }
         NSWorkspace.shared.open(URL(fileURLWithPath: path))
-    }
-
-    @objc func libRevealFile(_ sender: Any?) {
-        guard let path = (sender as? NSButton)?.identifier?.rawValue else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
-    }
-
-    @objc func libDeleteFile(_ sender: Any?) {
-        guard let path = (sender as? NSButton)?.identifier?.rawValue else { return }
-        let url = URL(fileURLWithPath: path)
-        let alert = NSAlert()
-        alert.messageText = "Delete “\(url.lastPathComponent)”?"
-        alert.informativeText = "This deletes the video. Your artwork is untouched."
-        alert.addButton(withTitle: "Delete"); alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        // To the Trash, not unlinked: this is a video somebody may have spent an
-        // evening making, and a wrong click should be undoable.
-        try? FileManager.default.trashItem(at: url, resultingItemURL: nil)
-        refreshLibraryTab()
     }
 
     private func folderSize(_ path: String) -> Int64 {
@@ -551,10 +655,15 @@ extension SetupController {
     // MARK: - actions
 
     @objc func libPlay(_ sender: Any?) {
-        guard let d = drawing(from: sender), let store = libStore else { return }
+        guard let d = drawing(from: sender) else { return }
+        playDrawing(d)
+    }
+
+    func playDrawing(_ d: Drawing) {
+        guard let store = libStore else { return }
         let url = store.videoURL(d)
         guard FileManager.default.fileExists(atPath: url.path) else {
-            alertUser("This drawing has no video yet. Choose More → Rebuild video to make one from its sessions.")
+            alertUser("This drawing has no video yet. Right-click it and choose Rebuild video to make one from its sessions.")
             return
         }
         // The system player, not one built here: it already does scrubbing,
@@ -578,8 +687,12 @@ extension SetupController {
     /// A length-capped copy, for posting. Separate file on purpose: the drawing
     /// keeps its full-length video, so exporting twice never compounds.
     @objc func libExport(_ sender: Any?) {
-        guard let d = drawing(from: sender), let store = libStore,
-              let res = Bundle.main.resourcePath else { return }
+        guard let d = drawing(from: sender) else { return }
+        exportDrawing(d)
+    }
+
+    func exportDrawing(_ d: Drawing) {
+        guard let store = libStore, let res = Bundle.main.resourcePath else { return }
         let alert = NSAlert()
         alert.messageText = "Export “\(d.title)”"
         alert.informativeText = "The drawing keeps its full-length video; this makes a separate copy."
@@ -589,6 +702,9 @@ extension SetupController {
         alert.accessoryView = popup
         alert.addButton(withTitle: "Export…"); alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
+        // Remembered for next time, in place of the separate "Export length"
+        // setting this dialog used to start from.
+        storeTimelapseLengthIndex(popup.indexOfSelectedItem)
         let seconds = LibraryExport.seconds(at: popup.indexOfSelectedItem)
 
         let panel = NSSavePanel()
@@ -644,20 +760,6 @@ extension SetupController {
         let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
         store.rename(d.id, to: name)
-        refreshLibraryTab()
-    }
-
-    @objc func libDelete(_ sender: Any?) {
-        guard let d = drawing(from: sender), let store = libStore else { return }
-        let alert = NSAlert()
-        alert.messageText = "Delete the recording of “\(d.title)”?"
-        // The same promise the Discard button makes, for the same reason: the
-        // one thing somebody needs to be certain of is that this is not their art.
-        alert.informativeText = "This deletes \(counted(d.pieces.count, "session recording")) and the video "
-            + "made from them. Your artwork is untouched."
-        alert.addButton(withTitle: "Delete"); alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        store.delete(d.id)
         refreshLibraryTab()
     }
 
@@ -740,4 +842,156 @@ extension SetupController {
 /// without this a one-row list sits at the bottom of its scroll view.
 final class TopAnchoredClipView: NSClipView {
     override var isFlipped: Bool { true }
+}
+
+/// The grid's document view. Takes the keyboard after a card is clicked, so
+/// Delete, ⌘A, Escape and Return work on the selection, and clears the
+/// selection when the empty space between cards is clicked.
+final class LibraryGridView: NSStackView {
+    weak var owner: SetupController?
+    override var acceptsFirstResponder: Bool { true }
+
+    override func keyDown(with e: NSEvent) {
+        switch e.keyCode {
+        case 51, 117: owner?.libDeleteSelected()          // delete, forward delete
+        case 53: owner?.libDeselectAll()                  // escape
+        case 36, 76, 49: owner?.libPlaySelected()         // return, enter, space
+        default:
+            if e.modifierFlags.contains(.command), e.charactersIgnoringModifiers == "a" {
+                owner?.libSelectAll()
+            } else {
+                super.keyDown(with: e)
+            }
+        }
+    }
+
+    override func selectAll(_ sender: Any?) { owner?.libSelectAll() }
+
+    override func mouseDown(with e: NSEvent) {
+        window?.makeFirstResponder(self)
+        owner?.libDeselectAll()
+    }
+}
+
+/// One video in the grid: its still (which plays on hover), its name, and two
+/// lines of facts. The whole card is one click target, so a click on the
+/// still, the name or the gap between them all select it.
+final class LibraryCardView: NSView {
+    let key: String
+    let thumb: HoverVideoView
+    var onClick: ((LibraryCardView, NSEvent) -> Void)?
+    var onDoubleClick: ((LibraryCardView) -> Void)?
+    var menuProvider: ((LibraryCardView) -> NSMenu?)?
+    var isSelected = false {
+        didSet {
+            guard isSelected != oldValue else { return }
+            badge.isHidden = !isSelected
+            needsDisplay = true
+            updateColors()
+        }
+    }
+    private let badge = NSImageView()
+    private static let pad: CGFloat = 6
+
+    init(key: String, url: URL, image: NSImage?, title: String, lines: [String], warning: String?, width: CGFloat) {
+        self.key = key
+        thumb = HoverVideoView(url: url, image: image)
+        super.init(frame: .zero)
+        let pad = LibraryCardView.pad
+        let inner = width - 2 * pad
+        translatesAutoresizingMaskIntoConstraints = false
+        widthAnchor.constraint(equalToConstant: width).isActive = true
+
+        thumb.translatesAutoresizingMaskIntoConstraints = false
+        thumb.widthAnchor.constraint(equalToConstant: inner).isActive = true
+        thumb.heightAnchor.constraint(equalToConstant: (inner * 0.7).rounded()).isActive = true
+        thumb.layer?.cornerRadius = 6
+        thumb.layer?.borderWidth = 0
+
+        let titleField = NSTextField(labelWithString: title)
+        titleField.font = .systemFont(ofSize: 12, weight: .semibold)
+        titleField.lineBreakMode = .byTruncatingTail
+        titleField.toolTip = title
+        var views: [NSView] = [thumb, titleField]
+        for line in lines where !line.isEmpty {
+            let l = NSTextField(labelWithString: line)
+            l.font = .systemFont(ofSize: 10.5)
+            l.textColor = .secondaryLabelColor
+            l.lineBreakMode = .byTruncatingTail
+            views.append(l)
+        }
+        if let warning {
+            let w = NSTextField(labelWithString: warning)
+            w.font = .systemFont(ofSize: 10.5)
+            w.textColor = .systemOrange
+            w.lineBreakMode = .byTruncatingTail
+            views.append(w)
+        }
+        for v in views.dropFirst() {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            v.widthAnchor.constraint(equalToConstant: inner).isActive = true
+        }
+        let stack = NSStackView(views: views)
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 2
+        stack.setCustomSpacing(7, after: thumb)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: pad),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -pad - 2),
+        ])
+
+        // A tick in the corner of a selected still, as in Photos: the tinted
+        // background alone is easy to miss on a pale drawing.
+        badge.image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: "Selected")
+        badge.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 17, weight: .semibold)
+            .applying(.init(paletteColors: [.white, .controlAccentColor]))
+        badge.isHidden = true
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(badge)
+        NSLayoutConstraint.activate([
+            badge.topAnchor.constraint(equalTo: thumb.topAnchor, constant: 5),
+            badge.trailingAnchor.constraint(equalTo: thumb.trailingAnchor, constant: -5),
+        ])
+        updateColors()
+    }
+
+    @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+
+    /// Every point inside the card is the card's: the still and the labels
+    /// would otherwise take the click for themselves. Hover still reaches the
+    /// still, because tracking areas do not go through hitTest.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        frame.contains(point) ? self : nil
+    }
+
+    override func mouseDown(with e: NSEvent) {
+        if e.clickCount >= 2 { onDoubleClick?(self) } else { onClick?(self, e) }
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? { menuProvider?(self) }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateColors()
+    }
+
+    /// Layer colours are fixed values, so they are worked out again whenever
+    /// light or dark mode changes.
+    private func updateColors() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            thumb.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.06).cgColor
+            thumb.layer?.borderColor = NSColor.controlAccentColor.cgColor
+        }
+        thumb.layer?.borderWidth = isSelected ? 2.5 : 0
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard isSelected else { return }
+        NSColor.controlAccentColor.withAlphaComponent(0.16).setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: 9, yRadius: 9).fill()
+    }
 }

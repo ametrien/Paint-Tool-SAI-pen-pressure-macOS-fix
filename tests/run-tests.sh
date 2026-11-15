@@ -101,6 +101,32 @@ swiftc -o "$WORK/penfeel-tests" "$REPO/wacom-helper/PenFeelCore.swift" "$REPO/te
 "$WORK/penfeel-tests"
 
 echo ""
+echo "== Swift core (LibrarySelection.swift) =="
+# Selecting videos in the Videos tab: click, ⌘-click, Shift-click, and the
+# words the bulk delete uses.
+swiftc -o "$WORK/libsel-tests" "$REPO/wacom-helper/LibrarySelection.swift" "$REPO/tests/LibrarySelectionTests.swift"
+"$WORK/libsel-tests"
+
+echo ""
+echo "== Swift core (StatsCore.swift) =="
+# Drawing stats: strokes and time per day, the stats file, streaks.
+swiftc -o "$WORK/stats-tests" "$REPO/wacom-helper/StatsCore.swift" "$REPO/tests/StatsTests.swift"
+"$WORK/stats-tests"
+# Wiring: the counter must sit in send(), where every sample passes after the
+# pen-up latch (so a bounce is one stroke, not two), and it must never touch the
+# disk on the pen path. Read from the source, as the zoom and wake checks above.
+st_fail=0
+sendfn="$(sed -n '/^func send(/,/^}/p' "$REPO/wacom-helper/PenEngine.swift")"
+echo "$sendfn" | grep -q 'statsNote(pressure: p)' \
+  && echo "  ok   wired: send() feeds the stroke counter" \
+  || { echo "  FAIL wired: send() no longer calls statsNote (Stats would stay at zero)"; st_fail=1; }
+note="$(sed -n '/^func statsNote(/,/^}/p' "$REPO/wacom-helper/StatsUI.swift")"
+if echo "$note" | grep -v '^ *//' | grep -Eq 'write\(|contentsOf|NSWorkspace|FileManager'; then
+  echo "  FAIL wired: statsNote touches the disk or NSWorkspace on the pen path"; st_fail=1
+else echo "  ok   wired: statsNote does no disk or app lookups on the pen path"; fi
+[ "$st_fail" = 0 ] || exit 1
+
+echo ""
 echo "== Swift AppKit (PopupMenuSync.swift) =="
 # The pen feel dropdown on a real NSPopUpButton, offscreen (no window, no
 # clicks): a pick made while the 1 s refresh runs must not be dropped.
@@ -1350,16 +1376,16 @@ case "$stack" in
   "") echo "  FAIL tab: no layout reported"; echo "$layout"; tab_fail=1 ;;
   *) echo "  ok   tab: the drawing list has a real size ($stack)" ;;
 esac
-echo "$layout" | grep -q "Export length" \
-  && echo "  ok   tab: the controls below the list are still on screen" \
-  || { echo "  FAIL tab: the export row was pushed off the bottom"; tab_fail=1; }
+echo "$layout" | grep -q "^bar\[Play=off|Export…=off|Show in Finder=off|Delete…=off\]" \
+  && echo "  ok   tab: the bar under the grid is there, and does nothing with nothing selected" \
+  || { echo "  FAIL tab: $(echo "$layout" | grep '^bar' || echo 'no bar under the grid')"; tab_fail=1; }
 # The drawing recorded by the end-to-end test above must appear, with its buttons.
 echo "$layout" | grep -qE "[0-9]+ sessions? · " \
   && echo "  ok   tab: the drawing from the previous test is listed" \
   || { echo "  FAIL tab: no drawing row:"; echo "$layout"; tab_fail=1; }
-echo "$layout" | grep -q "popup\[More|Rename…|Sessions…|Rebuild video||Delete…\]" \
-  && echo "  ok   tab: its actions are there too (Play, Export, and the More menu)" \
-  || { echo "  FAIL tab: no action buttons"; tab_fail=1; }
+echo "$layout" | grep -q "^menu\[Play|Export…|Show in Finder||Rename…|Sessions…|Rebuild video||Delete…\]" \
+  && echo "  ok   tab: right-clicking a drawing offers all its actions" \
+  || { echo "  FAIL tab: $(echo "$layout" | grep '^menu' || echo 'no right-click menu')"; tab_fail=1; }
 # How long is it? That is the first thing anyone wants to know about a video,
 # and frames alone do not answer it.
 echo "$layout" | grep -qE "[0-9]+ sessions? · [0-9]+ frames? · [0-9]+s" \
@@ -1375,6 +1401,53 @@ echo "$layout" | grep -q "(s)" \
 echo "$layout" | grep -q "0 MB" \
   && { echo "  FAIL tab: a real video is reported as 0 MB"; tab_fail=1; } \
   || echo "  ok   tab: small videos are sized in KB, not rounded to 0 MB"
+
+
+# Select all, then delete: everything goes to the Trash (a test folder here),
+# the index forgets it, and nothing stays selected.
+DEL="$WORK/delall"; mkdir -p "$DEL/cfg" "$DEL/trash"
+cp -R "$E2E/videos" "$DEL/videos"
+: > "$DEL/videos/An older one.mp4"
+printf '%s' "$DEL/videos" > "$DEL/cfg/timelapse-folder.txt"
+ndraw=$(ls -d "$DEL/videos"/*/ | wc -l | tr -d ' ')
+out=$(SAIPP_CONFIG_DIR="$DEL/cfg" SAIPP_TRASH_DIR="$DEL/trash" SAIPP_SELFTEST_TABLAYOUT=1 \
+      SAIPP_SELFTEST_DELETEALL=1 "$WORK/helper-lib" 2>/dev/null)
+total=$((ndraw + 1))
+echo "$out" | grep -q "^selected $total bar\[$total selected|Delete $total…\]" \
+  && echo "  ok   delete: select all selects every video, and the bar says how many" \
+  || { echo "  FAIL delete: $(echo "$out" | grep '^selected')"; tab_fail=1; }
+echo "$out" | grep -q "^after delete drawings=0 loose=0 selected=0" \
+  && echo "  ok   delete: all of them are gone from the grid and nothing stays selected" \
+  || { echo "  FAIL delete: $(echo "$out" | grep '^after delete')"; tab_fail=1; }
+# THE TRAP: unlinking instead of trashing. A selection one Shift-click too
+# wide must be one trip to the Trash from being undone.
+[ "$(ls "$DEL/trash" | wc -l | tr -d ' ')" = "$total" ] && [ -f "$DEL/trash/An older one.mp4" ] \
+  && echo "  ok   delete: every one went to the Trash, not deleted outright" \
+  || { echo "  FAIL delete: Trash holds: $(ls "$DEL/trash")"; tab_fail=1; }
+tr -d ' \n' < "$DEL/videos/.library.json" | grep -q '"drawings":\[\]' \
+  && echo "  ok   delete: the library index forgets them too" \
+  || { echo "  FAIL delete: the index still lists drawings"; tab_fail=1; }
+
+
+# THE TRAP: forgetting a drawing whose files could not be moved. It would vanish
+# from the grid while its folder stayed on disk, with nothing left pointing at
+# it. Here the Trash is a folder that does not exist, so every move fails.
+NOTR="$WORK/notrash"; mkdir -p "$NOTR/cfg"
+cp -R "$E2E/videos" "$NOTR/videos"
+: > "$NOTR/videos/An older one.mp4"
+printf '%s' "$NOTR/videos" > "$NOTR/cfg/timelapse-folder.txt"
+before=$(ls -A "$NOTR/videos" | sort)
+out=$(SAIPP_CONFIG_DIR="$NOTR/cfg" SAIPP_TRASH_DIR="$NOTR/no-such-folder" SAIPP_SELFTEST_TABLAYOUT=1 \
+      SAIPP_SELFTEST_DELETEALL=1 "$WORK/helper-lib" 2>/dev/null)
+echo "$out" | grep -q "^failed $total" \
+  && echo "  ok   delete: a Trash that cannot be reached is reported for every video" \
+  || { echo "  FAIL delete: $(echo "$out" | grep '^failed')"; tab_fail=1; }
+echo "$out" | grep -q "^after delete drawings=$ndraw loose=1 selected=0" \
+  && echo "  ok   delete: and every one of them is still listed" \
+  || { echo "  FAIL delete: $(echo "$out" | grep '^after delete')"; tab_fail=1; }
+[ "$(ls -A "$NOTR/videos" | sort)" = "$before" ] \
+  && echo "  ok   delete: and still on disk, untouched" \
+  || { echo "  FAIL delete: the folder changed though nothing could be moved"; tab_fail=1; }
 
 [ "$tab_fail" = 0 ] || exit 1
 echo "All tab layout tests passed."
