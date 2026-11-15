@@ -26,16 +26,10 @@ Seven tabs, one window.
 <p align="center">
   <a href="docs/assets/screenshots/all-tabs.png"><img src="docs/assets/screenshots/all-tabs.png" alt="All seven tabs. Top row: Setup, with Launch and Wake SAI; Pen, with pressure levels, pen feel presets, the curve and two more feel sliders, and Test pen; Keys, with what each Option and Command key sends; Recording, with the timelapse switches and save folder. Bottom row: Videos, a grid of drawings with a bar for the selection; Statistics, with today, the last 7 days, the streak and a chart of the last two weeks; Advanced, with developer mode, automatic updates, sharp text on Retina screens, the Language menu with the font in use, and the Wine in use." width="100%"></a>
 </p>
-<p align="center"><sub>Full size:
-  <a href="docs/assets/screenshots/setup.png">Setup</a> ·
-  <a href="docs/assets/screenshots/pen.png">Pen</a> ·
-  <a href="docs/assets/screenshots/keys.png">Keys</a> ·
-  <a href="docs/assets/screenshots/recording.png">Recording</a> ·
-  <a href="docs/assets/screenshots/videos.png">Videos</a> ·
-  <a href="docs/assets/screenshots/statistics.png">Statistics</a> ·
-  <a href="docs/assets/screenshots/advanced.png">Advanced</a></sub></p>
 
 ### Setup
+
+<p align="center"><a href="docs/assets/screenshots/setup.png"><img src="docs/assets/screenshots/setup.png" alt="The Setup tab: Launch SAI with Pressure, the setup check, Wake SAI, Auto-wake, Show all steps, Copy problem report and More." width="70%"></a></p>
 
 Where you start SAI, and where installing happens.
 
@@ -51,6 +45,8 @@ Where you start SAI, and where installing happens.
 It does not download SAI or a licence for you: you point it at a SAI folder you already have.
 
 ### Pen
+
+<p align="center"><a href="docs/assets/screenshots/pen.png"><img src="docs/assets/screenshots/pen.png" alt="The Pen tab: pressure levels, the pen feel preset, the pen feel curve with its plot, Ignore light touch, Full width at, and Test pen." width="70%"></a></p>
 
 How the pen feels in SAI. Pen feel changes apply instantly, without restarting SAI.
 
@@ -68,6 +64,8 @@ It does not change SAI's own brush settings. Pen feel works on top of them, so a
 
 ### Keys
 
+<p align="center"><a href="docs/assets/screenshots/keys.png"><img src="docs/assets/screenshots/keys.png" alt="The Keys tab: what the left and right Option and Command keys send to SAI, Restore defaults, and the Try a key box." width="70%"></a></p>
+
 What each ⌘ and ⌥ key sends to SAI: *Ctrl*, *Alt*, or *Option (types special characters)*, set
 separately for the left and right keys. By default ⌘ is Ctrl (⌘Z, ⌘S…) and ⌥ is Alt (the
 eyedropper). **Try a key** shows what a key press turns into, without sending anything to SAI.
@@ -75,6 +73,8 @@ eyedropper). **Try a key** shows what a key press turns into, without sending an
 SAI reads these when it starts, so a change applies the next time SAI opens.
 
 ### Recording
+
+<p align="center"><a href="docs/assets/screenshots/recording.png"><img src="docs/assets/screenshots/recording.png" alt="The Recording tab: Record a timelapse while I draw, Record every stroke separately, and the folder videos are saved to." width="70%"></a></p>
 
 The canvas timelapse. Tick **Record a timelapse while I draw**, choose where videos are saved, and
 draw. The video is made when SAI closes. **Record every stroke separately** gives more detail, at
@@ -84,6 +84,8 @@ It records the canvas, not the screen: no panels, no cursor, no zooming, and no 
 apply the next time SAI starts.
 
 ### Videos
+
+<p align="center"><a href="docs/assets/screenshots/videos.png"><img src="docs/assets/screenshots/videos.png" alt="The Videos tab: a grid of drawings as stills, and the bar under it with Play, Export, Show in Finder and Delete." width="70%"></a></p>
 
 One video per drawing, even when you work on it over several evenings, shown as a grid of stills.
 Hover over a still to play it, double-click to open it.
@@ -101,6 +103,8 @@ It does not edit videos beyond choosing their length.
 
 ### Statistics
 
+<p align="center"><a href="docs/assets/screenshots/statistics.png"><img src="docs/assets/screenshots/statistics.png" alt="The Statistics tab: today, the last 7 days and the streak, a chart of the last two weeks with Days and Hours, all-time totals and Export CSV." width="70%"></a></p>
+
 How much you draw, counted while SAI is the app in front, whether or not you record.
 
 - **Today**, **Last 7 days** and your **streak** of days in a row, plus all-time totals and your
@@ -117,6 +121,8 @@ is a break and is not counted, and nor is time with SAI open but not drawing. It
 time, not what you drew or in which canvas.
 
 ### Advanced
+
+<p align="center"><a href="docs/assets/screenshots/advanced.png"><img src="docs/assets/screenshots/advanced.png" alt="The Advanced tab: Developer mode, Install updates automatically, Sharp text on Retina screens, the Language menu with the font in use, and the Wine in use." width="70%"></a></p>
 
 - **Install updates automatically**, never while SAI is open.
 - **Display › Sharp text on Retina screens:** SAI at your screen's full resolution
