@@ -249,6 +249,278 @@ struct StatsTests {
         for i in 0..<1000 { _ = q.note(pressure: i == 0 ? 0 : 500, at: Double(i)) { asked += 1; return ("d", nil) } }
         expect(asked == 0, "gate: the date is never asked for while the pen stays down")
 
+        // === the tab: periods, pages and what each page shows ==============
+        var mon = utc; mon.firstWeekday = 2          // weeks from Monday
+        func key(_ y: Int, _ m: Int, _ d: Int) -> String { String(format: "%04d-%02d-%02d", y, m, d) }
+        func drawn(_ secs: Double, strokes n: Int = 10, hourly: [Double]? = nil) -> DayStats {
+            DayStats(strokes: n, penSeconds: secs / 2, activeSeconds: secs, hourly: hourly)
+        }
+        let nov16 = day(2026, 11, 16)                // a Monday
+
+        // --- periods ----------------------------------------------------------
+        let hist2: [String: DayStats] = [key(2026, 6, 1): drawn(600), key(2026, 11, 10): drawn(3600),
+                                         key(2026, 11, 16): drawn(1200)]
+        let wk = StatsCore.range(.week, today: nov16, days: hist2, calendar: utc)
+        expect(StatsCore.dayKey(wk.from, calendar: utc) == "2026-11-10" && StatsCore.dayKey(wk.to, calendar: utc) == "2026-11-16",
+               "period: Week is the last 7 days, today included")
+        expect(StatsCore.daysIn(StatsCore.range(.month, today: nov16, days: hist2, calendar: utc), hist2, calendar: utc).count == 30,
+               "period: Month is the last 30 days")
+        expect(StatsCore.daysIn(StatsCore.range(.year, today: nov16, days: hist2, calendar: utc), hist2, calendar: utc).count == 365,
+               "period: Year is the last 365 days")
+        let allR = StatsCore.range(.all, today: nov16, days: hist2, calendar: utc)
+        expect(StatsCore.dayKey(allR.from, calendar: utc) == "2026-06-01", "period: All time starts at the first counted day")
+        let emptyAll = StatsCore.range(.all, today: nov16, days: [:], calendar: utc)
+        expect(StatsCore.daysIn(emptyAll, [:], calendar: utc).count == 1, "period: All time before anything is counted is just today")
+        for p in StatsPeriod.allCases { expect(!p.title.contains("\u{2014}") && !p.title.contains("\u{2013}"), "text: no dash in period \"\(p.title)\"") }
+        for p in StatsPage.allCases { expect(!p.title.contains("\u{2014}") && !p.title.contains("\u{2013}"), "text: no dash in page \"\(p.title)\"") }
+
+        // TRAP: stepping days by adding 86400 seconds. A day with a daylight
+        // saving change is 23 or 25 hours, so a range across one would show a
+        // day twice or skip one. Berlin changes clocks on 29 March and 25 October.
+        var berlin = Calendar(identifier: .gregorian); berlin.timeZone = TimeZone(identifier: "Europe/Berlin")!
+        for (m, d) in [(3, 29), (10, 25)] {
+            let mid = berlin.date(from: DateComponents(year: 2026, month: m, day: d, hour: 12))!
+            let r = DayRange(from: berlin.date(byAdding: .day, value: -3, to: berlin.startOfDay(for: mid))!,
+                             to: berlin.date(byAdding: .day, value: 3, to: berlin.startOfDay(for: mid))!)
+            let keys = StatsCore.daysIn(r, [:], calendar: berlin).map { $0.key }
+            expect(keys.count == 7 && Set(keys).count == 7 && keys[3] == key(2026, m, d),
+                   "days: a range across the clock change on \(d).\(m) has each day once, none skipped")
+        }
+        let yr26 = StatsCore.yearRange(2026, today: nov16, calendar: utc)
+        expect(StatsCore.daysIn(yr26, [:], calendar: utc).count == 320, "year: this year ends today (1 Jan to 16 Nov is 320 days)")
+        expect(StatsCore.daysIn(StatsCore.yearRange(2024, today: nov16, calendar: utc), [:], calendar: utc).count == 366,
+               "year: a past leap year is all 366 days")
+        expect(StatsCore.daysIn(StatsCore.yearRange(2027, today: nov16, calendar: utc), [:], calendar: utc).isEmpty,
+               "year: a year still to come has no days")
+
+        // --- tiles --------------------------------------------------------------
+        // TRAP: "Days drawn 2 of 30" when counting began a week ago reads as
+        // 28 days skipped. Days from before the first counted day are not
+        // days off; they were never counted.
+        let fresh: [String: DayStats] = [key(2026, 11, 10): drawn(3600), key(2026, 11, 12): drawn(1800)]
+        let sm = StatsCore.summary(fresh, range: StatsCore.range(.month, today: nov16, days: fresh, calendar: utc), calendar: utc)
+        expect(sm.daysInRange == 30 && sm.daysCounted == 7 && sm.daysDrawn == 2,
+               "tiles: of a 30-day month, only the 7 days since counting began are counted")
+        expect(sm.total.activeSeconds == 5400 && sm.total.strokes == 20 && sm.averageDay == 2700,
+               "tiles: total and the average of the days drawn")
+        let nothing = StatsCore.summary([:], range: wk, calendar: utc)
+        expect(nothing.daysCounted == 0 && nothing.daysDrawn == 0 && nothing.averageDay == 0,
+               "tiles: before anything is counted, nothing is counted and the average is 0, not NaN")
+
+        let parts = { (s: Double) in StatsCore.cardTimeParts(s).map { $0.text }.joined() }
+        expect(parts(0) == "0 min" && parts(20) == "<1 min" && parts(59 * 60 + 59) == "59 min", "tile: minutes")
+        expect(parts(7860) == "2 h 11 min" && parts(7200) == "2 h", "tile: hours and minutes")
+        expect(parts(43 * 3600 + 25 * 60) == "43 h", "tile: from 20 h on, hours only (a tile is narrow)")
+        expect(StatsCore.cardTimeParts(7860).map { $0.unit } == [false, true, false, true], "tile: numbers big, units small")
+
+        // --- longest streak --------------------------------------------------
+        var runs: [String: DayStats] = [:]
+        for d in 3...5 { runs[key(2026, 8, d)] = drawn(60) }                       // 3 days
+        for d in 29...31 { runs[key(2026, 10, d)] = drawn(60) }                    // 31 Oct ...
+        for d in 1...2 { runs[key(2026, 11, d)] = drawn(60) }                      // ... runs into 1 and 2 Nov
+        runs[key(2026, 11, 4)] = DayStats()                                        // a day with no strokes
+        let ls = StatsCore.longestStreak(runs, calendar: utc)
+        expect(ls?.length == 5 && ls?.from == "2026-10-29" && ls?.to == "2026-11-02",
+               "longest streak: runs across the end of a month")
+        var tie: [String: DayStats] = [:]
+        for d in [1, 2, 10, 11] { tie[key(2026, 9, d)] = drawn(60) }
+        expect(StatsCore.longestStreak(tie, calendar: utc)?.from == "2026-09-01", "longest streak: the earlier of two equal runs")
+        expect(StatsCore.longestStreak([:], calendar: utc) == nil, "longest streak: none before anything is drawn")
+
+        // --- Days page: bars -------------------------------------------------
+        let r31 = DayRange(from: day(2026, 10, 1), to: day(2026, 10, 31))
+        let r32 = DayRange(from: day(2026, 10, 1), to: day(2026, 11, 1))
+        expect(StatsCore.bucketSize(r31, calendar: utc) == .day && StatsCore.bucketSize(r32, calendar: utc) == .week,
+               "bars: up to 31 days a bar is a day, from 32 a week")
+        expect(StatsCore.bucketSize(DayRange(from: day(2025, 11, 16), to: nov16), calendar: utc) == .week
+               && StatsCore.bucketSize(DayRange(from: day(2025, 11, 15), to: nov16), calendar: utc) == .month,
+               "bars: up to 366 days a bar is a week, longer a month")
+        // Wed 4 Nov to Tue 10 Nov, weeks from Monday: two bars, Wed to Sun and Mon to Tue.
+        let wb: [String: DayStats] = [key(2026, 11, 4): drawn(600), key(2026, 11, 8): drawn(1200), key(2026, 11, 9): drawn(300)]
+        let weekR = DayRange(from: day(2026, 11, 4), to: day(2026, 11, 10))
+        let weeks = StatsCore.buckets(wb, range: weekR, size: .week, calendar: mon)
+        expect(weeks.count == 2 && weeks[0].seconds == 1800 && weeks[0].daysDrawn == 2 && weeks[1].seconds == 300,
+               "bars: a week bar adds up its days, weeks start on the calendar's first weekday")
+        expect(weeks.count == 2 && StatsCore.dayKey(weeks[1].start, calendar: mon) == "2026-11-09",
+               "bars: the second week starts on Monday 9 Nov")
+        let sunWeeks = StatsCore.buckets(wb, range: weekR, size: .week, calendar: utc)
+        expect(sunWeeks.count == 2 && sunWeeks[0].seconds == 600 && sunWeeks[1].seconds == 1500,
+               "bars: with weeks from Sunday, Sunday 8 Nov opens the second week")
+        let months = StatsCore.buckets(hist2, range: allR, size: .month, calendar: utc)
+        expect(months.count == 6 && months.first?.seconds == 600 && months.last?.seconds == 4800
+               && months[1...4].allSatisfy { $0.seconds == 0 && $0.counted },
+               "bars: month bars from June to November, empty months still counted")
+        let dayBars = StatsCore.buckets(fresh, range: StatsCore.range(.month, today: nov16, days: fresh, calendar: utc),
+                                        size: .day, calendar: utc)
+        expect(dayBars.count == 30 && dayBars.prefix(23).allSatisfy { !$0.counted } && dayBars.suffix(7).allSatisfy { $0.counted },
+               "bars: days from before counting began are marked not counted (drawn as nothing, not as a day off)")
+        expect(StatsCore.averageBar(dayBars) == sm.averageDay, "bars: the average line for days is the Average day tile")
+        expect(StatsCore.averageBar(StatsCore.buckets([:], range: wk, size: .day, calendar: utc)) == nil,
+               "bars: no average line when nothing is drawn")
+
+        // --- the value axis --------------------------------------------------
+        expect(StatsCore.timeAxis(max: 312 * 60) == (top: 6 * 3600, step: 3600), "axis: 5 h 12 min tops out at 6 h, a line each hour")
+        expect(StatsCore.timeAxis(max: 0) == (top: 3600, step: 1800), "axis: nothing drawn shows 0 to 1 h")
+        expect(StatsCore.timeAxis(max: 20) == (top: 60, step: 60), "axis: under a minute shows 0 to 1 min")
+        // TRAP: the old chart had no axis and scaled to the tallest bar, so
+        // the tallest bar always filled the chart whatever it was. Now the
+        // top is a round number above it, and one minute never looks like
+        // five hours.
+        expect(StatsCore.timeAxis(max: 61 * 60).top == 75 * 60, "axis: 61 min is drawn against a 75 min top, not as a full bar")
+        var axisOK = true
+        for v in stride(from: 1.0, through: 400 * 3600, by: 97.0) {
+            let a = StatsCore.timeAxis(max: v)
+            let n = a.top / a.step
+            if a.top < v || a.top - a.step >= v || n > 6 || n != n.rounded() || a.step.truncatingRemainder(dividingBy: 60) != 0 {
+                axisOK = false; print("    axis broke at \(v): \(a)"); break
+            }
+        }
+        expect(axisOK, "axis: for any tallest bar, the top is the first whole step above it, at most 6 lines, whole minutes")
+        expect(StatsCore.axisLabel(0) == "0" && StatsCore.axisLabel(2700) == "45 min" && StatsCore.axisLabel(7200) == "2 h"
+               && StatsCore.axisLabel(5400) == "1 h 30", "axis: labels with units")
+
+        // --- Hours page -------------------------------------------------------
+        var hA = Array(repeating: 0.0, count: 24); hA[21] = 1800; hA[22] = 600
+        var hB = Array(repeating: 0.0, count: 24); hB[21] = 3600
+        let hp: [String: DayStats] = [key(2026, 11, 14): drawn(2400, hourly: hA), key(2026, 11, 15): drawn(3600, hourly: hB),
+                                      key(2026, 11, 13): drawn(900)]      // saved before hours were counted
+        let prof = StatsCore.hourProfile(hp, range: wk, calendar: utc)
+        expect(prof.days == 2 && prof.average[21] == 2700 && prof.average[22] == 300,
+               "hours: the average day, over the days drawn that have hours")
+        expect(prof.daysWithHour[21] == 2 && prof.daysWithHour[22] == 1 && prof.daysWithHour[3] == 0,
+               "hours: on how many days each hour was used")
+        expect(StatsCore.hourProfile([:], range: wk, calendar: utc).days == 0, "hours: nothing drawn, no days")
+
+        // --- Weekdays page ---------------------------------------------------
+        // Counting began Mon 2 Nov. Two Saturdays (7 and 14 Nov): one drawn for
+        // an hour, one off. The Saturday average is 30 min, the day off included.
+        let wd: [String: DayStats] = [key(2026, 11, 2): drawn(600), key(2026, 11, 7): drawn(3600)]
+        let avgs = StatsCore.weekdayAverages(wd, range: StatsCore.range(.month, today: nov16, days: wd, calendar: mon), calendar: mon)
+        expect(avgs.map { $0.weekday } == [2, 3, 4, 5, 6, 7, 1], "weekdays: in order from the calendar's first weekday")
+        let sat = avgs.first { $0.weekday == 7 }!
+        expect(sat.count == 2 && sat.drew == 1 && sat.average == 1800, "weekdays: a day off counts in the average")
+        let monday = avgs.first { $0.weekday == 2 }!
+        expect(monday.count == 3 && monday.average == 200,
+               "weekdays: Mondays from before counting began are left out (2, 9 and 16 Nov count, 19 and 26 Oct do not)")
+        expect(StatsCore.weekdayAverages(wd, range: wk, calendar: utc).map { $0.weekday } == [1, 2, 3, 4, 5, 6, 7],
+               "weekdays: from Sunday on a Sunday-first calendar")
+
+        // --- Calendar page --------------------------------------------------
+        expect([0, 1, 1799, 1800, 3599, 3600, 7199, 7200].map(StatsCore.calendarLevel) == [0, 1, 1, 2, 2, 3, 3, 4],
+               "calendar: colour steps at 30 min, 1 h and 2 h, both sides of each")
+        for t in StatsCore.calendarLegend { expect(!t.contains("\u{2014}") && !t.contains("\u{2013}"), "text: no dash in legend \"\(t)\"") }
+        expect(StatsCore.calendarYears([:], today: nov16, calendar: utc) == 2026...2026, "calendar: before anything is counted, only this year")
+        let old: [String: DayStats] = [key(2024, 12, 30): drawn(60), key(2026, 1, 2): drawn(60)]
+        let span = StatsCore.calendarYears(old, today: nov16, calendar: utc)
+        expect(span == 2024...2026, "calendar: back to the first year anything was counted")
+        // The arrows: back as far as the counting goes, and forward again,
+        // but not past this year.
+        var y = 2026
+        y = StatsCore.stepYear(y, -1, span); expect(y == 2025, "years: back one")
+        y = StatsCore.stepYear(y, -1, span); expect(y == 2024, "years: back to the first year")
+        y = StatsCore.stepYear(y, -1, span); expect(y == 2024, "years: not before the first year")
+        y = StatsCore.stepYear(y, 1, span); y = StatsCore.stepYear(y, 1, span); expect(y == 2026, "years: and forward again to this year")
+        y = StatsCore.stepYear(y, 1, span); expect(y == 2026, "years: not past this year")
+        // 1 Nov 2026 is a Sunday.
+        expect(StatsCore.gridPosition(year: 2026, month: 11, day: 1, calendar: mon) == (row: 0, col: 6)
+               && StatsCore.gridPosition(year: 2026, month: 11, day: 2, calendar: mon) == (row: 1, col: 0)
+               && StatsCore.gridPosition(year: 2026, month: 11, day: 30, calendar: mon) == (row: 5, col: 0),
+               "calendar: November 2026 from Monday, six rows")
+        expect(StatsCore.gridPosition(year: 2026, month: 11, day: 1, calendar: utc) == (row: 0, col: 0),
+               "calendar: and from Sunday it starts the first row")
+        var gridOK = true
+        for yy in 2024...2028 { for mm in 1...12 {
+            let n = utc.range(of: .day, in: .month, for: utc.date(from: DateComponents(year: yy, month: mm, day: 1))!)!.count
+            for cal in [utc, mon] where StatsCore.gridPosition(year: yy, month: mm, day: n, calendar: cal).row > 5 { gridOK = false }
+        } }
+        expect(gridOK, "calendar: every month of five years fits in six rows")
+        // TRAP: a prefix without its trailing dash, "2026-1", would add
+        // October, November and December into January.
+        let mt: [String: DayStats] = [key(2026, 1, 5): drawn(600), key(2026, 11, 5): drawn(3600), key(2026, 10, 5): drawn(60)]
+        expect(StatsCore.monthTotal(mt, year: 2026, month: 1) == 600 && StatsCore.monthTotal(mt, year: 2026, month: 11) == 3600,
+               "calendar: January is January, not every month starting with 1")
+        expect(StatsCore.monthTotalText(0) == "" && StatsCore.monthTotalText(35 * 60) == "35 min"
+               && StatsCore.monthTotalText(22 * 3600 + 20 * 60) == "22 h", "calendar: month totals")
+        expect(StatsCore.dayFacts(nil) == ["Nothing drawn"] && StatsCore.dayFacts(DayStats()) == ["Nothing drawn"],
+               "day: a day with nothing drawn says so")
+        expect(StatsCore.dayFacts(DayStats(strokes: 340, penSeconds: 1, activeSeconds: 4320)) == ["1 h 12 min", "340 strokes"],
+               "day: an older day shows no sessions or times rather than zeros")
+        let bestDayStats = DayStats(strokes: 7480, penSeconds: 9000, activeSeconds: 18720, sessions: 3, longestSession: 7500,
+                            firstAt: 11 * 3600 + 27 * 60, lastAt: 22 * 3600 + 41 * 60)
+        let facts = StatsCore.dayFacts(bestDayStats)
+        expect(facts == ["5 h 12 min", StatsCore.strokes(7480), "3 sessions", "11:27 to 22:41"], "day: all its facts (the stroke count grouped as the Mac's language does)")
+        for f in facts { expect(!f.contains("\u{2014}") && !f.contains("\u{2013}"), "text: no dash in \"\(f)\"") }
+
+        // --- words on the tiles and charts ------------------------------------
+        let dd = { (s: PeriodSummary) in StatsCore.daysDrawnParts(s).map { $0.text }.joined() }
+        expect(dd(sm) == "2 of 7" && StatsCore.daysDrawnDetail(sm) == "29% of days",
+               "tile: days drawn is out of the days counted, not the 30 of the month")
+        expect(dd(nothing) == "0" && StatsCore.daysDrawnDetail(nothing) == "Nothing yet",
+               "tile: before anything is counted, no \"0 of 0\" and no division by zero")
+        expect(StatsCore.averageDetail(sm) == "when you drew" && StatsCore.averageDetail(nothing) == "No days drawn",
+               "tile: an average of nothing does not say \"when you drew\"")
+        expect(StatsCore.streakParts(1).map { $0.text }.joined() == "1 day"
+               && StatsCore.streakParts(4).map { $0.text }.joined() == "4 days", "tile: streak, one day and many")
+        expect(StatsCore.streakDetail(streak: 4, best: 16) == "Best: 16 days"
+               && StatsCore.streakDetail(streak: 0, best: 16) == "Best: 16 days", "tile: the best run under the streak")
+        expect(StatsCore.streakDetail(streak: 16, best: 16) == "Your longest yet", "tile: the streak is the best run")
+        expect(StatsCore.streakDetail(streak: 0, best: nil) == "None yet", "tile: no run yet")
+        // TRAP: the first version said "Nothing counted yet" and "Draw today
+        // to start one", and on a fresh install both tiles ended in "…".
+        let everyDay = PeriodSummary(total: DayStats(), daysDrawn: 1000, daysCounted: 1000, daysInRange: 1000)
+        let details = [StatsCore.daysDrawnDetail(nothing), StatsCore.daysDrawnDetail(sm), StatsCore.daysDrawnDetail(everyDay),
+                       StatsCore.averageDetail(sm), StatsCore.averageDetail(nothing),
+                       StatsCore.streakDetail(streak: 0, best: nil), StatsCore.streakDetail(streak: 9, best: 9),
+                       StatsCore.streakDetail(streak: 2, best: 1000), StatsCore.streakDetail(streak: 0, best: 1)]
+        for t in details { expect(t.count <= StatsCore.tileDetailMax, "tile: \"\(t)\" fits under a tile") }
+
+        expect(StatsCore.averageLabel(.day, 7860) == "average day 2 h 11"
+               && StatsCore.averageLabel(.week, 2700) == "average week 45 min", "chart: the average line's label")
+
+        // TRAP: Calendar counts weekdays from 1 (Sunday) to 7 (Saturday), the
+        // names are indexed from 0. Indexing them with the weekday straight
+        // calls every day by the next day's name: Mondays read "Tuesdays".
+        // Saturday alone would still pass (the index is clamped at the end),
+        // so the Monday, Sunday and Wednesday checks are the ones that catch it.
+        expect(StatsCore.weekdayTip(sat) == "Saturdays\n30 min on an average Saturday\nYou drew on 1 of 2 Saturdays",
+               "weekday tip: Saturday is Saturday, days off counted")
+        expect(StatsCore.weekdayTip(monday).hasPrefix("Mondays\n") && StatsCore.weekdayTip(avgs[6]).hasPrefix("Sundays\n"),
+               "weekday tip: Monday and Sunday by their own names")
+        expect(StatsCore.weekdayTip(WeekdayAverage(weekday: 4, average: 0, drew: 0, count: 1))
+               == "Wednesdays\nNothing drawn\nYou drew on 0 of 1 Wednesday", "weekday tip: one, with nothing drawn")
+        expect(StatsCore.weekdayTip(WeekdayAverage(weekday: 4, average: 0, drew: 0, count: 0))
+               == "Wednesdays\nNone counted in this period", "weekday tip: none in the period")
+
+        expect(StatsCore.hourTip(prof, hour: 21) == "21:00 to 22:00\n45 min on an average day\nYou drew in this hour on 2 of 2 days",
+               "hour tip: the average and on how many days")
+        expect(StatsCore.hourTip(prof, hour: 23) == "23:00 to 00:00\nNothing drawn in this hour",
+               "hour tip: the last hour ends at 00:00, not 24:00")
+        expect(StatsCore.hourTip(HourProfile(), hour: 9) == "09:00 to 10:00\nNo hours counted in this period",
+               "hour tip: no days with hours")
+        expect(StatsCore.hoursNote(prof) == "Average of the 2 days you drew. An hour holds 60 min at most."
+               && StatsCore.hoursNote(HourProfile()) == nil, "hours: what the bars are an average of")
+        expect(StatsCore.hoursEmpty(prof, daysDrawn: 3) == nil
+               && StatsCore.hoursEmpty(HourProfile(), daysDrawn: 3) == "Hours were not counted yet on these days"
+               && StatsCore.hoursEmpty(HourProfile(), daysDrawn: 0) == StatsCore.nothingInPeriod,
+               "hours: days saved before hours were counted are not \"nothing drawn\"")
+
+        let wkBar = StatsBucket(start: day(2026, 11, 2), seconds: 5400, strokes: 900, daysDrawn: 3, counted: true)
+        expect(StatsCore.bucketTip(wkBar, heading: "2 Nov to 8 Nov") == "2 Nov to 8 Nov\n1 h 30 min, 900 strokes\nDrawn on 3 days",
+               "bar tip: a week")
+        expect(StatsCore.bucketTip(StatsBucket(start: day(2026, 5, 1)), heading: "May").hasSuffix("\nBefore counting began")
+               && StatsCore.bucketTip(StatsBucket(start: day(2026, 7, 1), counted: true), heading: "July").hasSuffix("\nNothing drawn"),
+               "bar tip: before counting began is not the same as nothing drawn")
+        expect(StatsCore.dayTip(DayStats(strokes: 340, penSeconds: 1, activeSeconds: 4320), counted: true, heading: "Sat")
+               == "Sat\n1 h 12 min, 340 strokes", "bar tip: a day, its facts")
+
+        var words = [StatsCore.notCountedText, StatsCore.nothingInPeriod, StatsCore.daysDrawnDetail(sm),
+                     StatsCore.streakDetail(streak: 2, best: 9), StatsCore.averageLabel(.month, 90000),
+                     StatsCore.hourTip(prof, hour: 21), StatsCore.hourTip(prof, hour: 23), StatsCore.hoursNote(prof)!,
+                     StatsCore.weekdayTip(sat), StatsCore.bucketTip(wkBar, heading: "")]
+        words += StatsBucketSize.allCases.flatMap { [StatsCore.daysHeading($0).title, StatsCore.daysHeading($0).note] }
+        words += StatsCore.weekdayShort + StatsCore.weekdayMany
+        for t in words { expect(!t.contains("\u{2014}") && !t.contains("\u{2013}"), "text: no dash in \"\(t)\"") }
+
         // --- the file on disk -------------------------------------------------
         let dir = NSTemporaryDirectory() + "stats-tests-\(ProcessInfo.processInfo.processIdentifier)"
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)

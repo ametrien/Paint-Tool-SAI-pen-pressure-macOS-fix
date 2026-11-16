@@ -440,8 +440,17 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     /// because the next start picks the change up on its own.
     var keysNeedSAIRestart = false
     // The Stats tab (StatsUI.swift). The numbers live in g_stats.
-    var statsCards: [StatCardView] = []
-    var statsBars: StatsBarsView!
+    var statsTiles: [StatCardView] = []
+    var statsChart: StatsChartView!
+    var statsPageSwitch: NSSegmentedControl!
+    var statsPeriodSwitch: NSSegmentedControl!
+    /// The Calendar page's year, with the arrows that step it. Shown in the
+    /// period's place while that page is open.
+    var statsYearBox: NSStackView!
+    var statsYearLabel: NSTextField!
+    var statsYearBack: NSButton!
+    var statsYearForward: NSButton!
+    var statsYear = Calendar.current.component(.year, from: Date())
     var statsFooter: NSTextField!
     var statsExportButton: NSButton!
     // Advanced › Display (test), DisplayUI.swift: Retina mode and SAI's language.

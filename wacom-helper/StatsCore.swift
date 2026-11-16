@@ -301,19 +301,6 @@ enum StatsCore {
         return "\(f.string(from: NSNumber(value: n)) ?? String(n)) strokes"
     }
 
-    /// The big number on a card: short, never a sentence.
-    static func cardTime(_ s: Double) -> String {
-        if s <= 0 { return "0 min" }
-        if s < 60 { return "<1 min" }
-        return duration(s)
-    }
-
-    /// The line under the streak.
-    static func streakHint(streak: Int, drewToday: Bool) -> String {
-        if streak == 0 { return "Draw today to start one" }
-        return drewToday ? "Including today" : "Draw today to keep it"
-    }
-
     /// The menu bar line, or nil on a day with nothing drawn yet.
     static func menuLine(_ today: DayStats) -> String? {
         guard today.strokes > 0 else { return nil }
@@ -397,5 +384,466 @@ enum StatsFile {
     @discardableResult
     static func save(_ days: [String: DayStats], path: String) -> Bool {
         (try? StatsCore.serialize(days).write(toFile: path, atomically: true, encoding: .utf8)) != nil
+    }
+}
+
+// MARK: - the tab: periods, pages, and what each page shows
+//
+// Everything below reads the days already counted; nothing here changes what
+// is counted or how it is saved. The tab has one switch for the page (Days,
+// Hours, Weekdays, Calendar) and one for the period (Week, Month, Year, All
+// time; a year stepper on the Calendar page).
+
+enum StatsPeriod: Int, CaseIterable {
+    case week, month, year, all
+    var title: String { ["Week", "Month", "Year", "All time"][rawValue] }
+}
+
+enum StatsPage: Int, CaseIterable {
+    case days, hours, weekdays, calendar
+    var title: String { ["Days", "Hours", "Weekdays", "Calendar"][rawValue] }
+}
+
+/// A stretch of days, both ends included, each given as its start of day.
+/// `from` after `to` is an empty range.
+struct DayRange: Equatable {
+    var from: Date
+    var to: Date
+}
+
+/// What the tiles show for a range.
+struct PeriodSummary: Equatable {
+    /// Strokes, pen time and drawing time added up.
+    var total = DayStats()
+    var daysDrawn = 0
+    /// Days of the range that could have been counted: on or after the first
+    /// day anything was counted. "20 of 30" must not count days from before
+    /// the app was counting at all.
+    var daysCounted = 0
+    /// Days in the range, counted or not.
+    var daysInRange = 0
+    /// Drawing time on an average day you drew.
+    var averageDay: Double { daysDrawn > 0 ? total.activeSeconds / Double(daysDrawn) : 0 }
+}
+
+/// One bar of the Days page: a day, a week or a month.
+struct StatsBucket: Equatable {
+    var start: Date
+    var seconds: Double = 0
+    var strokes = 0
+    var daysDrawn = 0
+    /// False while the whole bucket is from before counting began: drawn as
+    /// nothing at all, not as "nothing drawn".
+    var counted = false
+}
+
+enum StatsBucketSize: Equatable, CaseIterable { case day, week, month }
+
+/// The Hours page: drawing time in each hour of an average drawing day.
+struct HourProfile: Equatable {
+    /// Seconds, 24 values: the average over the days drawn that have hours.
+    var average: [Double] = Array(repeating: 0, count: 24)
+    /// Days drawn that have hours (days saved before hours were counted have none).
+    var days = 0
+    /// For each hour, on how many of those days anything was drawn in it.
+    var daysWithHour: [Int] = Array(repeating: 0, count: 24)
+}
+
+/// The Weekdays page: one weekday's average.
+struct WeekdayAverage: Equatable {
+    /// 1 is Sunday, as Calendar counts.
+    var weekday: Int
+    /// Drawing time on an average such day, days off included.
+    var average: Double
+    var drew: Int
+    var count: Int
+}
+
+extension StatsCore {
+
+    static func startOfDay(_ d: Date, _ calendar: Calendar) -> Date { calendar.startOfDay(for: d) }
+
+    /// The first day anything was counted, or nil before that.
+    static func firstCountedKey(_ days: [String: DayStats]) -> String? { days.keys.min() }
+
+    /// The range a period covers, ending today. Week, Month and Year are the
+    /// last 7, 30 and 365 days, so a period never starts out half empty on the
+    /// 1st of a month. All time starts at the first counted day.
+    static func range(_ p: StatsPeriod, today: Date, days: [String: DayStats],
+                      calendar: Calendar = .current) -> DayRange {
+        let t = calendar.startOfDay(for: today)
+        func back(_ n: Int) -> Date { calendar.date(byAdding: .day, value: -n, to: t) ?? t }
+        switch p {
+        case .week: return DayRange(from: back(6), to: t)
+        case .month: return DayRange(from: back(29), to: t)
+        case .year: return DayRange(from: back(364), to: t)
+        case .all:
+            let first = firstCountedKey(days).flatMap { date(ofKey: $0, calendar: calendar) } ?? t
+            return DayRange(from: min(first, t), to: t)
+        }
+    }
+
+    /// One calendar year, cut off at today.
+    static func yearRange(_ year: Int, today: Date, calendar: Calendar = .current) -> DayRange {
+        let t = calendar.startOfDay(for: today)
+        let from = calendar.date(from: DateComponents(year: year, month: 1, day: 1)) ?? t
+        let end = calendar.date(from: DateComponents(year: year, month: 12, day: 31)) ?? t
+        return DayRange(from: from, to: min(end, t))
+    }
+
+    /// Every day of the range, oldest first, zeros included.
+    ///
+    /// Stepped with the calendar, never by adding 86400 seconds: a day with a
+    /// daylight saving change is 23 or 25 hours long, and seconds would land a
+    /// day twice or skip one.
+    static func daysIn(_ r: DayRange, _ days: [String: DayStats],
+                       calendar: Calendar = .current) -> [(key: String, date: Date, stats: DayStats)] {
+        var out: [(key: String, date: Date, stats: DayStats)] = []
+        let from = calendar.startOfDay(for: r.from), to = calendar.startOfDay(for: r.to)
+        var i = 0
+        while i < 100_000, let d = calendar.date(byAdding: .day, value: i, to: from), d <= to {
+            let k = dayKey(d, calendar: calendar)
+            out.append((k, d, days[k] ?? DayStats()))
+            i += 1
+        }
+        return out
+    }
+
+    static func summary(_ days: [String: DayStats], range r: DayRange,
+                        calendar: Calendar = .current) -> PeriodSummary {
+        var s = PeriodSummary()
+        let first = firstCountedKey(days)
+        for x in daysIn(r, days, calendar: calendar) {
+            s.daysInRange += 1
+            if let f = first, x.key >= f { s.daysCounted += 1 }
+            guard x.stats.strokes > 0 else { continue }
+            s.daysDrawn += 1
+            s.total.strokes += x.stats.strokes
+            s.total.penSeconds += x.stats.penSeconds
+            s.total.activeSeconds += x.stats.activeSeconds
+        }
+        return s
+    }
+
+    /// The longest run of days in a row with at least one stroke, ever.
+    /// The earliest such run when two are as long.
+    static func longestStreak(_ days: [String: DayStats],
+                              calendar: Calendar = .current) -> (length: Int, from: String, to: String)? {
+        let keys = days.filter { $0.value.strokes > 0 }.keys.sorted()
+        guard let firstKey = keys.first else { return nil }
+        var best = (length: 1, from: firstKey, to: firstKey)
+        var run = (length: 1, from: firstKey)
+        for (prev, cur) in zip(keys, keys.dropFirst()) {
+            let next = date(ofKey: prev, calendar: calendar)
+                .flatMap { calendar.date(byAdding: .day, value: 1, to: $0) }
+                .map { dayKey($0, calendar: calendar) }
+            run = next == cur ? (run.length + 1, run.from) : (1, cur)
+            if run.length > best.length { best = (run.length, run.from, cur) }
+        }
+        return best
+    }
+
+    // MARK: Days page
+
+    /// Up to a month is one bar per day, up to a year one per week, longer one
+    /// per month: past about 60 bars they are too thin to point at.
+    static func bucketSize(_ r: DayRange, calendar: Calendar = .current) -> StatsBucketSize {
+        let n = (calendar.dateComponents([.day], from: calendar.startOfDay(for: r.from),
+                                         to: calendar.startOfDay(for: r.to)).day ?? 0) + 1
+        return n <= 31 ? .day : n <= 366 ? .week : .month
+    }
+
+    /// Where a day's bar starts: the day, its week (from the calendar's first
+    /// weekday) or its month.
+    static func bucketStart(_ d: Date, _ size: StatsBucketSize, calendar: Calendar = .current) -> Date {
+        switch size {
+        case .day: return calendar.startOfDay(for: d)
+        case .week: return calendar.dateInterval(of: .weekOfYear, for: d)?.start ?? calendar.startOfDay(for: d)
+        case .month: return calendar.dateInterval(of: .month, for: d)?.start ?? calendar.startOfDay(for: d)
+        }
+    }
+
+    /// The bars, oldest first. The first and last bar may cover only part of a
+    /// week or month: the range decides which days count, not the bar.
+    static func buckets(_ days: [String: DayStats], range r: DayRange, size: StatsBucketSize,
+                        calendar: Calendar = .current) -> [StatsBucket] {
+        let first = firstCountedKey(days)
+        var out: [StatsBucket] = []
+        for x in daysIn(r, days, calendar: calendar) {
+            let start = bucketStart(x.date, size, calendar: calendar)
+            if out.last?.start != start { out.append(StatsBucket(start: start)) }
+            if let f = first, x.key >= f { out[out.count - 1].counted = true }
+            guard x.stats.strokes > 0 else { continue }
+            out[out.count - 1].seconds += x.stats.activeSeconds
+            out[out.count - 1].strokes += x.stats.strokes
+            out[out.count - 1].daysDrawn += 1
+        }
+        return out
+    }
+
+    /// The average bar, over bars with something drawn: for days, the same
+    /// number as the Average day tile.
+    static func averageBar(_ b: [StatsBucket]) -> Double? {
+        let drawn = b.filter { $0.seconds > 0 }
+        return drawn.isEmpty ? nil : drawn.reduce(0) { $0 + $1.seconds } / Double(drawn.count)
+    }
+
+    // MARK: the value axis
+
+    /// The top of a time axis and the step between its lines: round minutes or
+    /// hours, at most `lines` steps, the top at or above the tallest bar.
+    ///
+    /// THE TRAP this replaces: the old chart scaled every bar to the tallest
+    /// one and drew no axis, so the tallest bar always filled the chart. One
+    /// minute and five hours looked the same, and nothing said which it was.
+    static func timeAxis(max top: Double, lines: Int = 6) -> (top: Double, step: Double) {
+        let steps: [Double] = [60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 18000, 36000,
+                               72000, 180_000, 360_000, 720_000, 1_800_000, 3_600_000]
+        guard top > 0, top.isFinite else { return (3600, 1800) }   // nothing yet: 0 to 1 h
+        for s in steps where (top / s).rounded(.up) <= Double(lines) {
+            return ((top / s).rounded(.up) * s, s)
+        }
+        let s = steps.last!
+        return ((top / s).rounded(.up) * s, s)
+    }
+
+    /// An axis line's label: "0", "45 min", "2 h", "1 h 30".
+    static func axisLabel(_ s: Double) -> String {
+        let m = Int((s / 60).rounded())
+        if m <= 0 { return "0" }
+        if m < 60 { return "\(m) min" }
+        return m % 60 == 0 ? "\(m / 60) h" : "\(m / 60) h " + String(format: "%02d", m % 60)
+    }
+
+    // MARK: Hours page
+
+    /// Drawing time in each hour on an average day you drew. The axis for this
+    /// is fixed at 0 to 60 min: an hour holds no more than that, so a bar's
+    /// height means the same on every period.
+    static func hourProfile(_ days: [String: DayStats], range r: DayRange,
+                            calendar: Calendar = .current) -> HourProfile {
+        var p = HourProfile()
+        var sum = Array(repeating: 0.0, count: 24)
+        for x in daysIn(r, days, calendar: calendar) {
+            guard x.stats.strokes > 0, let h = x.stats.hourly, h.count == 24 else { continue }
+            p.days += 1
+            for i in 0..<24 {
+                sum[i] += h[i]
+                if h[i] > 0 { p.daysWithHour[i] += 1 }
+            }
+        }
+        if p.days > 0 { p.average = sum.map { $0 / Double(p.days) } }
+        return p
+    }
+
+    // MARK: Weekdays page
+
+    /// Each weekday's average, starting at the calendar's first weekday.
+    /// Days off are included (a Saturday with nothing drawn pulls Saturdays
+    /// down), and days from before counting began are not.
+    static func weekdayAverages(_ days: [String: DayStats], range r: DayRange,
+                                calendar: Calendar = .current) -> [WeekdayAverage] {
+        let first = firstCountedKey(days)
+        var total = Array(repeating: 0.0, count: 8), count = Array(repeating: 0, count: 8),
+            drew = Array(repeating: 0, count: 8)
+        for x in daysIn(r, days, calendar: calendar) {
+            guard let f = first, x.key >= f else { continue }
+            let w = calendar.component(.weekday, from: x.date)
+            count[w] += 1
+            if x.stats.strokes > 0 { drew[w] += 1; total[w] += x.stats.activeSeconds }
+        }
+        return (0..<7).map { i in
+            let w = (calendar.firstWeekday - 1 + i) % 7 + 1
+            return WeekdayAverage(weekday: w, average: count[w] > 0 ? total[w] / Double(count[w]) : 0,
+                                  drew: drew[w], count: count[w])
+        }
+    }
+
+    // MARK: Calendar page
+
+    /// The colour step of a day: 0 nothing, then under 30 min, 30 min to 1 h,
+    /// 1 to 2 h, 2 h or more. Fixed steps, so a colour means the same in
+    /// every year and the legend can say it in minutes.
+    static func calendarLevel(_ seconds: Double) -> Int {
+        if seconds <= 0 { return 0 }
+        if seconds < 1800 { return 1 }
+        if seconds < 3600 { return 2 }
+        if seconds < 7200 { return 3 }
+        return 4
+    }
+    static let calendarLegend = ["None", "Under 30 min", "30 min to 1 h", "1 to 2 h", "2 h or more"]
+
+    /// The years the arrows can reach: from the first year anything was
+    /// counted to this year. Just this year before anything is counted.
+    static func calendarYears(_ days: [String: DayStats], today: Date,
+                              calendar: Calendar = .current) -> ClosedRange<Int> {
+        let now = calendar.component(.year, from: today)
+        let first = firstCountedKey(days).flatMap { Int($0.prefix(4)) } ?? now
+        return min(first, now)...now
+    }
+
+    /// The year one arrow press away, kept within the years there are: back to
+    /// the first counted year, forward again up to this year.
+    static func stepYear(_ year: Int, _ by: Int, _ years: ClosedRange<Int>) -> Int {
+        min(max(year + by, years.lowerBound), years.upperBound)
+    }
+
+    /// Drawing time in one month of one year.
+    static func monthTotal(_ days: [String: DayStats], year: Int, month: Int) -> Double {
+        let prefix = String(format: "%04d-%02d-", year, month)
+        return days.reduce(0) { $0 + ($1.key.hasPrefix(prefix) ? $1.value.activeSeconds : 0) }
+    }
+
+    /// Where a day sits in its month's grid: the week row (0 to 5) and the
+    /// column, counted from the calendar's first weekday.
+    static func gridPosition(year: Int, month: Int, day: Int, calendar: Calendar = .current) -> (row: Int, col: Int) {
+        guard let first = calendar.date(from: DateComponents(year: year, month: month, day: 1)) else { return (0, 0) }
+        let lead = (calendar.component(.weekday, from: first) - calendar.firstWeekday + 7) % 7
+        let i = lead + day - 1
+        return (i / 7, i % 7)
+    }
+
+    /// A month total for the calendar's month headings: "22 h", "35 min", or
+    /// nothing for a month with nothing drawn.
+    static func monthTotalText(_ s: Double) -> String {
+        if s < 60 { return "" }
+        if s < 3600 { return "\(Int(s / 60)) min" }
+        return "\(Int((s / 3600).rounded())) h"
+    }
+
+    /// The facts about one day under the calendar, without its date.
+    /// Parts not counted on that day (older days have no sessions or times)
+    /// are left out, never shown as 0.
+    static func dayFacts(_ d: DayStats?) -> [String] {
+        guard let d, d.strokes > 0 else { return ["Nothing drawn"] }
+        var out = [duration(d.activeSeconds), strokes(d.strokes)]
+        if d.sessions > 0 { out.append(d.sessions == 1 ? "1 session" : "\(d.sessions) sessions") }
+        if let a = d.firstAt, let b = d.lastAt { out.append("\(clock(a)) to \(clock(b))") }
+        return out
+    }
+
+    /// A time of day from seconds after midnight: "21:05".
+    static func clock(_ s: Double) -> String {
+        let m = max(0, Int(s / 60))
+        return String(format: "%02d:%02d", min(m / 60, 23), m % 60)
+    }
+
+    // MARK: tiles
+
+    /// A tile's big number split into number and unit runs, so the digits can
+    /// be large and the units small: "2 h 11 min" is 2, " h ", 11, " min".
+    /// From 20 hours on the minutes are left out: a tile is 117 pt wide.
+    static func cardTimeParts(_ s: Double) -> [(text: String, unit: Bool)] {
+        if s <= 0 { return [("0", false), (" min", true)] }
+        if s < 60 { return [("<1", false), (" min", true)] }
+        let m = Int(s / 60)
+        if m < 60 { return [("\(m)", false), (" min", true)] }
+        let h = m / 60
+        if h >= 20 || m % 60 == 0 { return [("\(h)", false), (" h", true)] }
+        return [("\(h)", false), (" h ", true), ("\(m % 60)", false), (" min", true)]
+    }
+
+    /// The Days drawn tile: "20 of 30", only the days since counting began.
+    static func daysDrawnParts(_ s: PeriodSummary) -> [(text: String, unit: Bool)] {
+        s.daysCounted > 0 ? [("\(s.daysDrawn)", false), (" of \(s.daysCounted)", true)] : [("0", false)]
+    }
+
+    /// The lines under the tiles' numbers fit in 16 characters: a tile is
+    /// 117 pt wide, and a longer line ends in "…".
+    static let tileDetailMax = 16
+
+    static func daysDrawnDetail(_ s: PeriodSummary) -> String {
+        guard s.daysCounted > 0 else { return "Nothing yet" }
+        return "\(Int((Double(s.daysDrawn) * 100 / Double(s.daysCounted)).rounded()))% of days"
+    }
+
+    /// Under the Average day tile. "0 min when you drew" would say you drew.
+    static func averageDetail(_ s: PeriodSummary) -> String {
+        s.daysDrawn > 0 ? "when you drew" : "No days drawn"
+    }
+
+    static func streakParts(_ n: Int) -> [(text: String, unit: Bool)] {
+        [("\(n)", false), (n == 1 ? " day" : " days", true)]
+    }
+
+    /// The line under the streak: the best run so far, unless this is it.
+    static func streakDetail(streak: Int, best: Int?) -> String {
+        guard let best, best > 0 else { return "None yet" }
+        if streak > 0 && streak >= best { return "Your longest yet" }
+        return best == 1 ? "Best: 1 day" : "Best: \(best) days"
+    }
+
+    // MARK: words on the charts
+
+    /// English names, indexed by Calendar's weekday minus one (0 is Sunday).
+    /// Fixed rather than taken from the Mac's language: they sit inside
+    /// English sentences ("on an average Saturday").
+    static let weekdayShort = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    static let weekdayOne = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+    static let weekdayMany = weekdayOne.map { $0 + "s" }
+
+    static let notCountedText = "Not counted"
+    static let nothingInPeriod = "Nothing drawn in this period"
+
+    /// The Days page heading and the grey note after it.
+    static func daysHeading(_ size: StatsBucketSize) -> (title: String, note: String) {
+        switch size {
+        case .day: return ("Drawing time per day", "One bar is one day")
+        case .week: return ("Drawing time per week", "One bar is one week")
+        case .month: return ("Drawing time per month", "One bar is one month")
+        }
+    }
+
+    /// The label on the average line: "average day 2 h 11".
+    static func averageLabel(_ size: StatsBucketSize, _ s: Double) -> String {
+        "average " + (size == .day ? "day" : size == .week ? "week" : "month") + " " + axisLabel(s)
+    }
+
+    /// A time that starts a sentence: "45 min", "Under a minute".
+    static func averageText(_ s: Double) -> String { s < 60 ? "Under a minute" : duration(s) }
+
+    /// A day bar's tooltip, under its date.
+    static func dayTip(_ d: DayStats?, counted: Bool, heading: String) -> String {
+        heading + "\n" + (counted ? dayFacts(d).joined(separator: ", ") : "Before counting began")
+    }
+
+    /// A week or month bar's tooltip, under its dates.
+    static func bucketTip(_ b: StatsBucket, heading: String) -> String {
+        guard b.counted else { return heading + "\nBefore counting began" }
+        guard b.daysDrawn > 0 else { return heading + "\nNothing drawn" }
+        return heading + "\n\(duration(b.seconds)), \(strokes(b.strokes))\nDrawn on \(b.daysDrawn) "
+            + (b.daysDrawn == 1 ? "day" : "days")
+    }
+
+    /// An hour bar's tooltip: "21:00 to 22:00", the average, on how many days.
+    static func hourTip(_ p: HourProfile, hour i: Int) -> String {
+        let h = max(0, min(23, i))
+        let span = String(format: "%02d:00 to %02d:00", h, (h + 1) % 24)
+        guard p.days > 0 else { return span + "\nNo hours counted in this period" }
+        guard p.average[h] > 0 else { return span + "\nNothing drawn in this hour" }
+        return span + "\n\(averageText(p.average[h])) on an average day\n"
+            + "You drew in this hour on \(p.daysWithHour[h]) of \(p.days) " + (p.days == 1 ? "day" : "days")
+    }
+
+    /// Under the Hours chart: what the bars are an average of.
+    static func hoursNote(_ p: HourProfile) -> String? {
+        guard p.days > 0 else { return nil }
+        return (p.days == 1 ? "The one day you drew." : "Average of the \(p.days) days you drew.")
+            + " An hour holds 60 min at most."
+    }
+
+    /// Said across an empty Hours chart. Days saved before hours were counted
+    /// are drawn days with no hours: that is not "nothing drawn".
+    static func hoursEmpty(_ p: HourProfile, daysDrawn: Int) -> String? {
+        p.days > 0 ? nil : daysDrawn > 0 ? "Hours were not counted yet on these days" : nothingInPeriod
+    }
+
+    /// A weekday bar's tooltip: "Saturdays", the average, on how many of them.
+    static func weekdayTip(_ w: WeekdayAverage) -> String {
+        let i = max(0, min(6, w.weekday - 1))
+        let one = weekdayOne[i], many = weekdayMany[i]
+        guard w.count > 0 else { return many + "\nNone counted in this period" }
+        let line = w.drew == 0 ? "Nothing drawn" : "\(averageText(w.average)) on an average \(one)"
+        return "\(many)\n\(line)\nYou drew on \(w.drew) of \(w.count) " + (w.count == 1 ? one : many)
     }
 }

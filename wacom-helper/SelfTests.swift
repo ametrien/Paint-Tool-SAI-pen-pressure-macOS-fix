@@ -265,22 +265,38 @@ func runSelfTestIfAsked() {
     /// tab ("Statistics" or "Videos") and SAIPP_SELFTEST_PNG_OUT the path stem;
     /// it writes <stem>-light.png and <stem>-dark.png from the settings in
     /// SAIPP_CONFIG_DIR. SAIPP_SELFTEST_SELECT=n selects the first n videos.
+    /// For Statistics, SAIPP_SELFTEST_STATS_PAGE (Days, Hours, Weekdays,
+    /// Calendar), SAIPP_SELFTEST_STATS_PERIOD (Week, Month, Year, All time) and
+    /// SAIPP_SELFTEST_STATS_YEAR pick what it shows; none of them is saved.
     if let which = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_TAB_PNG"],
        let out = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_PNG_OUT"] {
         _ = NSApplication.shared
         loadStats()
+        let env = ProcessInfo.processInfo.environment
         for (name, look) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
             let c = SetupController()
             let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: c.rowWidth + 88, height: 560),
                              styleMask: [.titled], backing: .buffered, defer: false)
             w.appearance = NSAppearance(named: look)
             let tab = which == "Videos" ? c.buildLibraryTab() : c.buildStatsTab()
-            if which == "Videos", let n = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_SELECT"].flatMap(Int.init) {
+            if which == "Videos", let n = env["SAIPP_SELFTEST_SELECT"].flatMap(Int.init) {
                 for k in c.libOrder.prefix(n) { c.libSelection.click(k, modifier: .toggle, order: c.libOrder) }
                 c.applyLibrarySelection()
             }
             if which == "Statistics" {
-                c.statsBars.setMode(ProcessInfo.processInfo.environment["SAIPP_SELFTEST_CHART"] == "hours" ? .hours : .days)
+                func pick(_ v: String?, _ titles: [String]) -> Int? {
+                    v.flatMap { v in titles.firstIndex { $0.lowercased() == v.lowercased() } }
+                }
+                if let i = pick(env["SAIPP_SELFTEST_STATS_PAGE"], StatsPage.allCases.map { $0.title }) {
+                    c.statsPageSwitch.selectedSegment = i
+                }
+                if let i = pick(env["SAIPP_SELFTEST_STATS_PERIOD"], StatsPeriod.allCases.map { $0.title }) {
+                    c.statsPeriodSwitch.selectedSegment = i
+                }
+                if let y = env["SAIPP_SELFTEST_STATS_YEAR"].flatMap(Int.init) { c.statsYear = y }
+                c.refreshStatsTab()
+                // As tall as the tab needs, as the real window is sized.
+                w.setContentSize(NSSize(width: c.rowWidth + 88, height: tab.fittingSize.height))
             }
             tab.translatesAutoresizingMaskIntoConstraints = true
             tab.autoresizingMask = [.width, .height]

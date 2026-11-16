@@ -20,6 +20,20 @@ and mention it in the release notes.
   changes between the start and the end of a recording. The dot is faded by the window server,
   and stays still with Reduce Motion on.
 
+### Changed
+- **The Statistics tab has four pages and a period.** Days, Hours, Weekdays and Calendar, for the
+  last week, month or year, or all time. Four tiles on top: total drawing time, days drawn out of
+  the days counted, an average day you drew, and your streak with your best run. Days from before
+  the app started counting are left out, so a week of counting reads "2 of 7", not "2 of 30".
+- **The charts have an axis.** Bars are drawn against round hours and minutes, with a line for the
+  average, so one minute no longer fills the chart the way five hours did. A month is a bar per
+  day, a year a bar per week, all time a bar per month. Point at a bar to see its numbers.
+- **Hours** shows an average day you drew, hour by hour, on a fixed 0 to 60 min scale.
+  **Weekdays** shows each weekday's average, days off included.
+- **Calendar** colours every day of a year by drawing time and shows each month's total. Click a
+  day to see its time, strokes, sessions and when you drew; the arrows go back to the first year
+  anything was counted.
+
 ### Fixed
 - **Make video now, then carry on drawing, stays one drawing.** Pressing it ends a recording
   session while the canvas stays open, and the next piece was matched by how the canvas looked,
