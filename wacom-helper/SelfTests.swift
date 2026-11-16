@@ -268,6 +268,7 @@ func runSelfTestIfAsked() {
     /// For Statistics, SAIPP_SELFTEST_STATS_PAGE (Days, Hours, Weekdays,
     /// Calendar), SAIPP_SELFTEST_STATS_PERIOD (Week, Month, Year, All time) and
     /// SAIPP_SELFTEST_STATS_YEAR pick what it shows; none of them is saved.
+    /// SAIPP_SELFTEST_STATS_HOVER=n draws bar n's box as if the pointer were on it.
     if let which = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_TAB_PNG"],
        let out = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_PNG_OUT"] {
         _ = NSApplication.shared
@@ -295,6 +296,7 @@ func runSelfTestIfAsked() {
                 }
                 if let y = env["SAIPP_SELFTEST_STATS_YEAR"].flatMap(Int.init) { c.statsYear = y }
                 c.refreshStatsTab()
+                c.statsChart.showHover(bar: env["SAIPP_SELFTEST_STATS_HOVER"].flatMap(Int.init))
                 // As tall as the tab needs, as the real window is sized.
                 w.setContentSize(NSSize(width: c.rowWidth + 88, height: tab.fittingSize.height))
             }

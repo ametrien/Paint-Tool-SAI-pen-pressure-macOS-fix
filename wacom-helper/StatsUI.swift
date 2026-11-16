@@ -380,10 +380,17 @@ private let statsAverageColor = NSColor(name: nil) {
     $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .systemYellow : .systemOrange
 }
 
+/// The boxed numbers over the bar under the pointer.
+private let statsCalloutFill = NSColor(name: nil) {
+    $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(white: 0.11, alpha: 0.96)
+                                                        : NSColor(white: 1, alpha: 0.97)
+}
+
 /// The card under the tiles, one chart per page. The controller says what to
-/// show; this draws it, highlights the bar under the pointer, gives each bar
-/// a tooltip with its numbers and, on the Calendar page, picks a day on click.
-final class StatsChartView: NSView, NSViewToolTipOwner {
+/// show; this draws it, and the exact numbers of whatever is under the
+/// pointer: a box over a bar, or the day in the line under the calendar,
+/// where a click keeps a day.
+final class StatsChartView: NSView {
     enum Content: Equatable {
         case none
         /// The bars, what one bar stands for, the range they cover, and the
@@ -396,8 +403,7 @@ final class StatsChartView: NSView, NSViewToolTipOwner {
 
     var content: Content = .none {
         didSet {
-            // The tab refreshes every second: redraw and rebuild the tooltips
-            // only when something changed, or a tooltip being read would vanish.
+            // The tab refreshes every second: redraw only when something changed.
             guard content != oldValue else { return }
             if case .calendar(let year, _, _, _) = content,
                selectedKey?.hasPrefix(String(format: "%04d-", year)) != true {
@@ -405,13 +411,14 @@ final class StatsChartView: NSView, NSViewToolTipOwner {
             }
             if let h = hover, h >= barCount { hover = nil }
             needsDisplay = true
-            rebuildToolTips()
         }
     }
 
     /// The day shown under the calendar.
     private(set) var selectedKey: String?
     private var hover: Int?
+    /// The calendar day under the pointer, shown in place of the chosen one.
+    private var hoverKey: String?
     private var tracking: NSTrackingArea?
     private var formatters: [String: DateFormatter] = [:]
     private let cal = Calendar.current
@@ -474,7 +481,7 @@ final class StatsChartView: NSView, NSViewToolTipOwner {
         return min(barCount - 1, Int((p.x - r.minX) / (r.width / CGFloat(barCount))))
     }
 
-    // MARK: hover and tooltips
+    // MARK: the pointer
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -486,28 +493,25 @@ final class StatsChartView: NSView, NSViewToolTipOwner {
     }
 
     override func mouseMoved(with e: NSEvent) {
-        let i = slotIndex(at: convert(e.locationInWindow, from: nil))
+        let p = convert(e.locationInWindow, from: nil)
+        if case .calendar = content {
+            let k = dayKey(at: p)
+            if k != hoverKey { hoverKey = k; needsDisplay = true }
+            return
+        }
+        let i = slotIndex(at: p)
         if i != hover { hover = i; needsDisplay = true }
     }
 
     override func mouseExited(with e: NSEvent) {
-        if hover != nil { hover = nil; needsDisplay = true }
+        if hover != nil || hoverKey != nil { hover = nil; hoverKey = nil; needsDisplay = true }
     }
 
-    override func setFrameSize(_ s: NSSize) { super.setFrameSize(s); rebuildToolTips() }
+    /// For the PNG self-test, which has no pointer: draw bar i as if pointed at.
+    func showHover(bar i: Int?) { hover = i; needsDisplay = true }
 
-    private func rebuildToolTips() {
-        removeAllToolTips()
-        for i in 0..<barCount {
-            let s = slot(i)
-            addToolTip(NSRect(x: s.minX, y: s.minY - 8, width: s.width, height: bounds.height - s.minY + 8),
-                       owner: self, userData: nil)
-        }
-    }
-
-    func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag,
-              point: NSPoint, userData data: UnsafeMutableRawPointer?) -> String {
-        guard let i = slotIndex(at: point) else { return "" }
+    /// What a bar's box says, line by line: what the bar is, then its numbers.
+    private func tipText(_ i: Int) -> String {
         switch content {
         case .days(let bs, let size, let range, let days):
             let b = bs[i]
@@ -578,7 +582,7 @@ final class StatsChartView: NSView, NSViewToolTipOwner {
         case .days(_, let size, _, _): return StatsCore.daysHeading(size)
         case .hours(let p, _): return ("By hour of day", StatsCore.whenText(p.average))
         case .weekdays: return ("By day of the week", "Average day, days off included")
-        case .calendar(let y, _, _, _): return ("Every day of \(y)", "Click a day to see it below")
+        case .calendar(let y, _, _, _): return ("Every day of \(y)", "Point at a day to see it below")
         }
     }
 
@@ -609,6 +613,40 @@ final class StatsChartView: NSView, NSViewToolTipOwner {
             let sz = s.size(withAttributes: a)
             s.draw(at: NSPoint(x: plot.midX - sz.width / 2, y: plot.midY - sz.height / 2), withAttributes: a)
         }
+        if let i = hover, i < b.values.count { drawCallout(i, b) }
+    }
+
+    /// The exact numbers of the bar under the pointer, in a box over it, at
+    /// once. (The system tooltip this replaces waited a second or two, and
+    /// moving along the bars it often never came.)
+    private func drawCallout(_ i: Int, _ b: Bars) {
+        let headA: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+                                                    .foregroundColor: NSColor.labelColor]
+        let bodyA: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11),
+                                                    .foregroundColor: NSColor.secondaryLabelColor]
+        let lines = tipText(i).components(separatedBy: "\n").enumerated().map {
+            NSAttributedString(string: $0.element, attributes: $0.offset == 0 ? headA : bodyA)
+        }
+        guard !lines.isEmpty else { return }
+        let lineH: CGFloat = 15
+        let w = (lines.map { $0.size().width }.max() ?? 0) + 20
+        let h = CGFloat(lines.count) * lineH + 12
+        let s = slot(i)
+        let barTop = b.counted[i] && b.values[i] > 0 ? min(y(b.values[i], b.axis), plot.maxY - 2) : plot.maxY - 6
+        var r = NSRect(x: s.midX - w / 2, y: barTop - 8 - h, width: w, height: h)
+        if r.minY < 6 {
+            // A tall bar has no room above it: beside it instead, at the top.
+            r.origin.y = plot.minY
+            r.origin.x = s.maxX + 6 + w <= bounds.width - 6 ? s.maxX + 6 : s.minX - 6 - w
+        }
+        r.origin.x = min(max(r.minX, 6), bounds.width - 6 - w)
+        let box = NSBezierPath(roundedRect: r, xRadius: 7, yRadius: 7)
+        statsCalloutFill.setFill()
+        box.fill()
+        NSColor.separatorColor.setStroke()
+        box.lineWidth = 1
+        box.stroke()
+        for (n, t) in lines.enumerated() { t.draw(at: NSPoint(x: r.minX + 10, y: r.minY + 6 + CGFloat(n) * lineH)) }
     }
 
     private func y(_ v: Double, _ axis: (top: Double, step: Double)) -> CGFloat {
@@ -826,10 +864,10 @@ final class StatsChartView: NSView, NSViewToolTipOwner {
                 } else {
                     Self.drawNotCounted(r)
                 }
-                if key == selectedKey {
-                    NSColor.labelColor.setStroke()
+                if key == selectedKey || key == hoverKey {
+                    (key == selectedKey ? NSColor.labelColor : NSColor.secondaryLabelColor).setStroke()
                     let ring = NSBezierPath(roundedRect: r.insetBy(dx: -1.5, dy: -1.5), xRadius: 2.5, yRadius: 2.5)
-                    ring.lineWidth = 1.5
+                    ring.lineWidth = key == selectedKey ? 1.5 : 1
                     ring.stroke()
                 }
             }
@@ -851,7 +889,7 @@ final class StatsChartView: NSView, NSViewToolTipOwner {
             x += 13 + s.size(withAttributes: Self.labelA).width + 14
         }
 
-        // The chosen day.
+        // The day under the pointer, else the chosen one.
         let sepY = ly + 22
         NSColor.separatorColor.setFill()
         NSRect(x: pad, y: sepY, width: bounds.width - 2 * pad, height: 1).fill()
@@ -860,8 +898,9 @@ final class StatsChartView: NSView, NSViewToolTipOwner {
                                                     .foregroundColor: NSColor.labelColor]
         let factA: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12),
                                                     .foregroundColor: NSColor.secondaryLabelColor]
-        guard let key = selectedKey, let date = StatsCore.date(ofKey: key) else {
-            ("Click a day to see it here" as NSString).draw(at: NSPoint(x: pad, y: lineY), withAttributes: factA)
+        let shown = hoverKey.flatMap { $0.hasPrefix(String(format: "%04d-", year)) ? $0 : nil } ?? selectedKey
+        guard let key = shown, let date = StatsCore.date(ofKey: key) else {
+            ("Point at a day to see it here" as NSString).draw(at: NSPoint(x: pad, y: lineY), withAttributes: factA)
             return
         }
         let counted = firstKey.map { key >= $0 } == true
@@ -873,17 +912,25 @@ final class StatsChartView: NSView, NSViewToolTipOwner {
                   options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
     }
 
-    override func mouseDown(with e: NSEvent) {
-        guard case .calendar(let year, _, _, let todayKey) = content else { return super.mouseDown(with: e) }
-        let p = convert(e.locationInWindow, from: nil)
+    /// The calendar day under a point: nil between cells and on days still to come.
+    private func dayKey(at p: NSPoint) -> String? {
+        guard case .calendar(let year, _, _, let todayKey) = content else { return nil }
         for m in 1...12 {
             for d in 1...daysInMonth(year, m)
             where cellRect(year, m, d).insetBy(dx: -cellGap / 2, dy: -cellGap / 2).contains(p) {
                 let key = String(format: "%04d-%02d-%02d", year, m, d)
-                // A day still to come has nothing to show.
-                if key <= todayKey, key != selectedKey { selectedKey = key; needsDisplay = true }
-                return
+                return key <= todayKey ? key : nil
             }
+        }
+        return nil
+    }
+
+    /// A click keeps a calendar day in the line below once the pointer leaves.
+    override func mouseDown(with e: NSEvent) {
+        guard case .calendar = content else { return super.mouseDown(with: e) }
+        if let k = dayKey(at: convert(e.locationInWindow, from: nil)), k != selectedKey {
+            selectedKey = k
+            needsDisplay = true
         }
     }
 }

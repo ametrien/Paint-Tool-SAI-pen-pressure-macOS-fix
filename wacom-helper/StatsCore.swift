@@ -803,8 +803,12 @@ extension StatsCore {
     static func averageText(_ s: Double) -> String { s < 60 ? "Under a minute" : duration(s) }
 
     /// A day bar's tooltip, under its date.
+    /// Two lines under the date: time and strokes, then sessions and when.
     static func dayTip(_ d: DayStats?, counted: Bool, heading: String) -> String {
-        heading + "\n" + (counted ? dayFacts(d).joined(separator: ", ") : "Before counting began")
+        guard counted else { return heading + "\nBefore counting began" }
+        let f = dayFacts(d)
+        let rest = f.dropFirst(2).joined(separator: ", ")
+        return heading + "\n" + f.prefix(2).joined(separator: ", ") + (rest.isEmpty ? "" : "\n" + rest)
     }
 
     /// A week or month bar's tooltip, under its dates.

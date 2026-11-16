@@ -27,12 +27,15 @@ and mention it in the release notes.
   the app started counting are left out, so a week of counting reads "2 of 7", not "2 of 30".
 - **The charts have an axis.** Bars are drawn against round hours and minutes, with a line for the
   average, so one minute no longer fills the chart the way five hours did. A month is a bar per
-  day, a year a bar per week, all time a bar per month. Point at a bar to see its numbers.
+  day, a year a bar per week, all time a bar per month.
+- **Point at a bar and its exact numbers show at once,** in a box over it: a day's time to the
+  minute, strokes, sessions and when you drew. The system tooltip used before took a second or
+  two, and moving along the bars it often never came.
 - **Hours** shows an average day you drew, hour by hour, on a fixed 0 to 60 min scale.
   **Weekdays** shows each weekday's average, days off included.
-- **Calendar** colours every day of a year by drawing time and shows each month's total. Click a
-  day to see its time, strokes, sessions and when you drew; the arrows go back to the first year
-  anything was counted.
+- **Calendar** colours every day of a year by drawing time and shows each month's total. Point at
+  a day to see its time, strokes, sessions and when you drew, and click to keep it there; the
+  arrows go back to the first year anything was counted.
 
 ### Fixed
 - **Make video now, then carry on drawing, stays one drawing.** Pressing it ends a recording

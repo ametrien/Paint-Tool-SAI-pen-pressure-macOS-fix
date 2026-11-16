@@ -512,6 +512,12 @@ struct StatsTests {
                "bar tip: before counting began is not the same as nothing drawn")
         expect(StatsCore.dayTip(DayStats(strokes: 340, penSeconds: 1, activeSeconds: 4320), counted: true, heading: "Sat")
                == "Sat\n1 h 12 min, 340 strokes", "bar tip: a day, its facts")
+        expect(StatsCore.dayTip(bestDayStats, counted: true, heading: "Sat")
+               == "Sat\n5 h 12 min, \(StatsCore.strokes(7480))\n3 sessions, 11:27 to 22:41",
+               "bar tip: a full day on two lines, time and strokes first")
+        expect(StatsCore.dayTip(nil, counted: true, heading: "Sat") == "Sat\nNothing drawn"
+               && StatsCore.dayTip(nil, counted: false, heading: "Sat") == "Sat\nBefore counting began",
+               "bar tip: a day off, and a day before counting began")
 
         var words = [StatsCore.notCountedText, StatsCore.nothingInPeriod, StatsCore.daysDrawnDetail(sm),
                      StatsCore.streakDetail(streak: 2, best: 9), StatsCore.averageLabel(.month, 90000),
