@@ -179,6 +179,18 @@ struct SessionSidecar: Codable {
     var height: Int
     var opening: CanvasSignature
     var closing: CanvasSignature
+    /// SAI's own name for the canvas while it is open: the address of its
+    /// struct. Optional, because sidecars written before 2026-11-15 have none.
+    /// Only means anything WITHIN one run of SAI: see LibraryCore.sameRunDrawing.
+    var canvasId: UInt64? = nil
+}
+
+/// A canvas the app has already filed a piece of during THIS run of SAI.
+struct RunCanvas: Codable, Equatable {
+    var drawingId: String
+    var title: String
+    var width: Int
+    var height: Int
 }
 
 // MARK: - the model
@@ -371,6 +383,36 @@ enum LibraryCore {
             return .ask(drawing: best.drawing.id, distance: best.distance)
         }
         return .new
+    }
+}
+
+// MARK: - the same canvas, later in the same run of SAI
+
+extension LibraryCore {
+    /// "Make video now" ends a session while the canvas stays open, so the next
+    /// piece is the SAME canvas a moment later. That is known for certain, and
+    /// needs no pixels: SAI still has it at the same address.
+    ///
+    /// It was decided by fingerprint instead, like a drawing reopened weeks
+    /// later, and that failed exactly here (2026-11-15): one quick scribble
+    /// between two "Make video now" presses changed the canvas more than the
+    /// ladder accepts, so the second piece became a second drawing, each of
+    /// them a video of one frame.
+    ///
+    /// THE TRAP: the address is only an identity while that canvas is open.
+    /// Close it and open another and SAI may hand the new one the same
+    /// address, and a later run of SAI reuses addresses freely. So `known` is
+    /// what THIS run has filed (the app forgets it when SAI starts or ends),
+    /// and the name and size must still be the ones that were filed: a new
+    /// canvas at an old address almost always differs in one of them. Anything
+    /// that does not fit falls through to the fingerprints, which is the safe
+    /// direction: at worst a question, never a silent merge.
+    static func sameRunDrawing(for side: SessionSidecar, known: [UInt64: RunCanvas],
+                               drawings: [Drawing]) -> String? {
+        guard let cid = side.canvasId, cid != 0, let k = known[cid],
+              k.title == side.title, k.width == side.width, k.height == side.height,
+              drawings.contains(where: { $0.id == k.drawingId }) else { return nil }
+        return k.drawingId
     }
 }
 

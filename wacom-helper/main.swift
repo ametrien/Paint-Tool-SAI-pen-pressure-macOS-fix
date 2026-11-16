@@ -760,7 +760,12 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         // open meant nothing was recorded for the rest of that session — and
         // nothing said so. This also brings it back if it died on its own.
         if let p = g_liveEncoder, !p.isRunning { g_liveEncoder = nil }
-        if g_liveEncoder == nil, timelapseRecordingEnabled(), saiWindowIsOpen() {
+        // Not while "Make video now" is at work: it stopped the encoder on
+        // purpose, to stitch the segments, and starts it again itself when it
+        // is done. A watcher started in between opens a new segment in the
+        // folder being stitched (seen in the log on 2026-11-15: "stopped",
+        // "started", and only then "finalize exited").
+        if g_liveEncoder == nil, !libMakingVideo, timelapseRecordingEnabled(), saiWindowIsOpen() {
             startLiveEncoder()
         }
         // A window nobody can see has nothing to refresh. While you draw, this

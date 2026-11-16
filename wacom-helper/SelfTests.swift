@@ -429,7 +429,23 @@ func runSelfTestIfAsked() {
     if let dir = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_LIBRARY"] {
         let store = LibraryStore(videosDir: dir, indexPath: dir + "/.library.json")
         if store.recoveredFromBrokenIndex { print("recovered from a broken index") }
-        for f in store.fileFinishedSessions() {
+        // SAIPP_SELFTEST_RUNMAP names a file that stands in for the app's
+        // memory of this run of SAI: read before filing, written after. With
+        // it, two runs of this hook are one run of SAI; without it, each is a
+        // new one.
+        let mapPath = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_RUNMAP"]
+        var known: [UInt64: RunCanvas] = [:]
+        if let mapPath, let data = FileManager.default.contents(atPath: mapPath),
+           let m = try? JSONDecoder().decode([String: RunCanvas].self, from: data) {
+            for (k, v) in m { if let id = UInt64(k) { known[id] = v } }
+        }
+        let filedNow = store.fileFinishedSessions(sameRun: known)
+        if let mapPath {
+            for f in filedNow { if let id = f.canvasId, let c = f.canvas { known[id] = c } }
+            let out = Dictionary(uniqueKeysWithValues: known.map { (String($0.key), $0.value) })
+            try? JSONEncoder().encode(out).write(to: URL(fileURLWithPath: mapPath))
+        }
+        for f in filedNow {
             let d = store.lib.drawing(id: f.drawingId)
             print("filed \(f.pieceFile) -> \(d?.folder ?? "?")"
                   + (f.askAbout.map { " ask:\(store.lib.drawing(id: $0)?.folder ?? "?")" } ?? ""))

@@ -67,6 +67,26 @@ func makeLibraryStore() -> LibraryStore {
     }
     return LibraryStore(videosDir: timelapseOutputFolder(), indexPath: path)
 }
+/// The canvases this run of SAI has already had a piece filed from, so the next
+/// piece of the same open canvas joins the same drawing ("Make video now", then
+/// carry on drawing). Forgotten when SAI starts and when it ends, because a
+/// canvas id is an address and the next run reuses addresses.
+var g_runCanvases: [UInt64: RunCanvas] = [:]
+let g_runCanvasesLock = NSLock()
+func forgetRunCanvases() {
+    g_runCanvasesLock.lock(); g_runCanvases = [:]; g_runCanvasesLock.unlock()
+}
+/// File what is in staging, knowing which canvases are still the same ones.
+/// Every filing in the app goes through here; LibraryStore's own call is for
+/// the tests.
+func fileSessionsOfThisRun(_ store: LibraryStore) -> [LibraryStore.Filed] {
+    g_runCanvasesLock.lock(); defer { g_runCanvasesLock.unlock() }
+    let filed = store.fileFinishedSessions(sameRun: g_runCanvases)
+    for f in filed {
+        if let id = f.canvasId, id != 0, let c = f.canvas { g_runCanvases[id] = c }
+    }
+    return filed
+}
 /// File whatever sessions have just finished, then rebuild the drawings they
 /// landed in. Returns a one-line summary for the log.
 ///
@@ -78,7 +98,7 @@ func fileAndRebuildSessions() -> String {
     guard let res = Bundle.main.resourcePath else { return "" }
     let enc = "\(res)/sai-timelapse-encoder"
     let store = makeLibraryStore()
-    let filed = store.fileFinishedSessions()
+    let filed = fileSessionsOfThisRun(store)
     guard !filed.isEmpty else { return "" }
     for id in Set(filed.map(\.drawingId)) { store.rebuild(id, encoder: enc) }
     let asks = filed.filter { $0.askAbout != nil }.count
@@ -367,12 +387,14 @@ func launchSAIApp() {
     // 0 to its settle time, so SAI still finishes the stroke first.
     if e["WT_TIMELAPSE_QUIET_MS"] == nil, timelapseEveryStroke() { e["WT_TIMELAPSE_QUIET_MS"] = "0" }
     p.environment = e
+    forgetRunCanvases()           // a new SAI: its canvas ids mean nothing yet
     startLiveEncoder()
     p.terminationHandler = { proc in
         wlog("launch: the Wine process started for SAI (pid \(proc.processIdentifier)) has ended, status \(proc.terminationStatus)")
         try? "0".write(toFile: pf, atomically: true, encoding: .ascii)
         stopLiveEncoder()
         finalizeTimelapseNow()
+        forgetRunCanvases()       // filed above with them; the next run starts clean
         // The process we spawned exiting does NOT always mean SAI closed — Wine
         // can hand off to another process and let this one exit immediately,
         // which used to make us quit while SAI was still on screen. Only exit

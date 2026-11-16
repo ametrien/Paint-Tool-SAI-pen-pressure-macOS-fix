@@ -62,7 +62,7 @@ extension SetupController {
             // drawing's video. What somebody wants to see afterwards is the
             // whole drawing so far, not tonight's fragment of it.
             let store = makeLibraryStore()
-            let filed = store.fileFinishedSessions()
+            let filed = fileSessionsOfThisRun(store)
             for id in Set(filed.map(\.drawingId)) { store.rebuild(id, encoder: enc) }
             let made = filed.compactMap { store.lib.drawing(id: $0.drawingId) }
                 .map { store.videoURL($0).path }

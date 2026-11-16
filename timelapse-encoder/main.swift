@@ -306,6 +306,9 @@ final class LiveWriter {
     /// The canvas name as SAI reported it, kept verbatim for the library. The
     /// `label` is the filename-safe version and is not interchangeable with it.
     var title = ""
+    /// SAI's id for this canvas, passed on in the sidecar so the app can tell
+    /// that the next piece is the same canvas, still open.
+    var canvasId: UInt64?
 
     /// Frames already inside earlier segments of this same session, from a
     /// previous run of the encoder over the same output base.
@@ -329,6 +332,7 @@ final class LiveWriter {
             closing = prev.closing
             startedAt = prev.startedAt
             title = prev.title
+            canvasId = prev.canvasId
             priorFrames = prev.frames
         }
     }
@@ -399,7 +403,7 @@ final class LiveWriter {
         let url = base.deletingLastPathComponent().appendingPathComponent("\(name).json")
         let side = SessionSidecar(title: title, startedAt: startedAt, frames: priorFrames + total,
                                   width: closing.width, height: closing.height,
-                                  opening: opening, closing: closing)
+                                  opening: opening, closing: closing, canvasId: canvasId)
         guard let data = try? sidecarEncoder.encode(side) else { return }
         try? data.write(to: url, options: .atomic)
     }
@@ -444,6 +448,7 @@ func liveConsume(_ files: [URL]) {
             let nw = LiveWriter(base: URL(fileURLWithPath: outPath), label: label,
                                 fps: fps, maxFramesPerSegment: segmentFrames > 0 ? segmentFrames : 500)
             nw.title = hdr.name
+            nw.canvasId = hdr.canvasId
             liveWriters[hdr.canvasId] = nw
             return nw
         }()

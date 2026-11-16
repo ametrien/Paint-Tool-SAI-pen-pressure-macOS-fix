@@ -521,6 +521,62 @@ do {
     expect(bytes < 8_000, "persistence: one drawing costs well under 8 KB of index")
 }
 
+// MARK: - the same canvas, later in the same run of SAI
+
+do {
+    // "Make video now", a quick scribble, "Make video now" again: the second
+    // piece opens on a canvas that looks nothing like where the first left it.
+    let before = sig(drawnCanvas(seed: 1, strokes: 2))
+    let after = sig(drawnCanvas(seed: 1, strokes: 40))
+    var lib = Library()
+    let id = lib.addDrawing(title: "NewCanvas1", path: nil,
+                            piece: piece("a.mp4", day: 0, opening: before, closing: before))
+    func side(_ title: String, _ w: Int, _ h: Int, _ cid: UInt64?) -> SessionSidecar {
+        SessionSidecar(title: title, startedAt: Date(), frames: 1, width: w, height: h,
+                       opening: after, closing: after, canvasId: cid)
+    }
+    let known: [UInt64: RunCanvas] = [0xF00D: RunCanvas(drawingId: id, title: "NewCanvas1", width: 200, height: 150)]
+
+    // THE BUG (2026-11-15): by pixels alone this is not the same drawing, so
+    // the second piece became a second video. This is the control: if the
+    // fingerprints ever DO accept it, the test below proves nothing.
+    let byPixels = LibraryCore.classify(opening: after, title: "NewCanvas1", path: nil,
+                                        candidates: lib.drawings, sessionFile: "b.mp4", declined: lib)
+    expect(byPixels != .same(id), "same run: the pixels alone would NOT join these two pieces")
+    expect(LibraryCore.sameRunDrawing(for: side("NewCanvas1", 200, 150, 0xF00D), known: known,
+                                      drawings: lib.drawings) == id,
+           "same run: the same open canvas joins its drawing, whatever was drawn in between")
+    // THE TRAP: the id is an address. Every way it can point at another
+    // canvas must fall through to the fingerprints.
+    expect(LibraryCore.sameRunDrawing(for: side("NewCanvas1", 200, 150, 0xF00D), known: [:],
+                                      drawings: lib.drawings) == nil,
+           "same run: another run of SAI knows nothing, so the id decides nothing")
+    expect(LibraryCore.sameRunDrawing(for: side("NewCanvas2", 200, 150, 0xF00D), known: known,
+                                      drawings: lib.drawings) == nil,
+           "same run: a canvas with another name at the same address is not joined")
+    expect(LibraryCore.sameRunDrawing(for: side("NewCanvas1", 400, 150, 0xF00D), known: known,
+                                      drawings: lib.drawings) == nil,
+           "same run: a canvas of another size at the same address is not joined")
+    expect(LibraryCore.sameRunDrawing(for: side("NewCanvas1", 200, 150, 0xBEEF), known: known,
+                                      drawings: lib.drawings) == nil,
+           "same run: another canvas open at the same time is not joined")
+    expect(LibraryCore.sameRunDrawing(for: side("NewCanvas1", 200, 150, nil), known: known,
+                                      drawings: lib.drawings) == nil,
+           "same run: an old sidecar with no canvas id falls back to the pixels")
+    expect(LibraryCore.sameRunDrawing(for: side("NewCanvas1", 200, 150, 0xF00D), known: known,
+                                      drawings: []) == nil,
+           "same run: a drawing deleted in the meantime is not joined")
+    // A sidecar written before the id existed must still be readable, or
+    // every session waiting in staging from an older build is stranded.
+    let old = #"{"title":"S","startedAt":"2026-07-29T10:00:00Z","frames":3,"width":64,"height":48,"opening":{"cells":[],"width":0,"height":0},"closing":{"cells":[],"width":0,"height":0}}"#
+    let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
+    let decoded = try? dec.decode(SessionSidecar.self, from: Data(old.utf8))
+    expect(decoded != nil && decoded?.canvasId == nil, "same run: a sidecar from an older build still reads")
+    let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601
+    let round = (try? enc.encode(side("S", 1, 1, 0xFFFF_FFFF_FFFF_FFF0))).flatMap { try? dec.decode(SessionSidecar.self, from: $0) }
+    expect(round?.canvasId == 0xFFFF_FFFF_FFFF_FFF0, "same run: a 64-bit canvas id survives the sidecar unchanged")
+}
+
 // MARK: - what is being recorded right now
 
 do {

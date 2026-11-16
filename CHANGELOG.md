@@ -20,6 +20,18 @@ and mention it in the release notes.
   changes between the start and the end of a recording. The dot is faded by the window server,
   and stays still with Reduce Motion on.
 
+### Fixed
+- **Make video now, then carry on drawing, stays one drawing.** Pressing it ends a recording
+  session while the canvas stays open, and the next piece was matched by how the canvas looked,
+  as if the drawing had been reopened weeks later. A few quick strokes between two presses
+  changed it too much for that, so each press started a new drawing holding a video of one
+  frame. The app now remembers which canvas it filed while SAI is open, so the next piece of the
+  same canvas joins the same drawing whatever was drawn in between. Once SAI closes this is
+  forgotten, and drawings are matched by how they look, as before.
+- **Recording no longer restarts in the middle of Make video now.** The once-a-second check could
+  start the encoder again while the video was still being stitched, so frames from those
+  seconds could miss the video.
+
 ## [0.3.15] — 2026-11-15
 
 ### Added

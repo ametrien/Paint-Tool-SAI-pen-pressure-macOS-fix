@@ -142,6 +142,10 @@ final class LibraryStore {
         /// Set when this looked like a continuation but not certainly enough to
         /// merge on its own — the library will ask.
         let askAbout: String?
+        /// The canvas this piece came from, for the app to remember until SAI
+        /// closes. nil for a sidecar that carries no canvas id.
+        var canvasId: UInt64? = nil
+        var canvas: RunCanvas? = nil
     }
 
     /// Take the finished pieces the encoder left in staging and put each one
@@ -152,8 +156,12 @@ final class LibraryStore {
     /// attempted — so a crash leaves either a piece still in staging (picked up
     /// next time) or a piece filed and recorded, never a piece recorded in a
     /// place it isn't.
+    ///
+    /// `sameRun` is what this run of SAI has already filed, by canvas id. A
+    /// piece of a canvas in it joins that drawing without asking the pixels:
+    /// see LibraryCore.sameRunDrawing.
     @discardableResult
-    func fileFinishedSessions() -> [Filed] {
+    func fileFinishedSessions(sameRun: [UInt64: RunCanvas] = [:]) -> [Filed] {
         let fm = FileManager.default
         let staging = stagingDir
         let names = ((try? fm.contentsOfDirectory(atPath: staging)) ?? [])
@@ -177,9 +185,14 @@ final class LibraryStore {
             let piece = Piece(file: "", startedAt: side.startedAt, frames: side.frames,
                               width: side.width, height: side.height,
                               opening: side.opening, closing: side.closing)
-            let match = LibraryCore.classify(opening: side.opening, title: side.title,
+            let match: Match
+            if let id = LibraryCore.sameRunDrawing(for: side, known: sameRun, drawings: lib.drawings) {
+                match = .same(id)
+            } else {
+                match = LibraryCore.classify(opening: side.opening, title: side.title,
                                              path: nil, candidates: lib.drawings,
                                              sessionFile: n, declined: lib)
+            }
 
             var target: String
             var askAbout: String?
@@ -234,7 +247,10 @@ final class LibraryStore {
                                            candidateId: candidate, askedAt: Date()))
             }
             filed.append(Filed(drawingId: target, title: drawing.title,
-                               pieceFile: filedName, askAbout: askAbout))
+                               pieceFile: filedName, askAbout: askAbout,
+                               canvasId: side.canvasId,
+                               canvas: RunCanvas(drawingId: target, title: side.title,
+                                                 width: side.width, height: side.height)))
         }
         if !filed.isEmpty { save() }
         return filed

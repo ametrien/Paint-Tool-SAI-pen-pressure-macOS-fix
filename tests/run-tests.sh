@@ -1366,6 +1366,52 @@ probe=$("$WORK/enc-live" --probe "$E2E/videos/$folder/$folder.mp4" 2>/dev/null)
 echo "All end-to-end tests passed."
 
 echo ""
+echo "== Make video now, keep drawing, Make video now: still one drawing =="
+# Found on 2026-11-15: "Make video now" ends a session while the canvas stays
+# open. The next piece was matched by fingerprint, like a drawing reopened
+# weeks later, and a quick scribble in between changed the canvas too much for
+# that. So each press made a NEW drawing holding a video of one frame.
+# The real encoder writes the canvas id into the sidecar; the real filing code
+# reads it. RUNMAP stands in for the app's memory of this run of SAI.
+MV="$WORK/makenow"; mkdir -p "$MV/videos/.recording" "$MV/frames"
+mv_fail=0
+press() {  # first last stamp runmap|-
+  rm -f "$MV/videos/.recording"/*
+  mkart "$1" "$2" F00D NewCanvas1 64 48 "$MV/frames"
+  "$WORK/enc-live" --frames "$MV/frames" \
+      --out "$MV/videos/.recording/session $3.mp4" --fps 5 --finalize >/dev/null 2>&1
+  if [ "$4" = "-" ]; then TZ=UTC SAIPP_SELFTEST_LIBRARY="$MV/videos" "$WORK/helper-lib"
+  else TZ=UTC SAIPP_SELFTEST_RUNMAP="$4" SAIPP_SELFTEST_LIBRARY="$MV/videos" "$WORK/helper-lib"; fi
+}
+press 1 2 "2026-11-15 1631" "$MV/run.json" > /dev/null
+grep -q '"canvasId"' "$MV/run.json" 2>/dev/null || true
+# The encoder must have passed the id on, or the app has nothing to go by.
+[ -s "$MV/run.json" ] && grep -q "$(printf '%d' 0xF00D)" "$MV/run.json" \
+  && echo "  ok   make-now: the encoder passes SAI's canvas id on to the app" \
+  || { echo "  FAIL make-now: no canvas id reached the app: $(cat "$MV/run.json" 2>/dev/null)"; mv_fail=1; }
+# A big jump: 2 marks, then 40. By pixels this is not the same drawing.
+out=$(press 3 40 "2026-11-15 1632" "$MV/run.json")
+n=$(echo "$out" | grep -c "^drawing ")
+pieces=$(echo "$out" | grep "^drawing " | head -1 | sed 's/.*]: //')
+# (Piece names come from when the encoder ran, not from the session name, so
+# they are counted rather than spelled out.)
+np=$(echo "$pieces" | tr ',' '\n' | grep -c 'mp4')
+[ "$n" = "1" ] && [ "$np" = "2" ] \
+  && echo "  ok   make-now: the second press joins the same drawing, both pieces in it" \
+  || { echo "  FAIL make-now: $n drawing(s):"; echo "$out"; mv_fail=1; }
+# THE CONTROL: the same two pieces with no memory of the run (a new run of
+# SAI) must NOT be joined by the id. If this ever reads one drawing, the
+# fingerprints accept the jump on their own and the test above proves nothing.
+rm -rf "$MV/videos"; mkdir -p "$MV/videos/.recording"
+press 1 2 "2026-11-15 1631" - > /dev/null
+out=$(press 3 40 "2026-11-15 1632" -)
+[ "$(echo "$out" | grep -c '^drawing ')" = "2" ] \
+  && echo "  ok   make-now: control: without this run's memory they stay two drawings" \
+  || { echo "  FAIL make-now: control joined them anyway, so the test above proves nothing:"; echo "$out"; mv_fail=1; }
+[ "$mv_fail" = 0 ] || exit 1
+echo "All make-now tests passed."
+
+echo ""
 echo "== The Timelapses tab actually lays out =="
 # It shipped BLANK: every row built, added and unhidden — and drawn at zero
 # size, because a stack view used as a scroll view's documentView is laid out by
