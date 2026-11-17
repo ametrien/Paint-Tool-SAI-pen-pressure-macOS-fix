@@ -524,8 +524,58 @@ struct StatsTests {
                "hour tip: the last hour ends at 00:00, not 24:00")
         expect(StatsCore.hourTip(HourProfile(), hour: 9) == "09:00 to 10:00\nNo hours counted in this period",
                "hour tip: no days with hours")
-        expect(StatsCore.hoursNote(prof) == "Average of the 2 days you drew. An hour holds 60 min at most."
-               && StatsCore.hoursNote(HourProfile()) == nil, "hours: what the bars are an average of")
+        expect(StatsCore.hoursNote(prof, period: .week, firstText: "13 Nov", sameAsAll: false)
+                   == "Average of the 2 days you drew in the last 7 days."
+               && StatsCore.hoursNote(HourProfile(), period: .week, firstText: "13 Nov", sameAsAll: false) == nil,
+               "hours: what the bars are an average of, and over when")
+
+        // --- a period click must change something you can see ---------------
+        // THE TRAP: Hours had a fixed 0 to 60 min axis and a note that did not
+        // name the period. With a few minutes a day the bars were a few pixels
+        // high, every period drew the same, and the buttons looked broken.
+        expect(StatsCore.hourAxis(max: 180) == (180, 60),
+               "hours axis: an average of 3 min in the busiest hour is drawn on 0 to 3 min, not 0 to 60")
+        expect(StatsCore.hourAxis(max: 2700) == (3000, 600) && StatsCore.hourAxis(max: 3600) == (3600, 600),
+               "hours axis: 45 min on 0 to 50 min, a full hour on 0 to 60 min")
+        expect(StatsCore.hourAxis(max: 5000) == (3600, 600), "hours axis: never above 60 min, an hour holds no more")
+        expect(StatsCore.hourAxis(max: 0) == StatsCore.timeAxis(max: 0), "hours axis: nothing yet, as the other charts")
+        let notes = StatsPeriod.allCases.map {
+            StatsCore.hoursNote(prof, period: $0, firstText: "13 Nov", sameAsAll: $0 != .all)!
+        }
+        expect(Set(notes).count == 4, "hours note: different on every period, even with the same days in all of them")
+        expect(notes[3] == "Average of the 2 days you drew since 13 Nov.", "hours note: All time says since when")
+        expect(notes[0] == "Average of the 2 days you drew in the last 7 days. Counting began 13 Nov, so this is the same as All time.",
+               "hours note: says why a period looks like All time")
+        expect(StatsCore.hoursNote(HourProfile(average: hA, days: 1, daysWithHour: Array(repeating: 0, count: 24)),
+                                   period: .month, firstText: nil, sameAsAll: false) == "The one day you drew in the last 30 days.",
+               "hours note: one day")
+        let wNotes = StatsPeriod.allCases.map {
+            StatsCore.weekdaysNote(avgs, period: $0, firstText: "2 Nov", sameAsAll: false)!
+        }
+        expect(Set(wNotes).count == 4 && wNotes[2] == "Each weekday's average in the last 365 days.",
+               "weekdays note: names the period")
+        expect(StatsCore.weekdaysNote(avgs.map { var w = $0; w.count = 0; return w }, period: .week,
+                                      firstText: "2 Nov", sameAsAll: false) == nil,
+               "weekdays note: none when no weekday was counted (the chart says so itself)")
+        // When does a period hold the same days as All time? Counting began
+        // Mon 2 Nov; today is Mon 16 Nov.
+        let since2: [String: DayStats] = [key(2026, 11, 2): drawn(600)]
+        func same(_ p: StatsPeriod) -> Bool {
+            StatsCore.sameAsAllTime(p, range: StatsCore.range(p, today: nov16, days: since2, calendar: utc),
+                                    days: since2, calendar: utc)
+        }
+        expect(!same(.week), "same as All time: the last 7 days began after counting did, so the week differs")
+        expect(same(.month) && same(.year), "same as All time: counting began inside the month and the year")
+        expect(!same(.all), "same as All time: All time is not said to be the same as itself")
+        expect(!StatsCore.sameAsAllTime(.month, range: StatsCore.range(.month, today: nov16, days: [:], calendar: utc),
+                                        days: [:], calendar: utc), "same as All time: nothing counted, nothing said")
+        let started16: [String: DayStats] = [key(2026, 11, 16): drawn(60)]
+        expect(StatsCore.sameAsAllTime(.week, range: StatsCore.range(.week, today: nov16, days: started16, calendar: utc),
+                                       days: started16, calendar: utc), "same as All time: counting began today")
+        let started10: [String: DayStats] = [key(2026, 11, 10): drawn(60)]
+        expect(!StatsCore.sameAsAllTime(.week, range: StatsCore.range(.week, today: nov16, days: started10, calendar: utc),
+                                        days: started10, calendar: utc),
+               "same as All time: counting began on the week's first day, so nothing in it is left out")
         expect(StatsCore.hoursEmpty(prof, daysDrawn: 3) == nil
                && StatsCore.hoursEmpty(HourProfile(), daysDrawn: 3) == "Hours were not counted yet on these days"
                && StatsCore.hoursEmpty(HourProfile(), daysDrawn: 0) == StatsCore.nothingInPeriod,
@@ -548,8 +598,8 @@ struct StatsTests {
 
         var words = [StatsCore.notCountedText, StatsCore.nothingInPeriod, StatsCore.daysDrawnDetail(sm),
                      StatsCore.streakDetail(streak: 2, best: 9), StatsCore.averageLabel(.month, 90000),
-                     StatsCore.hourTip(prof, hour: 21), StatsCore.hourTip(prof, hour: 23), StatsCore.hoursNote(prof)!,
-                     StatsCore.weekdayTip(sat), StatsCore.bucketTip(wkBar, heading: "")]
+                     StatsCore.hourTip(prof, hour: 21), StatsCore.hourTip(prof, hour: 23),
+                     StatsCore.weekdayTip(sat), StatsCore.bucketTip(wkBar, heading: "")] + notes + wNotes
         words += StatsBucketSize.allCases.flatMap { [StatsCore.daysHeading($0).title, StatsCore.daysHeading($0).note] }
         words += StatsCore.weekdayShort + StatsCore.weekdayMany
         for t in words { expect(!t.contains("\u{2014}") && !t.contains("\u{2013}"), "text: no dash in \"\(t)\"") }

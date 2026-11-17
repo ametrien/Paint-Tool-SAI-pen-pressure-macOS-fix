@@ -282,15 +282,30 @@ extension SetupController {
         t[3].setValue(StatsCore.streakParts(streak))
         t[3].detail = StatsCore.streakDetail(streak: streak, best: StatsCore.longestStreak(days)?.length)
 
+        // The first counted day as the footer writes it ("15 Nov"), for the
+        // notes under the Hours and Weekdays charts.
+        let thisYear = Calendar.current.component(.year, from: now)
+        func short(_ key: String) -> String? {
+            guard let d = StatsCore.date(ofKey: key) else { return nil }
+            let f = DateFormatter()
+            f.setLocalizedDateFormatFromTemplate(Calendar.current.component(.year, from: d) == thisYear ? "MMMd" : "yMMMd")
+            return f.string(from: d)
+        }
+        let firstText = StatsCore.firstCountedKey(days).flatMap(short)
+        let same = StatsCore.sameAsAllTime(period, range: range, days: days)
+
         switch page {
         case .days:
             let size = StatsCore.bucketSize(range)
             chart.content = .days(buckets: StatsCore.buckets(days, range: range, size: size),
                                   size: size, range: range, days: days)
         case .hours:
-            chart.content = .hours(StatsCore.hourProfile(days, range: range), daysDrawn: sum.daysDrawn)
+            let p = StatsCore.hourProfile(days, range: range)
+            chart.content = .hours(p, daysDrawn: sum.daysDrawn,
+                                   note: StatsCore.hoursNote(p, period: period, firstText: firstText, sameAsAll: same))
         case .weekdays:
-            chart.content = .weekdays(StatsCore.weekdayAverages(days, range: range))
+            let w = StatsCore.weekdayAverages(days, range: range)
+            chart.content = .weekdays(w, note: StatsCore.weekdaysNote(w, period: period, firstText: firstText, sameAsAll: same))
         case .calendar:
             chart.content = .calendar(year: statsYear, days: days, firstKey: StatsCore.firstCountedKey(days),
                                       todayKey: StatsCore.dayKey(now))
@@ -300,13 +315,6 @@ extension SetupController {
         if all.strokes == 0 {
             statsFooter.stringValue = "Nothing counted yet. Draw in SAI and it shows up here."
         } else {
-            let thisYear = Calendar.current.component(.year, from: now)
-            func short(_ key: String) -> String? {
-                guard let d = StatsCore.date(ofKey: key) else { return nil }
-                let f = DateFormatter()
-                f.setLocalizedDateFormatFromTemplate(Calendar.current.component(.year, from: d) == thisYear ? "MMMd" : "yMMMd")
-                return f.string(from: d)
-            }
             var text = "All time: \(StatsCore.duration(all.activeSeconds))"
             if let first = StatsCore.firstCountedKey(days).flatMap(short) { text += " since \(first)" }
             if let best = StatsCore.bestDay(days), let d = short(best.key) {
@@ -396,8 +404,10 @@ final class StatsChartView: NSView {
         /// The bars, what one bar stands for, the range they cover, and the
         /// counted days (a day bar's tooltip shows that day's facts).
         case days(buckets: [StatsBucket], size: StatsBucketSize, range: DayRange, days: [String: DayStats])
-        case hours(HourProfile, daysDrawn: Int)
-        case weekdays([WeekdayAverage])
+        /// The note under the chart names the period, so it changes on every
+        /// period click even when the bars do not.
+        case hours(HourProfile, daysDrawn: Int, note: String?)
+        case weekdays([WeekdayAverage], note: String?)
         case calendar(year: Int, days: [String: DayStats], firstKey: String?, todayKey: String)
     }
 
@@ -454,7 +464,7 @@ final class StatsChartView: NSView {
         switch content {
         case .days(let b, _, _, _): return b.count
         case .hours: return 24
-        case .weekdays(let w): return w.count
+        case .weekdays(let w, _): return w.count
         default: return 0
         }
     }
@@ -463,8 +473,9 @@ final class StatsChartView: NSView {
     private var plot: NSRect {
         var below: CGFloat = 26
         // Hours: the hour numbers, the parts of the day, then the note.
+        // Weekdays: the day, its average, then the note.
         if case .hours = content { below = 64 }
-        if case .weekdays = content { below = 36 }
+        if case .weekdays = content { below = 64 }
         let top: CGFloat = 44
         return NSRect(x: pad + axisW, y: top, width: bounds.width - 2 * pad - axisW,
                       height: bounds.height - top - below)
@@ -527,8 +538,8 @@ final class StatsChartView: NSView {
             case .month:
                 return StatsCore.bucketTip(b, heading: format(b.start, "yMMMM"))
             }
-        case .hours(let p, _): return StatsCore.hourTip(p, hour: i)
-        case .weekdays(let w): return StatsCore.weekdayTip(w[i])
+        case .hours(let p, _, _): return StatsCore.hourTip(p, hour: i)
+        case .weekdays(let w, _): return StatsCore.weekdayTip(w[i])
         default: return ""
         }
     }
@@ -557,15 +568,14 @@ final class StatsChartView: NSView {
                         axis: StatsCore.timeAxis(max: v.max() ?? 0), axisText: StatsCore.axisLabel,
                         average: avg, averageText: avg.map { StatsCore.averageLabel(size, $0) },
                         empty: avg == nil ? StatsCore.nothingInPeriod : nil)
-        case .hours(let p, let drawn):
-            // Fixed at 0 to 60 min: an hour holds no more, so a bar's height
-            // means the same on every period.
+        case .hours(let p, let drawn, _):
+            // From the tallest bar, never above 60 min: see StatsCore.hourAxis.
             let top = p.average.max() ?? 0
             return Bars(values: p.average, counted: Array(repeating: true, count: 24),
                         strong: top > 0 ? p.average.firstIndex(of: top) : nil,
-                        axis: (3600, 900), axisText: { $0 <= 0 ? "0" : "\(Int($0 / 60)) min" },
+                        axis: StatsCore.hourAxis(max: top), axisText: StatsCore.axisLabel,
                         average: nil, averageText: nil, empty: StatsCore.hoursEmpty(p, daysDrawn: drawn))
-        case .weekdays(let w):
+        case .weekdays(let w, _):
             let v = w.map { $0.average }
             let top = v.max() ?? 0
             return Bars(values: v, counted: w.map { $0.count > 0 }, strong: top > 0 ? v.firstIndex(of: top) : nil,
@@ -580,7 +590,7 @@ final class StatsChartView: NSView {
         switch content {
         case .none: return ("", nil)
         case .days(_, let size, _, _): return StatsCore.daysHeading(size)
-        case .hours(let p, _): return ("By hour of day", StatsCore.whenText(p.average))
+        case .hours(let p, _, _): return ("By hour of day", StatsCore.whenText(p.average))
         case .weekdays: return ("By day of the week", "Average day, days off included")
         case .calendar(let y, _, _, _): return ("Every day of \(y)", "Point at a day to see it below")
         }
@@ -754,7 +764,7 @@ final class StatsChartView: NSView {
     /// Every third hour is labelled: 24 numbers side by side do not fit.
     /// Under them, where the day turns; at the bottom, what the bars are.
     private func drawHourLabels() {
-        guard case .hours(let p, _) = content else { return }
+        guard case .hours(_, _, let note) = content else { return }
         placeLabels(stride(from: 0, to: 24, by: 3).map { ($0, String(format: "%02d", $0), false) }, y: plot.maxY + 6)
         for (from, to, name) in [(0, 5, "night"), (5, 12, "morning"), (12, 17, "afternoon"), (17, 22, "evening")] {
             let mid = (slot(from).minX + slot(to - 1).maxX) / 2
@@ -762,16 +772,12 @@ final class StatsChartView: NSView {
             let sz = s.size(withAttributes: Self.smallA)
             s.draw(at: NSPoint(x: mid - sz.width / 2, y: plot.maxY + 20), withAttributes: Self.smallA)
         }
-        if let note = StatsCore.hoursNote(p) {
-            let s = note as NSString
-            s.draw(at: NSPoint(x: pad, y: bounds.height - 12 - s.size(withAttributes: Self.noteA).height),
-                   withAttributes: Self.noteA)
-        }
+        drawNote(note)
     }
 
     /// The weekday, and its average under it.
     private func drawWeekdayLabels(strong: Int?) {
-        guard case .weekdays(let w) = content else { return }
+        guard case .weekdays(let w, let note) = content else { return }
         for (i, d) in w.enumerated() {
             let s = slot(i)
             let name = StatsCore.weekdayShort[max(0, min(6, d.weekday - 1))] as NSString
@@ -783,6 +789,15 @@ final class StatsChartView: NSView {
             let vsz = v.size(withAttributes: Self.noteA)
             v.draw(at: NSPoint(x: s.midX - vsz.width / 2, y: plot.maxY + 6 + nsz.height), withAttributes: Self.noteA)
         }
+        drawNote(note)
+    }
+
+    /// The grey line at the bottom of the card, under the labels.
+    private func drawNote(_ note: String?) {
+        guard let note = note else { return }
+        let s = note as NSString
+        s.draw(at: NSPoint(x: pad, y: bounds.height - 12 - s.size(withAttributes: Self.noteA).height),
+               withAttributes: Self.noteA)
     }
 
     // MARK: Calendar page
