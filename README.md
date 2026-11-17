@@ -27,6 +27,9 @@ canvas** while you draw. Free and open source.
 - **A pen tablet that macOS itself recognises.** The app reads the standard tablet events macOS
   gives every app, so nothing in it is tied to one tablet.
 - **Your own copy of PaintTool SAI Ver.2**, and a licence from SYSTEMAX if you want to save.
+  Download SAI from the [official SAI Ver.2 page](https://www.systemax.jp/en/sai/devdept.html):
+  take a **64bit** ZIP and unzip it. The [licence](https://www.systemax.jp/en/license.html) is
+  needed only to save; drawing and pen pressure work without it.
 
 Wine is installed for you during setup.
 
