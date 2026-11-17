@@ -48,4 +48,5 @@ wacom-helper/WineStatusCore.swift
 wacom-helper/WineUI.swift
 wacom-helper/StatsCore.swift
 wacom-helper/StatsUI.swift
+wacom-helper/StatsViews.swift
 timelapse-encoder/LibraryCore.swift
