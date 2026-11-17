@@ -32,7 +32,7 @@ Wine is installed for you during setup.
 
 Users have reported it working on:
 
-- Macs: **M5 MacBook Air** and **M3 Pro MacBook Pro**, on **macOS Tahoe 26**
+- Macs: **M5 MacBook Air** and **M3 Pro MacBook Pro** on **macOS Tahoe 26**, and **M1 Pro MacBook Pro**
 - Tablets: **Wacom Intuos S**, over USB and Bluetooth (CTL-4100 and CTL-4100WL)
 - Displays: one screen, two screens mirrored, two screens extended, a screen connected while SAI is
   open, and an external LG UltraFine
