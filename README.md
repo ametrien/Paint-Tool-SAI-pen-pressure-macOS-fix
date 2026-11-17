@@ -35,7 +35,7 @@ Wine is installed for you during setup.
 
 **SAI Ver.2 (free download)**
 
-1. Open the official page: **[systemax.jp/en/sai/devdept.html](https://www.systemax.jp/en/sai/devdept.html)**.
+1. Open the official page: **[systemax.jp/en/sai/devdept.html](https://www.systemax.jp/en/sai/devdept.html)**
 2. Download a **SAI Ver.2 64bit** ZIP (its file name ends in `64bit-en.zip`). Not 32bit, and not
    *SAI Ver.1*, which is an `.exe` installer.
 3. Unzip it anywhere, for example into Documents. In the app's setup window, choose that folder.
@@ -49,19 +49,20 @@ the **stable** build, older and settled, and the newer **Major Renovated** build
 Without a licence SAI draws, and pen pressure works, but it cannot save. SYSTEMAX sells one
 licence, named *SAI Ver.1*; it unlocks saving in Ver.2 too.
 
-1. **Buy it:** [systemax.jp/en/sai/purchase/purchase.php](https://www.systemax.jp/en/sai/purchase/purchase.php).
+1. **Buy it:** [systemax.jp/en/sai/purchase/purchase.php](https://www.systemax.jp/en/sai/purchase/purchase.php)
 2. **Wait for the email** titled *"[SYSTEMAX] Information about Your Software License"*. It has
    your **licence number** and a **certificate download password**.
 3. **Find your System ID in SAI, started from this app:** *Others → System ID*. The certificate is
    made for that ID, and SAI under Wine has its own, so an ID from a Windows PC will not work.
-4. **Download the certificate:**
-   **[systemax.jp/en/license.html](https://www.systemax.jp/en/license.html)**. Enter the licence
-   number, the password and the System ID. You get a file named `sai-….slc`.
+4. **Download the certificate.** Enter the licence number, the password and the System ID on
+   this page, and you get a file named `sai-….slc`:
+   **[systemax.jp/en/license.html](https://www.systemax.jp/en/license.html)**
 5. **Install it with the app:** *Setup → Show all steps → SAI license → Install…*, and pick that
    file. The app puts it in every folder SAI may read it from and keeps a copy for later.
 
 Lost the email? SYSTEMAX can send it again:
-[systemax.jp/en/sai/reissue.php](https://www.systemax.jp/en/sai/reissue.php).
+[systemax.jp/en/sai/reissue.php](https://www.systemax.jp/en/sai/reissue.php)
+
 This project is not affiliated with SYSTEMAX and cannot sell, make or unlock a licence.
 
 Users have reported it working on:
