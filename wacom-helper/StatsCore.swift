@@ -795,8 +795,16 @@ extension StatsCore {
     }
 
     /// The label on the average line: "average day 2 h 11".
+    ///
+    /// THE TRAP: this used axisLabel as it is, which rounds to the nearest
+    /// minute, while the Average day tile cuts the seconds off. The same
+    /// 6 min 40 s read "6 min" on the tile and "average day 7 min" on the line
+    /// right under it. Whole minutes here, cut off as the tile does, and
+    /// "<1 min" under a minute, as the tile says.
     static func averageLabel(_ size: StatsBucketSize, _ s: Double) -> String {
-        "average " + (size == .day ? "day" : size == .week ? "week" : "month") + " " + axisLabel(s)
+        let what = size == .day ? "day" : size == .week ? "week" : "month"
+        let time = s > 0 && s < 60 ? "<1 min" : axisLabel((s / 60).rounded(.down) * 60)
+        return "average \(what) \(time)"
     }
 
     /// A time that starts a sentence: "45 min", "Under a minute".

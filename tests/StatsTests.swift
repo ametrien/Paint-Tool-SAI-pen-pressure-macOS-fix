@@ -353,10 +353,37 @@ struct StatsTests {
         let dayBars = StatsCore.buckets(fresh, range: StatsCore.range(.month, today: nov16, days: fresh, calendar: utc),
                                         size: .day, calendar: utc)
         expect(dayBars.count == 30 && dayBars.prefix(23).allSatisfy { !$0.counted } && dayBars.suffix(7).allSatisfy { $0.counted },
-               "bars: days from before counting began are marked not counted (drawn as nothing, not as a day off)")
+               "bars: days from before counting began are marked not counted (their box says so, not Nothing drawn)")
         expect(StatsCore.averageBar(dayBars) == sm.averageDay, "bars: the average line for days is the Average day tile")
         expect(StatsCore.averageBar(StatsCore.buckets([:], range: wk, size: .day, calendar: utc)) == nil,
                "bars: no average line when nothing is drawn")
+
+        // --- the average line says what the Average day tile says -----------
+        // TRAP: the line rounded to the nearest minute, the tile cuts the
+        // seconds off: 6 min 40 s was "6 min" on the tile and "average day
+        // 7 min" right under it.
+        expect(StatsCore.averageLabel(.day, 400) == "average day 6 min", "average line: 6 min 40 s is 6 min, as on the tile")
+        expect(StatsCore.averageLabel(.day, 7199) == "average day 1 h 59", "average line: 1 h 59 min 59 s is not 2 h")
+        expect(StatsCore.averageLabel(.day, 50) == "average day <1 min" && StatsCore.averageLabel(.day, 20) == "average day <1 min",
+               "average line: under a minute says <1 min, as the tile does, not 0 or 1 min")
+        // Every average from 1 s to 30 h, in 7 s steps: the line's minutes
+        // are the tile's. The tile leaves the minutes out from 20 h on (it is
+        // narrow), so there only the hours are compared.
+        func minutes(_ t: String) -> Int? {
+            let n = t.split(separator: " ").compactMap { Int($0) }
+            if t.contains(" h") { return n.count == 2 ? n[0] * 60 + n[1] : n.first.map { $0 * 60 } }
+            return n.first
+        }
+        var lineOK = true
+        for s in stride(from: 60.0, through: 30 * 3600, by: 7) {
+            let tile = StatsCore.cardTimeParts(s).map { $0.text }.joined()
+            let line = String(StatsCore.averageLabel(.day, s).dropFirst("average day ".count))
+            guard let tm = minutes(tile), let lm = minutes(line) else { lineOK = false; print("    unreadable at \(s): \(tile) / \(line)"); break }
+            if s >= 20 * 3600 ? tm / 60 != lm / 60 : tm != lm {
+                lineOK = false; print("    average line broke at \(s) s: tile \"\(tile)\", line \"\(line)\""); break
+            }
+        }
+        expect(lineOK, "average line: for every average, the same minutes as the Average day tile")
 
         // --- the value axis --------------------------------------------------
         expect(StatsCore.timeAxis(max: 312 * 60) == (top: 6 * 3600, step: 3600), "axis: 5 h 12 min tops out at 6 h, a line each hour")

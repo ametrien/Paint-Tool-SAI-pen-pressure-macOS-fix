@@ -671,22 +671,22 @@ final class StatsChartView: NSView {
         let accent = NSColor.controlAccentColor
         let widest: CGFloat = b.values.count <= 7 ? 34 : 18
         for i in b.values.indices {
-            // Before counting began: nothing at all, not even the dot of a day off.
-            guard b.counted[i] else { continue }
-            let s = slot(i)
+            // A bar with nothing is left empty: no mark for a day off, for
+            // today before the first stroke, for an empty hour or for a day
+            // before counting began. The box under the pointer says which.
+            //
+            // THE TRAP: an empty bar used to get a small grey dot. It read as
+            // a mark on that day, and today got one from midnight until the
+            // first stroke. tests/run-tests.sh fails if drawBars draws an
+            // oval again.
             let v = b.values[i]
-            if v > 0 {
-                let bw = max(2, min(widest, s.width * 0.62))
-                let top = min(y(v, b.axis), plot.maxY - 2)
-                let r = NSRect(x: s.midX - bw / 2, y: top, width: bw, height: plot.maxY - top)
-                (i == b.strong || i == hover ? accent : accent.withAlphaComponent(0.55)).setFill()
-                NSBezierPath(roundedRect: r, xRadius: min(3, bw / 2), yRadius: min(3, bw / 2)).fill()
-            } else {
-                // A day off still shows as a small dot, so the row reads as a
-                // full row and not as a chart with holes.
-                NSColor.tertiaryLabelColor.setFill()
-                NSBezierPath(ovalIn: NSRect(x: s.midX - 1.5, y: plot.maxY - 5, width: 3, height: 3)).fill()
-            }
+            guard b.counted[i], v > 0 else { continue }
+            let s = slot(i)
+            let bw = max(2, min(widest, s.width * 0.62))
+            let top = min(y(v, b.axis), plot.maxY - 2)
+            let r = NSRect(x: s.midX - bw / 2, y: top, width: bw, height: plot.maxY - top)
+            (i == b.strong || i == hover ? accent : accent.withAlphaComponent(0.55)).setFill()
+            NSBezierPath(roundedRect: r, xRadius: min(3, bw / 2), yRadius: min(3, bw / 2)).fill()
         }
     }
 
