@@ -3,10 +3,7 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](https://semver.org/).
 
-## [Unreleased]
-
-Not in a build yet. Move this under the next version number when it is released,
-and mention it in the release notes.
+## [0.3.16] — 2026-11-17
 
 ### Added
 - **The Videos tab shows a recording in progress.** While you draw, a line above the grid reads
@@ -31,8 +28,13 @@ and mention it in the release notes.
 - **Point at a bar and its exact numbers show at once,** in a box over it: a day's time to the
   minute, strokes, sessions and when you drew. The system tooltip used before took a second or
   two, and moving along the bars it often never came.
-- **Hours** shows an average day you drew, hour by hour, on a fixed 0 to 60 min scale.
-  **Weekdays** shows each weekday's average, days off included.
+- **Hours** shows an average day you drew, hour by hour, on a scale that follows your busiest
+  hour, never above 60 min, so a few minutes a day are still easy to see. **Weekdays** shows each
+  weekday's average, days off included.
+- **Each period says what it covers.** A line under Hours and Weekdays names the days the chart
+  is over, "in the last 7 days" or "since 15 Nov", so switching the period always shows a change.
+  While counting is younger than the period, it says so: "Counting began 15 Nov, so this is the
+  same as All time."
 - **Calendar** colours every day of a year by drawing time and shows each month's total. Point at
   a day to see its time, strokes, sessions and when you drew, and click to keep it there; the
   arrows go back to the first year anything was counted.
