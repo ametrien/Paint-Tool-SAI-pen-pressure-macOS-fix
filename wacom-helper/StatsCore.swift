@@ -795,8 +795,16 @@ extension StatsCore {
     }
 
     /// The label on the average line: "average day 2 h 11".
+    ///
+    /// THE TRAP: this used axisLabel as it is, which rounds to the nearest
+    /// minute, while the Average day tile cuts the seconds off. The same
+    /// 6 min 40 s read "6 min" on the tile and "average day 7 min" on the line
+    /// right under it. Whole minutes here, cut off as the tile does, and
+    /// "<1 min" under a minute, as the tile says.
     static func averageLabel(_ size: StatsBucketSize, _ s: Double) -> String {
-        "average " + (size == .day ? "day" : size == .week ? "week" : "month") + " " + axisLabel(s)
+        let what = size == .day ? "day" : size == .week ? "week" : "month"
+        let time = s > 0 && s < 60 ? "<1 min" : axisLabel((s / 60).rounded(.down) * 60)
+        return "average \(what) \(time)"
     }
 
     /// A time that starts a sentence: "45 min", "Under a minute".
@@ -829,11 +837,58 @@ extension StatsCore {
             + "You drew in this hour on \(p.daysWithHour[h]) of \(p.days) " + (p.days == 1 ? "day" : "days")
     }
 
-    /// Under the Hours chart: what the bars are an average of.
-    static func hoursNote(_ p: HourProfile) -> String? {
+    /// The Hours page's axis: from the tallest bar, as every other chart, but
+    /// never above 60 min, because an hour holds no more than that.
+    ///
+    /// THE TRAP this replaces: the axis was fixed at 0 to 60 min so a bar's
+    /// height meant the same on every period. With a few minutes a day the
+    /// bars were a few pixels high, and Week, Month, Year and All time looked
+    /// alike, so the period buttons seemed to do nothing.
+    static func hourAxis(max top: Double) -> (top: Double, step: Double) {
+        timeAxis(max: min(top, 3600))
+    }
+
+    /// The period, said after a number of days: "in the last 7 days", or
+    /// "since 15 Nov" for All time. `firstText` is the first counted day, as
+    /// the footer writes it; nil before anything was counted.
+    static func periodPhrase(_ p: StatsPeriod, firstText: String?) -> String {
+        switch p {
+        case .week: return "in the last 7 days"
+        case .month: return "in the last 30 days"
+        case .year: return "in the last 365 days"
+        case .all: return firstText.map { "since \($0)" } ?? "so far"
+        }
+    }
+
+    /// Did counting begin inside this period? Then it holds exactly the days
+    /// All time holds, and its charts are the same. Said under the chart, so
+    /// a period click that changes nothing does not look broken.
+    static func sameAsAllTime(_ p: StatsPeriod, range r: DayRange, days: [String: DayStats],
+                              calendar: Calendar = .current) -> Bool {
+        guard p != .all, let k = firstCountedKey(days), let first = date(ofKey: k, calendar: calendar) else { return false }
+        return first > calendar.startOfDay(for: r.from)
+    }
+
+    /// " Counting began 15 Nov, so this is the same as All time.", or "".
+    static func sameAsAllTimeText(_ same: Bool, firstText: String?) -> String {
+        guard same, let f = firstText else { return "" }
+        return " Counting began \(f), so this is the same as All time."
+    }
+
+    /// Under the Hours chart: what the bars are an average of, and over when.
+    /// It names the period, so every period click changes something you see.
+    static func hoursNote(_ p: HourProfile, period: StatsPeriod, firstText: String?, sameAsAll: Bool) -> String? {
         guard p.days > 0 else { return nil }
-        return (p.days == 1 ? "The one day you drew." : "Average of the \(p.days) days you drew.")
-            + " An hour holds 60 min at most."
+        let over = periodPhrase(period, firstText: firstText)
+        return (p.days == 1 ? "The one day you drew \(over)." : "Average of the \(p.days) days you drew \(over).")
+            + sameAsAllTimeText(sameAsAll, firstText: firstText)
+    }
+
+    /// Under the Weekdays chart, as under Hours. Nil when no weekday was counted.
+    static func weekdaysNote(_ w: [WeekdayAverage], period: StatsPeriod, firstText: String?, sameAsAll: Bool) -> String? {
+        guard w.contains(where: { $0.count > 0 }) else { return nil }
+        return "Each weekday's average \(periodPhrase(period, firstText: firstText))."
+            + sameAsAllTimeText(sameAsAll, firstText: firstText)
     }
 
     /// Said across an empty Hours chart. Days saved before hours were counted

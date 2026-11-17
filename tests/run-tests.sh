@@ -146,6 +146,17 @@ note="$(sed -n '/^func statsNote(/,/^}/p' "$REPO/wacom-helper/StatsUI.swift")"
 if echo "$note" | grep -v '^ *//' | grep -Eq 'write\(|contentsOf|NSWorkspace|FileManager'; then
   echo "  FAIL wired: statsNote touches the disk or NSWorkspace on the pen path"; st_fail=1
 else echo "  ok   wired: statsNote does no disk or app lookups on the pen path"; fi
+# No dot under an empty bar. The charts used to put a small grey dot under a
+# day off, an empty hour and today before the first stroke; it read as a mark
+# on that day, so an empty bar is now left empty. Read from the source: an oval
+# drawn in drawBars is that dot back. (An empty drawBars means the function was
+# renamed and this check would pass on nothing, so that fails too.)
+drawfn="$(sed -n '/private func drawBars(/,/^    }/p' "$REPO/wacom-helper/StatsViews.swift")"
+if [ -z "$drawfn" ]; then
+  echo "  FAIL wired: drawBars not found in StatsViews.swift, the no-dot check has nothing to read"; st_fail=1
+elif echo "$drawfn" | grep -v '^ *//' | grep -q 'ovalIn'; then
+  echo "  FAIL wired: drawBars draws a dot under empty bars again"; st_fail=1
+else echo "  ok   wired: drawBars leaves an empty bar empty, no dot"; fi
 [ "$st_fail" = 0 ] || exit 1
 
 echo ""
@@ -155,6 +166,14 @@ echo "== Swift AppKit (PopupMenuSync.swift) =="
 swiftc -o "$WORK/popupmenu-tests" "$REPO/wacom-helper/PenFeelCore.swift" \
   "$REPO/wacom-helper/PopupMenuSync.swift" "$REPO/tests/PopupMenuTests.swift"
 "$WORK/popupmenu-tests"
+
+echo ""
+echo "== Swift AppKit (StatsViews.swift) =="
+# The Statistics chart card drawn for real, offscreen, at its size in the app:
+# every page and period, long notes and long dates. No text may leave the card.
+swiftc -parse-as-library -o "$WORK/statsview-tests" "$REPO/wacom-helper/StatsCore.swift" \
+  "$REPO/wacom-helper/StatsViews.swift" "$REPO/tests/StatsViewTests.swift"
+"$WORK/statsview-tests"
 
 echo ""
 echo "== Swift core (BridgeCheck.swift) =="
