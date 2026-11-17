@@ -26,12 +26,43 @@ canvas** while you draw. Free and open source.
 - **A Mac with Apple Silicon.** Intel Macs are untested.
 - **A pen tablet that macOS itself recognises.** The app reads the standard tablet events macOS
   gives every app, so nothing in it is tied to one tablet.
-- **Your own copy of PaintTool SAI Ver.2**, and a licence from SYSTEMAX if you want to save.
-  Download SAI from the [official SAI Ver.2 page](https://www.systemax.jp/en/sai/devdept.html):
-  take a **64bit** ZIP and unzip it. The [licence](https://www.systemax.jp/en/license.html) is
-  needed only to save; drawing and pen pressure work without it.
+- **PaintTool SAI Ver.2**, free to download, and a licence from SYSTEMAX if you want to save.
+  **[Where to get both, step by step](#get-sai-and-a-licence)**.
 
 Wine is installed for you during setup.
+
+### Get SAI and a licence
+
+**SAI Ver.2 (free download)**
+
+1. Open the official page: **[systemax.jp/en/sai/devdept.html](https://www.systemax.jp/en/sai/devdept.html)**.
+2. Download a **SAI Ver.2 64bit** ZIP (its file name ends in `64bit-en.zip`). Not 32bit, and not
+   *SAI Ver.1*, which is an `.exe` installer.
+3. Unzip it anywhere, for example into Documents. In the app's setup window, choose that folder.
+
+SAI Ver.2 is a *Technical Preview* that SYSTEMAX keeps updating, so the page usually has two:
+the **stable** build, older and settled, and the newer **Major Renovated** build (its file says
+*Alpha*). Either works with this app.
+
+**The licence (paid, needed only to save)**
+
+Without a licence SAI draws, and pen pressure works, but it cannot save. SYSTEMAX sells one
+licence, named *SAI Ver.1*; it unlocks saving in Ver.2 too.
+
+1. **Buy it:** [systemax.jp/en/sai/purchase/purchase.php](https://www.systemax.jp/en/sai/purchase/purchase.php).
+2. **Wait for the email** titled *"[SYSTEMAX] Information about Your Software License"*. It has
+   your **licence number** and a **certificate download password**.
+3. **Find your System ID in SAI, started from this app:** *Others → System ID*. The certificate is
+   made for that ID, and SAI under Wine has its own, so an ID from a Windows PC will not work.
+4. **Download the certificate:**
+   **[systemax.jp/en/license.html](https://www.systemax.jp/en/license.html)**. Enter the licence
+   number, the password and the System ID. You get a file named `sai-….slc`.
+5. **Install it with the app:** *Setup → Show all steps → SAI license → Install…*, and pick that
+   file. The app puts it in every folder SAI may read it from and keeps a copy for later.
+
+Lost the email? SYSTEMAX can send it again:
+[systemax.jp/en/sai/reissue.php](https://www.systemax.jp/en/sai/reissue.php).
+This project is not affiliated with SYSTEMAX and cannot sell, make or unlock a licence.
 
 Users have reported it working on:
 
