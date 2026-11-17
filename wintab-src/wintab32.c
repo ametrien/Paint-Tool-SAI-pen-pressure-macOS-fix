@@ -1441,9 +1441,12 @@ static void log_ctx(const char *who, const LOGCONTEXTW *lc) {
          lc->lcSysOrgX, lc->lcSysOrgY, lc->lcSysExtX, lc->lcSysExtY, lc->lcSysMode);
 }
 
+static void install_rename_fix(const char *when);   /* issue #25, before DllMain */
+
 HANDLE WINAPI WTOpenW(HWND hwnd, LOGCONTEXTW *lc, BOOL enable) {
     log_line("WTOpenW hwnd=%p enable=%d", hwnd, enable);
     g_hwnd = hwnd;
+    install_rename_fix("at WTOpen");
     {
         char cls[64] = "";
         if (!hwnd || !GetClassNameA(hwnd, cls, (int)sizeof cls)) cls[0] = 0;
@@ -1637,6 +1640,115 @@ HANDLE WINAPI WTMgrDefContextEx(HANDLE mgr, UINT dev, BOOL sys) { log_line("WTMg
  * that scans for WinTab entry points should ever pick it up. */
 __declspec(dllexport) const char * WINAPI SAIPP_BridgeBuild(void) { return WT_BUILD_STAMP; }
 
+/* ---- SAI's recovery-point rename (issue #25) --------------------------------
+ * The rewrite itself, and why, is in wintab_core.h (wtc_rename_is_bare_name,
+ * wtc_rename_full_path). This is how the wrapper gets in front of SAI's call.
+ *
+ * SAI does not import NtSetInformationFile, so there is no import entry to
+ * patch: it calls GetProcAddress(ntdll, "NtSetInformationFile") once while
+ * starting up and keeps the address in its own data. By the time SAI loads
+ * this DLL that is done, so watching GetProcAddress would be too late. Instead
+ * we look through the host's own writable sections for that exact 8-byte
+ * address and swap it for the wrapper. Nothing else in SAI holds that number,
+ * no SAI version's offsets are written down here, and Wine's own code is not
+ * touched: the wrapper calls the real function for every call, rewritten or
+ * not. If a future SAI stops keeping the pointer, the scan finds nothing and
+ * SAI behaves exactly as without this fix.
+ *
+ * Off with WT_NO_RENAME_FIX=1, to see SAI's error come back for comparison. */
+typedef LONG (WINAPI *set_info_fn)(HANDLE, PVOID, PVOID, ULONG, int);
+static set_info_fn   g_real_set_info;
+static int           g_no_rename_fix;
+static volatile LONG g_renames_fixed;
+
+/* The layout the wrapper reads: FILE_RENAME_INFO is FILE_RENAME_INFORMATION. */
+_Static_assert(offsetof(FILE_RENAME_INFO, RootDirectory) == 8,  "rename info: root at 8");
+_Static_assert(offsetof(FILE_RENAME_INFO, FileNameLength) == 16, "rename info: length at 16");
+_Static_assert(offsetof(FILE_RENAME_INFO, FileName) == 20,       "rename info: name at 20");
+
+static LONG WINAPI fixed_set_info(HANDLE h, PVOID io, PVOID info, ULONG len, int cls) {
+    const FILE_RENAME_INFO *ri = (const FILE_RENAME_INFO *)info;
+    const size_t head = offsetof(FILE_RENAME_INFO, FileName);
+    if ((cls == WTC_FILE_RENAME_INFORMATION || cls == WTC_FILE_RENAME_INFORMATION_EX)
+        && ri && len >= head
+        && (ri->FileNameLength & 1) == 0 && head + (size_t)ri->FileNameLength <= len
+        && wtc_rename_is_bare_name(cls, ri->RootDirectory == NULL,
+                                   (const uint16_t *)ri->FileName, ri->FileNameLength / 2)) {
+        WCHAR cur[1024];
+        uint16_t path[1100];
+        DWORD n = GetFinalPathNameByHandleW(h, cur, ARRAYSIZE(cur),
+                                            FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+        size_t pl = (n > 0 && n < ARRAYSIZE(cur))
+            ? wtc_rename_full_path((const uint16_t *)cur, n, (const uint16_t *)ri->FileName,
+                                   ri->FileNameLength / 2, path, ARRAYSIZE(path))
+            : 0;
+        if (pl) {
+            /* Same header (flags, root NULL), new name. Sized as SAI sizes its
+             * own: the whole struct plus the name, plus a NUL to be safe. */
+            size_t size = sizeof(FILE_RENAME_INFO) + pl * sizeof(WCHAR);
+            FILE_RENAME_INFO *nri = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, size + sizeof(WCHAR));
+            if (nri) {
+                memcpy(nri, ri, offsetof(FILE_RENAME_INFO, FileNameLength));
+                nri->FileNameLength = (DWORD)(pl * sizeof(WCHAR));
+                memcpy(nri->FileName, path, pl * sizeof(WCHAR));
+                LONG st = g_real_set_info(h, io, nri, (ULONG)size, cls);
+                InterlockedIncrement(&g_renames_fixed);
+                log_line("rename fix: %.*ls -> %ls: status %08lx", (int)(ri->FileNameLength / 2),
+                         ri->FileName, (const WCHAR *)path, (unsigned long)st);
+                HeapFree(GetProcessHeap(), 0, nri);
+                return st;
+            }
+        }
+        log_line("rename fix: could not build the full path (GetFinalPathNameByHandleW gave %lu); "
+                 "SAI's own call goes on unchanged", (unsigned long)n);
+    }
+    return g_real_set_info(h, io, info, len, cls);
+}
+
+/* Find SAI's stored pointer and swap it. Called at load and again at WTOpen
+ * (SAI's window exists by then, so its startup lookups are done); a pointer
+ * already swapped no longer matches, so a second call changes nothing. */
+static void install_rename_fix(const char *when) {
+    if (g_no_rename_fix) return;
+    if (!g_real_set_info) {
+        HMODULE nt = GetModuleHandleW(L"ntdll.dll");
+        g_real_set_info = nt ? (set_info_fn)(void *)GetProcAddress(nt, "NtSetInformationFile") : NULL;
+        if (!g_real_set_info) { log_line("rename fix: ntdll has no NtSetInformationFile?"); return; }
+    }
+    BYTE *base = (BYTE *)GetModuleHandleW(NULL);
+    const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)base;
+    if (!base || dos->e_magic != IMAGE_DOS_SIGNATURE) return;
+    const IMAGE_NT_HEADERS *nth = (const IMAGE_NT_HEADERS *)(base + dos->e_lfanew);
+    if (nth->Signature != IMAGE_NT_SIGNATURE) return;
+    const IMAGE_SECTION_HEADER *sec = IMAGE_FIRST_SECTION(nth);
+    void *real = (void *)g_real_set_info, *mine = (void *)fixed_set_info;
+    int swapped = 0;
+    for (WORD i = 0; i < nth->FileHeader.NumberOfSections; i++, sec++) {
+        if (!(sec->Characteristics & IMAGE_SCN_MEM_WRITE) ||
+            (sec->Characteristics & IMAGE_SCN_MEM_EXECUTE)) continue;   /* data only */
+        BYTE *p = base + sec->VirtualAddress, *end = p + (sec->Misc.VirtualSize & ~(DWORD)7);
+        while (p < end) {
+            /* Read only what is really there and writable, one region at a time. */
+            MEMORY_BASIC_INFORMATION mbi;
+            if (!VirtualQuery(p, &mbi, sizeof mbi)) break;
+            BYTE *rend = (BYTE *)mbi.BaseAddress + mbi.RegionSize;
+            if (rend > end) rend = end;
+            int ok = mbi.State == MEM_COMMIT && !(mbi.Protect & PAGE_GUARD) &&
+                     (mbi.Protect & (PAGE_READWRITE | PAGE_WRITECOPY));
+            if (ok)
+                for (void **slot = (void **)p; (BYTE *)(slot + 1) <= rend; slot++)
+                    if (*slot == real &&
+                        InterlockedCompareExchangePointer(slot, mine, real) == real) swapped++;
+            p = rend;
+        }
+    }
+    if (swapped)
+        log_line("rename fix: in place (%s): %d stored pointer(s) to NtSetInformationFile now go "
+                 "through the same-folder rename fix", when, swapped);
+    else
+        log_line("rename fix: nothing to swap (%s)", when);
+}
+
 BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID r) {
     (void)h; (void)r;
     if (reason == DLL_PROCESS_DETACH && g_click_hook) {
@@ -1680,6 +1792,8 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID r) {
                  "; screen %dx%d virtual %dx%d at (%d,%d) maxPress=%d host=%s ====",
              g_screenW, g_screenH, g_virtW, g_virtH, g_virtX, g_virtY, g_max_press,
              g_host_is_probe ? "Test pen probe (no wake)" : "SAI");
+        g_no_rename_fix = getenv("WT_NO_RENAME_FIX") != NULL;
+        install_rename_fix("at load");
         CreateThread(NULL, 0, producer, NULL, 0, NULL);
         /* Off unless WT_TIMELAPSE / WT_TIMELAPSE_PROBE is set. Started after
          * the producer so nothing here can delay pressure coming up. */

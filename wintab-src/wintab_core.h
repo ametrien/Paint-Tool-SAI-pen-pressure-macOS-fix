@@ -1062,4 +1062,82 @@ static int wtc_hold_release(WTC_HOLD *h, uint32_t *out) {
     return n;
 }
 
+/* ---- A RENAME THAT NAMES ONLY THE NEW FILE (issue #25) ----------------------
+ * SAI writes each recovery point as N.tmp, then renames the still-open file to
+ * N.dat with NtSetInformationFile(FileRenameInformation), giving only the new
+ * file name: no folder, RootDirectory NULL. Windows documents that form ("a
+ * simple file name ... the file is simply renamed within the same directory").
+ * Wine 11.16 rejects it with STATUS_OBJECT_PATH_SYNTAX_BAD (c000003b), and SAI
+ * shows "Discharging of recovery point into file took a fatal error" on the
+ * first stroke of every new canvas, with or without a pen.
+ *
+ * Proven outside SAI with a small Windows program under the same Wine: that
+ * exact call fails, and the same rename given the full \??\ path works. So the
+ * DLL hands SAI a wrapper that rewrites only this form into the full path in
+ * the file's own folder. These two functions are that rewrite; the wrapper in
+ * wintab32.c is the glue around them.
+ *
+ * Names are UTF-16 (uint16_t, not wchar_t: wchar_t is 32-bit on the Mac where
+ * these tests run) and NOT NUL-terminated, as in FILE_RENAME_INFORMATION. */
+#define WTC_FILE_RENAME_INFORMATION    10
+#define WTC_FILE_RENAME_INFORMATION_EX 65
+
+/* Is this the rename Wine gets wrong? Only the two rename classes, only with
+ * no root folder handle, and only a plain name. Anything with \ / : in it is
+ * left to Wine: a full or relative path already works, and a name starting
+ * with ':' renames an NTFS stream, which must never be turned into a file
+ * path. "." and ".." are not names of a file. */
+static int wtc_rename_is_bare_name(int info_class, int root_is_null,
+                                   const uint16_t *name, size_t name_len) {
+    if (info_class != WTC_FILE_RENAME_INFORMATION &&
+        info_class != WTC_FILE_RENAME_INFORMATION_EX) return 0;
+    if (!root_is_null) return 0;
+    if (!name || name_len == 0) return 0;
+    if (name_len == 1 && name[0] == '.') return 0;
+    if (name_len == 2 && name[0] == '.' && name[1] == '.') return 0;
+    for (size_t i = 0; i < name_len; i++) {
+        uint16_t c = name[i];
+        if (c == '\\' || c == '/' || c == ':' || c == 0) return 0;
+    }
+    return 1;
+}
+
+/* The full NT path that renames the open file `current` to `name` in the same
+ * folder. `current` is the file's path as GetFinalPathNameByHandleW gives it
+ * with VOLUME_NAME_DOS ("\\?\C:\dir\old.tmp", or "\\?\UNC\srv\share\dir\x");
+ * "\??\C:\..." and plain "C:\..." are accepted too. Writes "\??\C:\dir\name"
+ * plus a NUL into out and returns its length in UTF-16 units, without the NUL.
+ * Returns 0, writing nothing, for any form it does not know, a path with no
+ * folder, or when out is too small: the caller then passes SAI's own call on
+ * unchanged, so the worst case is the error SAI already showed. */
+static size_t wtc_rename_full_path(const uint16_t *current, size_t cur_len,
+                                   const uint16_t *name, size_t name_len,
+                                   uint16_t *out, size_t out_cap) {
+    static const uint16_t nt[4] = { '\\', '?', '?', '\\' };
+    size_t skip, last = 0, dir_len, total;
+    int found = 0;
+    if (!current || !name || !out || name_len == 0) return 0;
+    if (cur_len >= 4 && current[0] == '\\' && current[1] == '\\' &&
+        current[2] == '?' && current[3] == '\\') skip = 4;            /* \\?\ */
+    else if (cur_len >= 4 && current[0] == '\\' && current[1] == '?' &&
+             current[2] == '?' && current[3] == '\\') skip = 4;       /* \??\ */
+    else if (cur_len >= 3 && current[1] == ':' && current[2] == '\\' &&
+             ((current[0] >= 'A' && current[0] <= 'Z') ||
+              (current[0] >= 'a' && current[0] <= 'z'))) skip = 0;    /* C:\ */
+    else return 0;
+    for (size_t i = skip; i < cur_len; i++)
+        if (current[i] == '\\') { last = i; found = 1; }
+    if (!found) return 0;                 /* "\\?\file": no folder to keep */
+    dir_len = last - skip;                /* "C:\dir" without the last \ */
+    if (dir_len == 0) return 0;
+    total = 4 + dir_len + 1 + name_len;
+    if (out_cap < total + 1) return 0;    /* +1: the NUL */
+    memcpy(out, nt, sizeof nt);
+    memcpy(out + 4, current + skip, dir_len * sizeof *out);
+    out[4 + dir_len] = '\\';
+    memcpy(out + 4 + dir_len + 1, name, name_len * sizeof *out);
+    out[total] = 0;
+    return total;
+}
+
 #endif /* WINTAB_CORE_H */

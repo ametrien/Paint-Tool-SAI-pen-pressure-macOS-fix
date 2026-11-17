@@ -4,6 +4,7 @@
  *
  * Run:  bash tests/run-tests.sh
  */
+#include <stdlib.h>
 #include <string.h>
 #include "../wintab-src/wintab_core.h"
 
@@ -35,8 +36,126 @@ static void wtc_st_sample(WTC_STARTTRACE *tr, uint32_t t, int down, int posted,
     wtc_st_sample_t(tr, t, down, posted, ser, press, sx, sy, NULL);
 }
 
+/* ASCII into UTF-16 units, as FILE_RENAME_INFORMATION carries names. Adds a
+ * NUL after the name only so the buffer is safe to look at; the functions
+ * under test are given the length and must not rely on it. */
+static size_t u16(const char *s, uint16_t *out) {
+    size_t n = strlen(s);
+    for (size_t i = 0; i < n; i++) out[i] = (unsigned char)s[i];
+    out[n] = 0;
+    return n;
+}
+static int u16_is(const uint16_t *a, size_t n, const char *s) {
+    if (strlen(s) != n) return 0;
+    for (size_t i = 0; i < n; i++) if (a[i] != (unsigned char)s[i]) return 0;
+    return a[n] == 0;   /* and the NUL the caller's buffer relies on */
+}
+/* Is `name` the bare-name rename? Class 10, no root folder handle: SAI's call. */
+static int bare(const char *name) {
+    uint16_t b[64];
+    size_t n = u16(name, b);
+    return wtc_rename_is_bare_name(WTC_FILE_RENAME_INFORMATION, 1, b, n);
+}
+/* The full path for renaming `current` to `name`; "" when it gives up. */
+static const char *full(const char *current, const char *name) {
+    static char res[600];
+    uint16_t c[300], nm[64], out[600];
+    size_t cl = u16(current, c), nl = u16(name, nm);
+    size_t r = wtc_rename_full_path(c, cl, nm, nl, out, sizeof out / sizeof *out);
+    for (size_t i = 0; i < r; i++) res[i] = (char)out[i];
+    res[r] = 0;
+    return res;
+}
+
 int main(void) {
     printf("wintab_core tests:\n");
+
+    /* --- rename that names only the new file (issue #25) ------------------- */
+    {
+        /* SAI's own call, as the Wine trace showed it: hisdata\<session>\2.0.0.a.tmp
+         * renamed to the bare name 2.0.0.a.dat. */
+        const char *sai_tmp = "\\\\?\\C:\\users\\admin\\AppData\\Local\\SYSTEMAX Software Development"
+                              "\\SAIv2\\hisdata\\20261117.221109.2\\2.0.0.a.tmp";
+        EXPECT(bare("2.0.0.a.dat"), "rename: SAI's recovery rename is the bare-name form");
+        EXPECT(strcmp(full(sai_tmp, "2.0.0.a.dat"),
+                      "\\??\\C:\\users\\admin\\AppData\\Local\\SYSTEMAX Software Development"
+                      "\\SAIv2\\hisdata\\20261117.221109.2\\2.0.0.a.dat") == 0,
+               "rename: SAI's file becomes the full \\??\\ path in its own folder");
+
+        uint16_t nm[64]; size_t nl = u16("2.0.0.a.dat", nm);
+        EXPECT(wtc_rename_is_bare_name(WTC_FILE_RENAME_INFORMATION_EX, 1, nm, nl),
+               "rename: the Ex class has the same layout and the same gap");
+        /* THE TRAP: the wrapper sees EVERY NtSetInformationFile SAI makes
+         * (sizes, times, delete-on-close). Only the two rename classes may be
+         * touched; link (11) has the same layout and is not ours to change. */
+        EXPECT(!wtc_rename_is_bare_name(11, 1, nm, nl) && !wtc_rename_is_bare_name(13, 1, nm, nl) &&
+               !wtc_rename_is_bare_name(4, 1, nm, nl) && !wtc_rename_is_bare_name(0, 1, nm, nl),
+               "rename: link, disposition, basic info and class 0 are left alone");
+        EXPECT(!wtc_rename_is_bare_name(WTC_FILE_RENAME_INFORMATION, 0, nm, nl),
+               "rename: a name relative to a root folder handle is left to Wine (it works)");
+
+        /* Anything with a path in it already works in Wine and goes through as is. */
+        EXPECT(!bare("\\??\\C:\\x\\b.dat"), "rename: a full NT path is left alone");
+        EXPECT(!bare("C:\\x\\b.dat"), "rename: a DOS path is left alone");
+        EXPECT(!bare("sub\\b.dat") && !bare("sub/b.dat"), "rename: a relative path is left alone");
+        /* THE TRAP: ":name" renames an NTFS stream inside the same file. Made
+         * into "\??\C:\dir\:name" it would mean something else entirely. */
+        EXPECT(!bare(":backup") && !bare("a:b"), "rename: a stream name (any ':') is left alone");
+        EXPECT(!bare(".") && !bare(".."), "rename: . and .. are not file names");
+        EXPECT(!bare(""), "rename: an empty name is left alone");
+        {
+            uint16_t z[4] = { 'a', 0, 'b', 0 };
+            EXPECT(!wtc_rename_is_bare_name(WTC_FILE_RENAME_INFORMATION, 1, z, 3),
+                   "rename: a NUL inside the name is left alone");
+            EXPECT(!wtc_rename_is_bare_name(WTC_FILE_RENAME_INFORMATION, 1, NULL, 3),
+                   "rename: no name buffer is left alone");
+        }
+        EXPECT(bare("b") && bare("x.tmp.dat") && bare("Name With Spaces.dat"),
+               "rename: ordinary names, dots and spaces are bare names");
+
+        /* Where the file is: every form GetFinalPathNameByHandleW can give. */
+        EXPECT(strcmp(full("\\\\?\\C:\\d\\a.tmp", "b.dat"), "\\??\\C:\\d\\b.dat") == 0,
+               "rename: \\\\?\\C:\\d\\a.tmp -> \\??\\C:\\d\\b.dat");
+        EXPECT(strcmp(full("\\\\?\\C:\\a.tmp", "b.dat"), "\\??\\C:\\b.dat") == 0,
+               "rename: a file in the drive's root keeps C:\\");
+        EXPECT(strcmp(full("\\\\?\\UNC\\srv\\share\\d\\a.tmp", "b.dat"), "\\??\\UNC\\srv\\share\\d\\b.dat") == 0,
+               "rename: a network path keeps its UNC form");
+        EXPECT(strcmp(full("\\??\\C:\\d\\a.tmp", "b.dat"), "\\??\\C:\\d\\b.dat") == 0,
+               "rename: an NT path in is an NT path out");
+        EXPECT(strcmp(full("C:\\d\\a.tmp", "b.dat"), "\\??\\C:\\d\\b.dat") == 0,
+               "rename: a plain DOS path gets the \\??\\ prefix");
+        /* Forms it does not know: give up, so SAI's call goes on unchanged. */
+        EXPECT(full("\\Device\\HarddiskVolume1\\d\\a.tmp", "b.dat")[0] == 0, "rename: a device path: gives up");
+        EXPECT(full("a.tmp", "b.dat")[0] == 0, "rename: a relative current path: gives up");
+        EXPECT(full("\\\\?\\a.tmp", "b.dat")[0] == 0 && full("\\\\?\\", "b.dat")[0] == 0,
+               "rename: no folder in the current path: gives up");
+        EXPECT(full("1:\\d\\a.tmp", "b.dat")[0] == 0, "rename: a drive that is not a letter: gives up");
+
+        /* Room in the output, exactly. ASan is on, so a write past out_cap
+         * would fail the run even where the return value looks right. */
+        {
+            uint16_t c[32], b[8];
+            size_t cl = u16("\\\\?\\C:\\d\\a.tmp", c), bl = u16("b.dat", b);
+            size_t need = strlen("\\??\\C:\\d\\b.dat");             /* 14 */
+            uint16_t *exact = malloc((need + 1) * sizeof *exact);   /* +1: the NUL */
+            uint16_t *short1 = malloc(need * sizeof *short1);
+            size_t r1 = wtc_rename_full_path(c, cl, b, bl, exact, need + 1);
+            EXPECT(r1 == need && u16_is(exact, r1, "\\??\\C:\\d\\b.dat"),
+                   "rename: fits exactly with room for the NUL");
+            EXPECT(wtc_rename_full_path(c, cl, b, bl, short1, need) == 0,
+                   "rename: one unit short (no room for the NUL): gives up, writes nothing");
+            free(exact); free(short1);
+        }
+        /* The current path is used up to cur_len only: the wrapper hands over
+         * a buffer GetFinalPathNameByHandleW filled, with whatever is after it. */
+        {
+            uint16_t c[64], b[8], out[64];
+            u16("\\\\?\\C:\\d\\a.tmp\\junk\\more", c);
+            size_t bl = u16("b.dat", b);
+            size_t r = wtc_rename_full_path(c, strlen("\\\\?\\C:\\d\\a.tmp"), b, bl, out, 64);
+            EXPECT(r && u16_is(out, r, "\\??\\C:\\d\\b.dat"), "rename: reads the current path only up to its length");
+        }
+    }
 
     /* --- wtc_parse_sample ------------------------------------------------- */
     WTC_SAMPLE s; memset(&s, 0, sizeof s);

@@ -48,6 +48,12 @@ and mention it in the release notes.
 - **Recording no longer restarts in the middle of Make video now.** The once-a-second check could
   start the encoder again while the video was still being stitched, so frames from those
   seconds could miss the video.
+- **No more "Discharging of recovery point into file took a fatal error"** (#25). SAI showed it
+  on the first stroke of every new canvas, pen or not, and its crash recovery was not being saved
+  at all. SAI saves each recovery file under a temporary name and then renames it, giving only the
+  new file name. Windows allows that, Wine 11.16 does not. Our DLL, already inside SAI, now adds
+  the file's own folder to exactly that kind of rename, and leaves every other file call alone.
+  `WT_NO_RENAME_FIX=1` turns it off, to compare.
 
 ## [0.3.15] — 2026-11-15
 

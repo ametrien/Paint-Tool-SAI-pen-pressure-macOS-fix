@@ -72,6 +72,19 @@ else echo "  ok   wired: the tap does not wait for the zoom file"; fi
 grep -q 'PressureCore.wakeLine' "$REPO/wacom-helper/AutoWake.swift" \
   && echo "  ok   wired: a wake request is sent as a datagram" \
   || { echo "  FAIL wired: bumpWin32Wake sends no wake datagram"; ctl_fail=1; }
+# Issue #25: SAI's recovery-point rename. The rewrite is tested above; these
+# guard the two ways it could silently stop reaching SAI. SAI looks the
+# function up while starting, so the pointer may only be there by WTOpen, and
+# a wrapper that stopped asking the core would swap in a plain pass-through.
+dllmain="$(sed -n '/^BOOL WINAPI DllMain/,/^}/p' "$W")"
+wtopen="$(sed -n '/^HANDLE WINAPI WTOpenW/,/^}/p' "$W")"
+wrapper="$(sed -n '/^static LONG WINAPI fixed_set_info/,/^}/p' "$W")"
+if echo "$dllmain" | grep -q 'install_rename_fix(' && echo "$wtopen" | grep -q 'install_rename_fix('; then
+  echo "  ok   wired: the rename fix is put in place at load and again at WTOpen"
+else echo "  FAIL wired: install_rename_fix is no longer called from both DllMain and WTOpenW"; ctl_fail=1; fi
+if echo "$wrapper" | grep -q 'wtc_rename_is_bare_name(' && echo "$wrapper" | grep -q 'wtc_rename_full_path('; then
+  echo "  ok   wired: the rename wrapper decides and builds the path with the tested core"
+else echo "  FAIL wired: fixed_set_info no longer uses wtc_rename_is_bare_name and wtc_rename_full_path"; ctl_fail=1; fi
 [ "$ctl_fail" = 0 ] || exit 1
 
 echo ""
