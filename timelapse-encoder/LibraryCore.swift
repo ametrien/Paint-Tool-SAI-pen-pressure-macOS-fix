@@ -551,6 +551,31 @@ extension LibraryCore {
         while taken.contains("\(stem) (\(n)).mp4") { n += 1 }
         return "\(stem) (\(n)).mp4"
     }
+
+    /// Piece files in capture order, for joining them into one video.
+    ///
+    /// THE TRAP: plain text order is NOT capture order once uniquePieceName
+    /// has added " (2)". A space sorts before the dot, so "2026-11-18 1141 (2).mp4"
+    /// came before "2026-11-18 1141.mp4", and the second session of that minute
+    /// played first. Seen on 2026-11-18 after pressing Make video now twice
+    /// within a minute: the first strokes turned up in the middle of the video.
+    /// So the " (n)" is taken off and compared as a number, with no suffix as 1.
+    static func piecesInOrder(_ names: [String]) -> [String] {
+        func key(_ name: String) -> (String, Int) {
+            var stem = name.hasSuffix(".mp4") ? String(name.dropLast(4)) : name
+            var n = 1
+            if stem.hasSuffix(")"), let open = stem.range(of: " (", options: .backwards),
+               let v = Int(stem[open.upperBound..<stem.index(before: stem.endIndex)]), v >= 2 {
+                n = v
+                stem = String(stem[..<open.lowerBound])
+            }
+            return (stem, n)
+        }
+        return names.sorted { a, b in
+            let ka = key(a), kb = key(b)
+            return ka.0 != kb.0 ? ka.0 < kb.0 : (ka.1 != kb.1 ? ka.1 < kb.1 : a < b)
+        }
+    }
 }
 
 // MARK: - mutations

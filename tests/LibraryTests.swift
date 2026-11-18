@@ -427,6 +427,26 @@ do {
     // minute sharing a name would silently overwrite a whole evening's work.
     expect(LibraryCore.uniquePieceName(startedAt: t, taken: [name]) != name,
            "naming: a second session in the same minute does not overwrite the first")
+
+    // THE CASE from 2026-11-18: Make video now twice inside one minute gave
+    // "… 1141.mp4" and "… 1141 (2).mp4", and plain text order put (2) first,
+    // so the first strokes played in the middle. Swap piecesInOrder for
+    // .sorted() and these go red.
+    let second = LibraryCore.uniquePieceName(startedAt: t, taken: [name])
+    let third = LibraryCore.uniquePieceName(startedAt: t, taken: [name, second])
+    let next = LibraryCore.pieceName(startedAt: t.addingTimeInterval(60))
+    expect(LibraryCore.piecesInOrder([second, name]) == [name, second],
+           "order: THE CASE: the first piece of a minute comes before its (2)")
+    expect(LibraryCore.piecesInOrder([next, third, second, name]) == [name, second, third, next],
+           "order: (2) and (3) follow the first, and the next minute follows them all")
+    expect(LibraryCore.piecesInOrder(["2026-11-18 1141 (10).mp4", "2026-11-18 1141 (9).mp4"])
+            == ["2026-11-18 1141 (9).mp4", "2026-11-18 1141 (10).mp4"],
+           "order: (10) comes after (9), as a number, not as text")
+    expect(LibraryCore.piecesInOrder(["2026-11-18 1142.mp4", "2026-11-18 1141 (2).mp4", "2026-11-18 1141.mp4"])
+            == ["2026-11-18 1141.mp4", "2026-11-18 1141 (2).mp4", "2026-11-18 1142.mp4"],
+           "order: the real file names from that evening")
+    expect(LibraryCore.piecesInOrder(["b (x).mp4", "b.mp4", "a.mp4"]) == ["a.mp4", "b.mp4", "b (x).mp4"],
+           "order: a bracket that is not a number is just text, nothing is dropped")
 }
 
 // MARK: - the model

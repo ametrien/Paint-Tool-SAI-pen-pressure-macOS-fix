@@ -88,9 +88,9 @@ final class LibraryStore {
             var isDir: ObjCBool = false
             guard fm.fileExists(atPath: folder.path, isDirectory: &isDir), isDir.boolValue else { continue }
             let piecesDir = folder.appendingPathComponent("pieces")
-            let files = ((try? fm.contentsOfDirectory(atPath: piecesDir.path)) ?? [])
-                .filter { $0.hasSuffix(".mp4") && !$0.hasPrefix(".") }
-                .sorted()
+            let files = LibraryCore.piecesInOrder(
+                ((try? fm.contentsOfDirectory(atPath: piecesDir.path)) ?? [])
+                    .filter { $0.hasSuffix(".mp4") && !$0.hasPrefix(".") })
             guard !files.isEmpty else { continue }
             // An all-zero fingerprint is deliberately INVALID, so the identity
             // ladder skips a recovered drawing rather than matching everything
