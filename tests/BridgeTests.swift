@@ -444,8 +444,16 @@ struct BridgeTests {
         // sai2.exe stores its name as UTF-16 among other strings. Built here the
         // same way: junk, the name, a NUL, more junk.
         func utf16(_ s: String) -> [UInt8] { Array(s.utf16).flatMap { [UInt8($0 & 0xff), UInt8($0 >> 8)] } }
-        let exe = Data([0x4d, 0x5a, 0x90, 0x00] + utf16("Alpha Channel") + [0, 0]
-                       + utf16("PaintTool SAI Ver.2 (64bit) Alpha.2026.10.19") + [0, 0] + utf16("Preview"))
+        // Appended step by step: one long `+` chain of literals took the CI
+        // runner's compiler past its type-check time limit (2026-11-18).
+        let nul: [UInt8] = [0, 0]
+        var exeBytes: [UInt8] = [0x4d, 0x5a, 0x90, 0x00]
+        exeBytes += utf16("Alpha Channel")
+        exeBytes += nul
+        exeBytes += utf16("PaintTool SAI Ver.2 (64bit) Alpha.2026.10.19")
+        exeBytes += nul
+        exeBytes += utf16("Preview")
+        let exe = Data(exeBytes)
         expect(BridgeCheck.saiVersionName(exeData: exe) == "PaintTool SAI Ver.2 (64bit) Alpha.2026.10.19",
                "sai name: read from the exe's UTF-16 text, up to the NUL")
         expect(BridgeCheck.saiShortName("PaintTool SAI Ver.2 (64bit) Alpha.2026.10.19") == "SAI Alpha.2026.10.19",
