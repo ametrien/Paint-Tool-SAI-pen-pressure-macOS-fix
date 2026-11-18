@@ -23,7 +23,8 @@ your original text underneath it.
 
 ## Building it yourself
 
-The code is MIT-licensed, so you are free to build, change and run your own copy. You need
+The code is under the GNU GPL version 3, so you are free to build, change and run your own copy.
+If you share it, see [License & attribution](README.md#license--attribution). You need
 **Wine** (Gcenx Staging in `/Applications`), your own copy of SAI2, a tablet, `mingw-w64` for the
 DLL, and the Xcode command-line tools for the helper.
 

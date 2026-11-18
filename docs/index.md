@@ -60,7 +60,7 @@ It also does not:
 The full list, including the limits that belong to SAI or Wine, is in the
 [README](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix#what-it-does-not-do).
 
-The MIT licence in this repository covers the bridge code. Nothing else.
+The licence in this repository (GNU GPL version 3, with the attribution terms in NOTICE) covers the bridge code. Nothing else.
 
 ## Why not just run a virtual machine?
 

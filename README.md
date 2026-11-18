@@ -579,12 +579,17 @@ art-timelapse is GPL-3.0 and this project is not, which is why the boundary was 
 ## License & attribution
 
 This project (the pressure-bridge code: the `wintab32.dll` source, the macOS app, the installer
-and the documentation) is released under the **[Apache License 2.0](LICENSE)**, with a
-**[NOTICE](NOTICE)** file. You may use and change it. If you share a copy or a version of your
-own, keep the NOTICE with it and show it where you show credits, and say what you changed.
+and the documentation) is released under the **[GNU GPL version 3](LICENSE)**, with the
+additional terms in **[NOTICE](NOTICE)**. You may use it, change it and share it. If you share a
+copy or a version of your own:
 
-Versions up to and including **0.3.16** were released under the MIT License, and those copies
-stay MIT.
+- it stays under the GPL 3, with its source code available;
+- keep the NOTICE with it, and the credit "SAI Pen Pressure by ametrien" with a link here,
+  wherever it shows credits or About information, and in its documentation;
+- say that you changed it, and do not present it as the original.
+
+Versions up to and including **0.3.16** were released under the MIT License, and **0.3.17** under
+the Apache License 2.0. Those copies stay under those licences.
 
 The Wine Mac driver in [wine-patch/](wine-patch/) is a modified part of Wine and stays under
 Wine's own licence, the GNU LGPL 2.1 or later.

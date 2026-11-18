@@ -2,7 +2,7 @@
 
 Status: **shipped** — see the Recording and Videos tabs. Kept as the design record rather than
 as a live plan: it is also the account of how the memory offsets were derived independently here,
-which is what keeps the MIT / GPL-3.0 boundary with art-timelapse clear (see [Licensing](#licensing)).
+which is what kept the boundary with art-timelapse clear while this repo was MIT (see [Licensing](#licensing)).
 
 Goal: record a timelapse of a SAI session by reading SAI's canvas out of memory, so the
 video shows the **true flat canvas** — no UI, no zoom, no pan, no rotation — with one frame
@@ -10,7 +10,7 @@ per brush stroke.
 
 Prior art: [cromachina/art-timelapse](https://github.com/cromachina/art-timelapse) does this
 on Windows/Linux by reading `sai2.exe` from **outside** the process. That project is GPL-3.0;
-this one is MIT. See [Licensing](#licensing) — we do not copy its offset table.
+this one was MIT when this was written, and is GPL-3.0 since the release after 0.3.17. See [Licensing](#licensing): we do not copy its offset table.
 
 ---
 
@@ -345,7 +345,7 @@ code naming the trap it protects.
 
 ## Licensing
 
-art-timelapse is **GPL-3.0**; this repo is **MIT**. **No code was copied** — not a line.
+art-timelapse is **GPL-3.0**; this repo was **MIT** when this was written (it is GPL-3.0 since the release after 0.3.17). **No code was copied** — not a line.
 
 What was taken is the *idea*: that SAI's canvas can be read out of the running process, and roughly
 where in a canvas structure to look. Those offsets are facts about SYSTEMAX's binary rather than

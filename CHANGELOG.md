@@ -8,6 +8,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
 Not in a build yet. Move this under the next version number when it is released,
 and mention it in the release notes.
 
+### Changed
+- **The licence is now the GNU GPL version 3.** You may still use, change and share the code.
+  A copy or a version of your own stays under the GPL 3 with its source code available, keeps
+  the NOTICE file and the credit "SAI Pen Pressure by ametrien" with a link to this project, and
+  says that it was changed. Versions up to 0.3.16 stay MIT, and 0.3.17 stays Apache 2.0. The
+  Wine driver in `wine-patch/` stays under Wine's LGPL.
+
 ## [0.3.17] — 2026-11-18
 
 ### Added
