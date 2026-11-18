@@ -42,7 +42,14 @@ Wine is installed for you during setup.
 
 SAI Ver.2 is a *Technical Preview* that SYSTEMAX keeps updating, so the page usually has two:
 the **stable** build, older and settled, and the newer **Major Renovated** build (its file says
-*Alpha*). Either works with this app.
+*Alpha*). Either works with this app for pen pressure.
+
+**For the timelapse, you need SAI Ver.2 (64bit) Alpha.2026.07.27.** That is the only build
+recording has been tested on. With other builds, such as 2026-10-19, it records nothing, and
+nothing in the app says so yet ([#56](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/56)).
+SYSTEMAX no longer offers that build for download, so this helps only if you still have it: if
+you updated SAI and recording stopped, put your old `sai2.exe` back. Support for the current
+build is the next step.
 
 **The licence (paid, needed only to save)**
 
@@ -189,6 +196,10 @@ drawing's name in the **Videos** tab, in `~/Movies/SAI Timelapses`. Come back to
 another day and it is added to the same video. **Make video now…** in the Recording tab makes one
 mid-session; recording carries on afterwards.
 
+> **Only with SAI Ver.2 Alpha.2026.07.27 for now.** Recording reads SAI's memory at places that
+> change from one SAI build to the next, and it has been tested on that build only. Other builds
+> record nothing ([#56](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/56)).
+
 It reads SAI's canvas out of memory rather than capturing the screen, so the video is the artwork
 alone: no panels, no cursor, and no camera movement when you zoom, pan or rotate while working.
 Layer opacity and blend modes come through, and several open canvases each get their own video.
@@ -316,7 +327,8 @@ draw. The video is made when SAI closes. **Record every stroke separately** give
 the cost of drawing feeling slower.
 
 It records the canvas, not the screen: no panels, no cursor, no zooming, and no sound. Changes
-apply the next time SAI starts.
+apply the next time SAI starts. Works with SAI Ver.2 Alpha.2026.07.27 only, for now
+([#56](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/56)).
 
 ### Videos
 
