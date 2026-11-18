@@ -3,6 +3,17 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+Not in a build yet. Move this under the next version number when it is released,
+and mention it in the release notes.
+
+### Changed
+- **The licence is now the Apache License 2.0, with a NOTICE file.** You may still use and change
+  the code. Anyone who shares a copy or a version of their own keeps the NOTICE with it, shows it
+  where they show credits, and says what they changed. Versions up to and including 0.3.16 stay
+  MIT. The Wine driver in `wine-patch/` stays under Wine's LGPL.
+
 ## [0.3.16] — 2026-11-17
 
 ### Added

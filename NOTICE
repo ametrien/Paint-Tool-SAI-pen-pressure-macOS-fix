@@ -1,0 +1,14 @@
+SAI Pen Pressure
+Copyright 2026 ametrien
+https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix
+
+Pen pressure for PaintTool SAI Ver.2 on macOS, created and maintained by ametrien.
+
+Versions up to and including 0.3.16 were released under the MIT License.
+Later versions are released under the Apache License, Version 2.0 (see LICENSE).
+
+The Wine Mac driver in wine-patch/ is a modified part of Wine, licensed under
+the GNU Lesser General Public License, version 2.1 or later. See wine-patch/README.md.
+
+PaintTool SAI is proprietary software by SYSTEMAX Software Development and is
+not part of this project.

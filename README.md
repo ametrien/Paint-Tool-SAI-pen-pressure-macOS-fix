@@ -559,14 +559,23 @@ copied. The memory offsets are facts about SAI's binary and were verified here a
 process, though the field layout was informed by theirs rather than found blind; the full account is
 in [TIMELAPSE-PLAN.md](TIMELAPSE-PLAN.md).
 
-art-timelapse is GPL-3.0 and this project is MIT, which is why the boundary was worth keeping clear.
+art-timelapse is GPL-3.0 and this project is not, which is why the boundary was worth keeping clear.
 
 ## License & attribution
 
-This project (the pressure-bridge code — `wintab32.dll` source, the macOS helper, the
-installer and documentation) is released under the **[MIT License](LICENSE)**.
+This project (the pressure-bridge code: the `wintab32.dll` source, the macOS app, the installer
+and the documentation) is released under the **[Apache License 2.0](LICENSE)**, with a
+**[NOTICE](NOTICE)** file. You may use and change it. If you share a copy or a version of your
+own, keep the NOTICE with it and show it where you show credits, and say what you changed.
+
+Versions up to and including **0.3.16** were released under the MIT License, and those copies
+stay MIT.
+
+The Wine Mac driver in [wine-patch/](wine-patch/) is a modified part of Wine and stays under
+Wine's own licence, the GNU LGPL 2.1 or later.
 
 **PaintTool SAI** is proprietary software by SYSTEMAX Software Development (Koji Komatsu).
 This project does **not** include — and must never include — SAI itself, its installer, or
-any license certificate. You obtain those from <https://www.systemax.jp/en/sai/> yourself.
-The MIT license here covers only the bridge code in this repository.
+any license certificate. You get those from SYSTEMAX yourself:
+[where to get SAI and a licence](#get-sai-and-a-licence).
+The licence here covers only the bridge code in this repository.
