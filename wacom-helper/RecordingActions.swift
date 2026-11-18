@@ -83,7 +83,7 @@ extension SetupController {
                     if revealInFinder {
                         NSWorkspace.shared.activateFileViewerSelecting(made.map { URL(fileURLWithPath: $0) })
                     }
-                    self.askAboutPendingSessions()
+                    self.askAboutPendingSessions(justFiled: filed)
                 } else {
                     alertUser("Could not build the video.\n\n\(log)")
                 }

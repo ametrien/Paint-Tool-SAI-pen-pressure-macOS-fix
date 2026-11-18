@@ -440,6 +440,57 @@ struct BridgeTests {
         expect(!BridgeCheck.restartWineAfterStrayProbes(stopped: -1, saiRunning: false),
                "fresh wine: a nonsense count is not a reason to restart")
 
+        // --- which SAI, and can recording see it (#56) --------------------------
+        // sai2.exe stores its name as UTF-16 among other strings. Built here the
+        // same way: junk, the name, a NUL, more junk.
+        func utf16(_ s: String) -> [UInt8] { Array(s.utf16).flatMap { [UInt8($0 & 0xff), UInt8($0 >> 8)] } }
+        // Appended step by step: one long `+` chain of literals took the CI
+        // runner's compiler past its type-check time limit (2026-11-18).
+        let nul: [UInt8] = [0, 0]
+        var exeBytes: [UInt8] = [0x4d, 0x5a, 0x90, 0x00]
+        exeBytes += utf16("Alpha Channel")
+        exeBytes += nul
+        exeBytes += utf16("PaintTool SAI Ver.2 (64bit) Alpha.2026.10.19")
+        exeBytes += nul
+        exeBytes += utf16("Preview")
+        let exe = Data(exeBytes)
+        expect(BridgeCheck.saiVersionName(exeData: exe) == "PaintTool SAI Ver.2 (64bit) Alpha.2026.10.19",
+               "sai name: read from the exe's UTF-16 text, up to the NUL")
+        expect(BridgeCheck.saiShortName("PaintTool SAI Ver.2 (64bit) Alpha.2026.10.19") == "SAI Alpha.2026.10.19",
+               "sai name: short form keeps the build")
+        expect(BridgeCheck.saiShortName("PaintTool SAI Ver.2 (64bit) Preview.2026.07.02b") == "SAI Preview.2026.07.02b",
+               "sai name: the stable build's short form")
+        expect(BridgeCheck.saiVersionName(exeData: Data(utf16("PaintTool SAI Ver.") + [0, 0])) == nil,
+               "sai name: the marker alone is not a name")
+        expect(BridgeCheck.saiVersionName(exeData: Data(utf16("PaintTool SAI Ver.2") + [0x01, 0x00, 0, 0])) == nil,
+               "sai name: control characters mean it was not text: nothing is shown")
+        expect(BridgeCheck.saiVersionName(exeData: Data([1, 2, 3])) == nil, "sai name: absent, nil")
+
+        let tlNew = BridgeCheck.parseStatus("v=1\nopen=1\ntl=found\ntl_offset=0x47a380\n")
+        expect(tlNew?.tl == "found" && tlNew?.tlOffset == "0x47a380", "recording: tl lines are parsed")
+        expect(BridgeCheck.recordingCheck(tlNew, ageSeconds: 1) == .works, "recording: found means it works")
+        expect(BridgeCheck.recordingCheck(BridgeCheck.parseStatus("v=1\ntl=known\n"), ageSeconds: 1) == .works,
+               "recording: a checked build works")
+        // THE CASE from 2026-11-17: a build recording could not see.
+        let tlNone = BridgeCheck.recordingCheck(BridgeCheck.parseStatus("v=1\ntl=none\n"), ageSeconds: 1)
+        expect(tlNone == .unsupported, "recording: THE CASE: none means unsupported")
+        expect(BridgeCheck.explainRecording(tlNone, sai: "SAI Alpha.2026.10.19")
+                == "Recording does not work with SAI Alpha.2026.10.19 yet. Nothing is being recorded.",
+               "recording: unsupported is said in words, with the SAI name")
+        expect(BridgeCheck.recordingCheck(BridgeCheck.parseStatus("v=1\ntl=none\n"), ageSeconds: 60) == .unknown,
+               "recording: a stale file says nothing (SAI is not running)")
+        expect(BridgeCheck.recordingCheck(BridgeCheck.parseStatus("v=1\nopen=1\n"), ageSeconds: 1) == .unknown,
+               "recording: an older DLL with no tl line says nothing, not 'unsupported'")
+        expect(BridgeCheck.recordingCheck(BridgeCheck.parseStatus("v=1\ntl=off\n"), ageSeconds: 1) == .unknown,
+               "recording: off says nothing (the checkbox already says it)")
+        expect(BridgeCheck.explainRecording(.unknown, sai: "SAI Alpha.2026.07.27") == nil, "recording: unknown shows no line")
+        expect(BridgeCheck.explainRecording(.works, sai: nil) == "Recording works with this SAI.",
+               "recording: without a name it still reads as a sentence")
+        for c in [BridgeCheck.RecordingCheck.waiting, .works, .unsupported, .unsure] {
+            let t = BridgeCheck.explainRecording(c, sai: "SAI Alpha.2026.10.19") ?? ""
+            expect(!t.contains("\u{2014}") && !t.isEmpty, "recording: \(c) has text and no em dash")
+        }
+
         print(failures == 0 ? "BridgeCheck: all passed" : "BridgeCheck: \(failures) FAILED")
         exit(failures == 0 ? 0 : 1)
     }

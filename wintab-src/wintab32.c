@@ -1205,6 +1205,9 @@ static void write_status(unsigned long recv, unsigned long posted) {
     if (n <= 0) return;
     /* #37 lines; if they do not fit, the long-standing part still goes out */
     n += wtc_format_screens(buf + n, sizeof buf - (size_t)n, g_newscreen, g_follow_cursor);
+    /* Whether recording can see SAI's canvases (#56): tl=known/found/none... */
+    n += tlc_format_status(buf + n, sizeof buf - (size_t)n, (int)g_tl_state,
+                           g_tl_layout_rw.session_offset);
     f = fopen("C:\\wt_status.txt", "wb");
     if (!f) return;
     fwrite(buf, 1, (size_t)n, f);

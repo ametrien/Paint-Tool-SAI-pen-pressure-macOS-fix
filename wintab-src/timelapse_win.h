@@ -54,8 +54,19 @@
 
 #define TL_MAX_FRAME_BYTES (64u << 20)   /* refuse anything larger            */
 #define TL_DEFAULT_TARGET  1024          /* longest side of a recorded frame  */
-#define TL_DEFAULT_DEBOUNCE 150          /* ms of zero pressure = stroke end  */
-#define TL_SETTLE_MS       120           /* let SAI finish compositing        */
+/* How soon after the pen lifts a frame is taken (2026-11-18). These were
+ * 150 + 120 ms, so a stroke started within ~270 ms of the last one shared its
+ * frame: two quick strokes recorded as one. Capturing every stroke matters
+ * more than that margin:
+ *   - the debounce guards against a pressure dip mid-stroke, but the app
+ *     already holds every pen-up back for its own latch (WT_UP_LATCH, 150 ms)
+ *     before we see it, so a dip never reaches us as a zero. 30 ms is for
+ *     jitter only. WT_TIMELAPSE_DEBOUNCE still overrides it.
+ *   - SAI has finished the stroke by the time we hear of it: it saves its
+ *     recovery point at the button-up, before our pen-up line. 40 ms is
+ *     margin for the last dab, not a measured need. */
+#define TL_DEFAULT_DEBOUNCE 30           /* ms of zero pressure = stroke end  */
+#define TL_SETTLE_MS        40           /* let SAI finish compositing        */
 #define TL_DEFAULT_QUIET   1000          /* ms the pen must rest before a capture */
 #define TL_DEFAULT_MAX_WAIT 10000        /* nonstop drawing: a frame between
                                             strokes at least this often       */
@@ -105,9 +116,24 @@ static uint64_t       g_tl_bytes = 0;    /* frame bytes currently on disk     */
 static uint64_t       g_tl_budget = (uint64_t)TL_DEFAULT_BUDGET_MB << 20;
 static uint8_t       *g_tl_frame = NULL;
 static size_t         g_tl_frame_cap = 0;
+static uint8_t       *g_tl_small = NULL;     /* the frame shrunk to g_tl_target */
+static size_t         g_tl_small_cap = 0;
 static uint8_t       *g_tl_tile  = NULL;
 static size_t         g_tl_tile_cap  = 0;
-static const TLC_LAYOUT *g_tl_layout = &TLC_LAYOUT_2026_07_27;
+/* The canvas fields are 07.27's for every build so far (issue #56); only
+ * session_offset differs, and tl_anchor_ready sets it in this copy. */
+static TLC_LAYOUT        g_tl_layout_rw;
+static const TLC_LAYOUT *g_tl_layout = &g_tl_layout_rw;
+
+/* Where the canvas list is, and how we know (TLC_TL_*; also the status line). */
+static volatile LONG  g_tl_state = TLC_TL_OFF;
+static uint64_t       g_tl_image_end = 0;
+static uint32_t       g_tl_pe_stamp = 0, g_tl_pe_size = 0;
+#define TL_MAX_RANGES 16
+static uint64_t       g_tl_ranges[2 * TL_MAX_RANGES];   /* writable data sections */
+static int            g_tl_nranges = 0;
+static DWORD          g_tl_last_search = 0;
+#define TL_SEARCH_GAP_MS 5000   /* a failed search is not repeated sooner      */
 
 /* Capture only when the pen rests (RECORDING-SPEED-PLAN.md, package 2).
  * Written by the producer thread and SAI's UI thread, read by tl_thread. */
@@ -121,11 +147,13 @@ static TLC_TILECACHE  g_tl_cache;
 static unsigned long  g_tl_captures = 0;
 static int            g_tl_ptrs_unreliable = 0;
 
-/* Statics that track the CURRENT canvas rather than the list head. Derived
- * alongside session_offset; the exact semantics ("active" vs "most recently
- * opened") were never pinned down, so this is used as a HINT only — validated
- * before use, with a fall back to the first user canvas in the list. */
-#define TL_ACTIVE_OFFSET 0x471388
+/* A static that tracks the CURRENT canvas sits right after the list head
+ * (0x471388 in 07.27). The exact semantics ("active" vs "most recently
+ * opened") were never pinned down, so it is a HINT only: used when it points
+ * at a canvas in the open list, else the first user canvas is recorded. In a
+ * build we found by search, +8 is a guess, and the list check is what keeps a
+ * wrong guess harmless. */
+#define TL_ACTIVE_AFTER_HEAD 8
 
 /* --- validated read ------------------------------------------------------ */
 
@@ -209,9 +237,96 @@ static uint64_t tl_first_user_canvas(void) {
     return 0;
 }
 
+/* --- finding the canvas list (issue #56) --------------------------------- */
+
+/* sai2.exe's build stamp, size and writable data sections, from its own PE
+ * header in memory. Called once at startup. */
+static void tl_read_pe_info(void) {
+    const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)(uintptr_t)g_tl_image_base;
+    const IMAGE_NT_HEADERS *nth;
+    const IMAGE_SECTION_HEADER *sec;
+    WORD i;
+    if (!dos || dos->e_magic != IMAGE_DOS_SIGNATURE) return;
+    nth = (const IMAGE_NT_HEADERS *)((const BYTE *)dos + dos->e_lfanew);
+    if (nth->Signature != IMAGE_NT_SIGNATURE) return;
+    g_tl_pe_stamp = nth->FileHeader.TimeDateStamp;
+    g_tl_pe_size = nth->OptionalHeader.SizeOfImage;
+    g_tl_image_end = g_tl_image_base + g_tl_pe_size;
+    sec = IMAGE_FIRST_SECTION(nth);
+    for (i = 0; i < nth->FileHeader.NumberOfSections && g_tl_nranges < TL_MAX_RANGES; i++, sec++) {
+        /* Data only: written by SAI, never run. The list head is a variable. */
+        if (!(sec->Characteristics & IMAGE_SCN_MEM_WRITE) ||
+            (sec->Characteristics & IMAGE_SCN_MEM_EXECUTE)) continue;
+        g_tl_ranges[2 * g_tl_nranges]     = g_tl_image_base + sec->VirtualAddress;
+        g_tl_ranges[2 * g_tl_nranges + 1] = g_tl_image_base + sec->VirtualAddress + sec->Misc.VirtualSize;
+        g_tl_nranges++;
+    }
+}
+
+static void tl_set_state(LONG state, uint64_t offset) {
+    g_tl_layout_rw.session_offset = offset;
+    InterlockedExchange(&g_tl_state, state);
+}
+
+/* Is the canvas list known, and still where we think? Runs on the capture
+ * thread before every capture, never on the pen path. Every change of answer
+ * is logged once: recording used to fail without a word (issue #56). */
+static int tl_anchor_ready(void) {
+    LONG st = g_tl_state;
+    DWORD now = GetTickCount();
+    TLC_FOUND fd;
+    if (st == TLC_TL_KNOWN || st == TLC_TL_FOUND) {
+        if (tlc_anchor_ok(tl_read, NULL, g_tl_layout, g_tl_image_base, g_tl_layout_rw.session_offset))
+            return 1;
+        /* E.g. the slot taken while only the scratch pad was open was a
+         * "current canvas" static, and now points at a drawing. Look again
+         * straight away: it was working a moment ago. */
+        log_line("tl: the canvas list is no longer at +%#llx; looking again",
+                 (unsigned long long)g_tl_layout_rw.session_offset);
+        g_tl_last_search = 0;
+    }
+    if (st != TLC_TL_FOUND) {
+        const TLC_KNOWN_BUILD *kb = tlc_known_build(g_tl_pe_stamp, g_tl_pe_size);
+        if (kb && tlc_anchor_ok(tl_read, NULL, g_tl_layout, g_tl_image_base, kb->session_offset)) {
+            if (st != TLC_TL_KNOWN)
+                log_line("tl: SAI %s, canvas list at +%#llx (checked build)",
+                         kb->name, (unsigned long long)kb->session_offset);
+            tl_set_state(TLC_TL_KNOWN, kb->session_offset);
+            return 1;
+        }
+    }
+    if (g_tl_last_search && now - g_tl_last_search < TL_SEARCH_GAP_MS) return 0;
+    g_tl_last_search = now ? now : 1;
+
+    tlc_find_session(tl_read, NULL, g_tl_layout, g_tl_image_base, g_tl_image_end,
+                     g_tl_ranges, g_tl_nranges, &fd);
+    if (fd.status == TLC_FIND_FOUND) {
+        if (st != TLC_TL_FOUND || fd.offset != g_tl_layout_rw.session_offset)
+            log_line("tl: found the canvas list at +%#llx (%d canvas(es), %d slot(s) hold it, "
+                     "%lu looked at; SAI build stamp %#lx size %#lx)",
+                     (unsigned long long)fd.offset, fd.nodes, fd.slots, fd.checked,
+                     (unsigned long)g_tl_pe_stamp, (unsigned long)g_tl_pe_size);
+        tl_set_state(TLC_TL_FOUND, fd.offset);
+        return 1;
+    }
+    {
+        LONG ns = fd.status == TLC_FIND_AMBIGUOUS ? TLC_TL_AMBIGUOUS : TLC_TL_NONE;
+        if (st != ns)
+            log_line(ns == TLC_TL_AMBIGUOUS
+                     ? "tl: two canvas lists look alike; recording nothing rather than guess "
+                       "(%lu slots looked at, SAI build stamp %#lx size %#lx)"
+                     : "tl: no canvas list found; this SAI build is not supported yet "
+                       "(%lu slots looked at, SAI build stamp %#lx size %#lx)",
+                     fd.checked, (unsigned long)g_tl_pe_stamp, (unsigned long)g_tl_pe_size);
+        tl_set_state(ns, 0);
+    }
+    return 0;
+}
+
 static uint64_t tl_target_canvas(void) {
     uint64_t active = 0, head = 0;
     TLC_CANVAS cv;
+    if (!tl_anchor_ready()) return 0;
     /* Prefer the active-canvas hint so drawing on the second of two open
      * documents records the right one — but only if it validates AND is not
      * the scratch pad.
@@ -224,9 +339,11 @@ static uint64_t tl_target_canvas(void) {
      * that only governs the list walk. Rejecting the head covers it: the scratch
      * pad is always node 0. */
     if (!tlc_list_head(tl_read, NULL, g_tl_layout, g_tl_image_base, &head)) return 0;
-    if (tl_read(NULL, g_tl_image_base + TL_ACTIVE_OFFSET, &active, 8) &&
+    if (tl_read(NULL, g_tl_image_base + g_tl_layout_rw.session_offset + TL_ACTIVE_AFTER_HEAD,
+                &active, 8) &&
         active && active != head &&
-        tlc_canvas_read(tl_read, NULL, g_tl_layout, active, &cv))
+        tlc_canvas_read(tl_read, NULL, g_tl_layout, active, &cv) &&
+        tlc_list_contains(tl_read, NULL, g_tl_layout, head, active))
         return active;
     return tl_first_user_canvas();
 }
@@ -400,9 +517,20 @@ static void tl_capture_once(DWORD waited_ms) {
     t1 = t2 = t3 = t0;
 
     canvas = tl_target_canvas();
-    if (!canvas) return;                     /* nothing open; not an error    */
+    {
+        /* Said once each time it changes, never once per stroke. When the
+         * list itself is missing, tl_anchor_ready has already said why. */
+        static int said_nothing_open = 0;
+        int list_ok = g_tl_state == TLC_TL_KNOWN || g_tl_state == TLC_TL_FOUND;
+        if (!canvas && list_ok && !said_nothing_open)
+            log_line("tl: no drawing open, only the scratch pad; nothing to record yet");
+        said_nothing_open = !canvas && list_ok;
+    }
+    if (!canvas) return;
 
-    level = tlc_pick_level(tl_read, NULL, g_tl_layout, canvas, g_tl_target);
+    /* Level 0, the canvas itself, shrunk below to g_tl_target. SAI's reduced
+     * copies were not always drawn (dark or blank frames, 2026-11-18). */
+    level = tlc_full_level(tl_read, NULL, g_tl_layout, canvas, TL_MAX_FRAME_BYTES);
     if (!tlc_tilemap_read(tl_read, NULL, g_tl_layout, canvas, level, &tm)) {
         tl_disable("tile map unreadable — offsets likely wrong for this SAI build");
         return;
@@ -461,13 +589,31 @@ static void tl_capture_once(DWORD waited_ms) {
     }
     *slot = hash;
 
-    g_tl_bytes += (uint64_t)sizeof(TL_FRAME_HDR) + (uint64_t)w * h * 4u;
+    {
+    /* Shrink to the chosen size here, after the dedup hash (which is of the
+     * full canvas, so a change too small to survive shrinking still counts). */
+    uint32_t ow, oh;
+    const uint8_t *out = g_tl_frame;
+    tlc_shrink_size(w, h, g_tl_target, &ow, &oh);
+    if (ow != w || oh != h) {
+        if (!tl_ensure_buf(&g_tl_small, &g_tl_small_cap, (size_t)ow * oh * 4u)) {
+            tl_disable("shrunk frame too large to buffer");
+            goto done;
+        }
+        tlc_downscale_bgra(g_tl_frame, w, h, g_tl_small, ow, oh);
+        out = g_tl_small;
+    }
+    g_tl_bytes += (uint64_t)sizeof(TL_FRAME_HDR) + (uint64_t)ow * oh * 4u;
     tl_enforce_budget();
-    if (tl_write_frame(g_tl_frame, w, h, canvas, cname)) {
+    if (tl_write_frame(out, ow, oh, canvas, cname)) {
         result = "written";
-        log_line("tl: frame %llu  %ux%u  level=%d  (%s)  \"%s\"",
-                 (unsigned long long)g_tl_seq, w, h, level,
-                 g_tl_trigger ? "mouse" : "pen", cname);
+        /* The corner pixel, as #rrggbb: white paper reads #ffffff. A dark
+         * corner (#171717) was SAI's reduced copy not drawn yet, before
+         * recording read level 0; logged in case anything like it returns. */
+        log_line("tl: frame %llu  %ux%u from %ux%u  level=%d  (%s)  \"%s\"  corner=#%02x%02x%02x",
+                 (unsigned long long)g_tl_seq, ow, oh, w, h, level,
+                 g_tl_trigger ? "mouse" : "pen", cname, out[2], out[1], out[0]);
+    }
     }
     QueryPerformanceCounter(&t3);
     }
@@ -488,13 +634,31 @@ done:
  * tablet connected. Stroke-driven capture is what ships. */
 static uint32_t g_tl_interval = 0;
 
+/* How long after SAI starts the canvas list is first looked for, stroke or
+ * no stroke, so the app can say whether recording will work before anyone
+ * draws. SAI has made its scratch pad by then. */
+#define TL_FIRST_LOOK_MS 15000
+
 static DWORD WINAPI tl_thread(LPVOID arg) {
+    int first_look_done = 0;
     (void)arg;
     for (;;) {
         DWORD pending_since;
-        DWORD w = WaitForSingleObject(g_tl_evt, g_tl_interval ? g_tl_interval : INFINITE);
+        DWORD wait = g_tl_interval ? g_tl_interval : INFINITE;
+        DWORD w;
+        if (!first_look_done && (wait == INFINITE || wait > TL_FIRST_LOOK_MS)) wait = TL_FIRST_LOOK_MS;
+        w = WaitForSingleObject(g_tl_evt, wait);
         if (w != WAIT_OBJECT_0 && w != WAIT_TIMEOUT) break;
         if (g_tl_disabled) break;
+        if (w == WAIT_TIMEOUT && !first_look_done && !g_tl_interval) {
+            first_look_done = 1;
+            if (g_tl_state == TLC_TL_WAITING) {
+                tlc_regions_clear(&g_tl_regions);   /* same rule as a capture */
+                tl_anchor_ready();
+            }
+            continue;
+        }
+        first_look_done = 1;
         if (w == WAIT_TIMEOUT) {             /* WT_TIMELAPSE_INTERVAL test aid */
             Sleep(TL_SETTLE_MS);
             tl_capture_once(0);
@@ -608,6 +772,8 @@ static void tl_startup(void) {
 
     g_tl_image_base = (uint64_t)(uintptr_t)GetModuleHandleW(NULL);
     if (!g_tl_image_base) { log_line("tl: GetModuleHandle(NULL) failed"); return; }
+    g_tl_layout_rw = TLC_LAYOUT_2026_07_27;  /* session_offset is set once found */
+    tl_read_pe_info();
 
     AddVectoredExceptionHandler(1, tl_veh);
 
@@ -661,6 +827,7 @@ static void tl_startup(void) {
     BOOL low = SetThreadPriority(g_tl_thread, THREAD_PRIORITY_LOWEST);
 
     g_tl_on = 1;
+    InterlockedExchange(&g_tl_state, TLC_TL_WAITING);
     log_line("tl: recording enabled  base=%#llx target=%upx debounce=%ums interval=%ums "
              "quiet=%ums max_wait=%ums priority=%s budget=%lluMB existing=%lluMB -> %s",
              (unsigned long long)g_tl_image_base, g_tl_target,
@@ -669,6 +836,10 @@ static void tl_startup(void) {
              (unsigned long long)(g_tl_budget >> 20),
              (unsigned long long)(g_tl_bytes >> 20), TL_FRAMEDIR);
     }
+    log_line("tl: SAI build stamp %#lx size %#lx, %d data section(s)%s",
+             (unsigned long)g_tl_pe_stamp, (unsigned long)g_tl_pe_size, g_tl_nranges,
+             tlc_known_build(g_tl_pe_stamp, g_tl_pe_size) ? ", a checked build"
+                                                          : ", not a checked build: the canvas list will be searched for");
 }
 
 #endif /* TIMELAPSE_WIN_H */

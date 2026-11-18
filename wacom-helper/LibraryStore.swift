@@ -49,6 +49,19 @@ final class LibraryStore {
     /// from the folders instead.
     private(set) var recoveredFromBrokenIndex = false
 
+    /// Read the index again before changing it.
+    ///
+    /// THE TRAP: a store is a COPY of the index, and copies live a long time.
+    /// The Videos tab keeps the one it read when it was last shown. Filing
+    /// meanwhile ("Make video now", SAI closing) goes through a fresh store, so
+    /// the tab's copy does not know about the drawing just filed, and saving it
+    /// wrote that drawing out of the index (2026-11-18: answering the "same
+    /// drawing?" question right after Make video now made the new recording
+    /// vanish from the library while its folder stayed on disk). Every change
+    /// starts here, so a change is made to what is on disk now, never to what
+    /// was there when the copy was taken.
+    private func reloadBeforeChange() { load() }
+
     func load() {
         let url = URL(fileURLWithPath: indexPath)
         guard let data = try? Data(contentsOf: url) else { return }   // no index yet
@@ -88,9 +101,9 @@ final class LibraryStore {
             var isDir: ObjCBool = false
             guard fm.fileExists(atPath: folder.path, isDirectory: &isDir), isDir.boolValue else { continue }
             let piecesDir = folder.appendingPathComponent("pieces")
-            let files = ((try? fm.contentsOfDirectory(atPath: piecesDir.path)) ?? [])
-                .filter { $0.hasSuffix(".mp4") && !$0.hasPrefix(".") }
-                .sorted()
+            let files = LibraryCore.piecesInOrder(
+                ((try? fm.contentsOfDirectory(atPath: piecesDir.path)) ?? [])
+                    .filter { $0.hasSuffix(".mp4") && !$0.hasPrefix(".") })
             guard !files.isEmpty else { continue }
             // An all-zero fingerprint is deliberately INVALID, so the identity
             // ladder skips a recovered drawing rather than matching everything
@@ -162,6 +175,7 @@ final class LibraryStore {
     /// see LibraryCore.sameRunDrawing.
     @discardableResult
     func fileFinishedSessions(sameRun: [UInt64: RunCanvas] = [:]) -> [Filed] {
+        reloadBeforeChange()
         let fm = FileManager.default
         let staging = stagingDir
         let names = ((try? fm.contentsOfDirectory(atPath: staging)) ?? [])
@@ -266,6 +280,9 @@ final class LibraryStore {
 
     /// "Yes, same drawing." Moves the piece across, on disk and in the index.
     func confirmSame(_ p: Pending) {
+        reloadBeforeChange()
+        // Answered already, from another window or an older copy: nothing to do.
+        guard isStillPending(p) else { return }
         guard let from = lib.drawing(id: p.drawingId),
               let to = lib.drawing(id: p.candidateId) else { dropPending(p); return }
         let src = piecesURL(from).appendingPathComponent(p.pieceFile)
@@ -286,9 +303,15 @@ final class LibraryStore {
     /// again — a prompt that reappears after an answer is one people learn to
     /// dismiss unread.
     func confirmSeparate(_ p: Pending) {
+        reloadBeforeChange()
+        guard isStillPending(p) else { return }
         lib.decline(session: p.pieceFile, drawing: p.candidateId)
         dropPending(p)
         save()
+    }
+
+    private func isStillPending(_ p: Pending) -> Bool {
+        lib.pending.contains { $0.pieceFile == p.pieceFile && $0.candidateId == p.candidateId }
     }
 
     private func dropPending(_ p: Pending) {
@@ -298,6 +321,7 @@ final class LibraryStore {
     // MARK: - regrouping, after the fact
 
     func split(pieceFile: String, from id: String, title: String) {
+        reloadBeforeChange()
         guard let src = lib.drawing(id: id) else { return }
         let srcURL = piecesURL(src).appendingPathComponent(pieceFile)
         guard let newId = lib.splitPiece(file: pieceFile, from: id, title: title),
@@ -310,6 +334,7 @@ final class LibraryStore {
     }
 
     func rename(_ id: String, to title: String) {
+        reloadBeforeChange()
         guard let i = lib.drawings.firstIndex(where: { $0.id == id }) else { return }
         lib.drawings[i].title = title
         save()
@@ -319,6 +344,7 @@ final class LibraryStore {
     /// call here that destroys anything the artist cannot get back, which is why
     /// it is one obvious function rather than a flag on another one.
     func delete(_ id: String) {
+        reloadBeforeChange()
         guard let d = lib.drawing(id: id) else { return }
         try? FileManager.default.removeItem(at: folderURL(d))
         lib.drawings.removeAll { $0.id == id }
@@ -331,6 +357,7 @@ final class LibraryStore {
     /// be moved: a drawing must never vanish from the list while its files stay.
     @discardableResult
     func trash(_ id: String) -> Bool {
+        reloadBeforeChange()
         guard let d = lib.drawing(id: id) else { return false }
         do { try moveToTrash(folderURL(d)) } catch { return false }
         lib.drawings.removeAll { $0.id == id }

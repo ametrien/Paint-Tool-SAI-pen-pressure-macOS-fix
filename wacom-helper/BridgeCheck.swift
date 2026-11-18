@@ -111,6 +111,8 @@ enum BridgeCheck {
         var pmax = 0            // full-scale pressure the DLL is advertising
         var newscreen = false   // pen reached a screen SAI's tablet area doesn't cover (#37)
         var mismatch = false    // DLL's self-check is following Wine's cursor (#37)
+        var tl = ""             // can recording see SAI's canvases (#56): "" from an older DLL
+        var tlOffset = ""       // where the canvas list was found, for the log
     }
 
     /// Parse `wt_status.txt`. Deliberately lenient about unknown keys (a newer
@@ -134,6 +136,8 @@ enum BridgeCheck {
             case "pmax":    s.pmax = Int(val) ?? 0
             case "newscreen": s.newscreen = (val == "1")
             case "mismatch":  s.mismatch = (val == "1")
+            case "tl":        s.tl = val
+            case "tl_offset": s.tlOffset = val
             default: break
             }
         }
@@ -516,6 +520,73 @@ enum BridgeCheck {
             let n = p?.fetched ?? 0
             let peak = p?.pmaxSeen ?? 0
             return "Working. \(n) packets arrived inside Wine, up to \(peak)."
+        }
+    }
+
+    // ---- 5. recording and the SAI version (#56) ------------------------------
+    // Recording reads SAI's memory, and every SAI update moved the place it
+    // reads from. With Alpha.2026.10.19 it recorded nothing and said nothing,
+    // and a whole evening was lost. These say which SAI it is, by name, and
+    // whether recording can see its canvases.
+
+    /// The name SAI gives itself, e.g. "PaintTool SAI Ver.2 (64bit) Alpha.2026.10.19",
+    /// read from sai2.exe's own bytes (it is stored there as UTF-16). Every
+    /// build checked has it: Preview.2026.07.02b, Alpha.2026.07.27 and .10.19.
+    /// nil when it is not there, so the caller says nothing rather than guess.
+    static func saiVersionName(exeData data: Data) -> String? {
+        let marker = Array("PaintTool SAI Ver.".utf16).flatMap { [UInt8($0 & 0xff), UInt8($0 >> 8)] }
+        guard let start = data.firstRange(of: Data(marker))?.lowerBound else { return nil }
+        var units: [UInt16] = []
+        var i = start
+        while i + 1 < data.endIndex, units.count < 80 {
+            let u = UInt16(data[i]) | UInt16(data[i + 1]) << 8
+            if u == 0 { break }
+            guard u >= 32, u < 127 else { return nil }   // not text after all
+            units.append(u)
+            i += 2
+        }
+        let name = String(decoding: units, as: UTF16.self)
+        return name.count > "PaintTool SAI Ver.".count ? name : nil
+    }
+
+    /// The short form for the UI: "PaintTool SAI Ver.2 (64bit) Alpha.2026.10.19"
+    /// becomes "SAI Alpha.2026.10.19".
+    static func saiShortName(_ full: String) -> String {
+        if let last = full.split(separator: " ").last, last.contains(".20") { return "SAI \(last)" }
+        return full.replacingOccurrences(of: "PaintTool ", with: "")
+    }
+
+    enum RecordingCheck: Equatable {
+        case unknown        // SAI not open, recording off, or an older DLL
+        case waiting        // open, not looked yet (SAI started under 15 s ago)
+        case works
+        case unsupported    // this SAI build: recording sees no canvases
+        case unsure         // two lists matched; nothing is recorded
+    }
+
+    /// What the DLL says about recording, from a fresh status file only (the
+    /// same staleness rule as `verdict`).
+    static func recordingCheck(_ status: Status?, ageSeconds: Double?, staleAfter: Double = 5) -> RecordingCheck {
+        guard let s = status, let age = ageSeconds, age <= staleAfter else { return .unknown }
+        switch s.tl {
+        case "waiting":         return .waiting
+        case "known", "found":  return .works
+        case "none":            return .unsupported
+        case "ambiguous":       return .unsure
+        default:                return .unknown
+        }
+    }
+
+    /// One line for the Recording tab, or nil to show nothing. `sai` is the
+    /// short name ("SAI Alpha.2026.10.19"), nil when it could not be read.
+    static func explainRecording(_ check: RecordingCheck, sai: String?) -> String? {
+        let name = sai ?? "this SAI"
+        switch check {
+        case .unknown:     return nil
+        case .waiting:     return "Checking that recording works with \(name)…"
+        case .works:       return "Recording works with \(name)."
+        case .unsupported: return "Recording does not work with \(name) yet. Nothing is being recorded."
+        case .unsure:      return "Recording cannot tell which canvas to record in \(name). Nothing is being recorded."
         }
     }
 }

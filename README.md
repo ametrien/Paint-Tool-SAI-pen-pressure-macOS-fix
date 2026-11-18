@@ -44,12 +44,10 @@ SAI Ver.2 is a *Technical Preview* that SYSTEMAX keeps updating, so the page usu
 the **stable** build, older and settled, and the newer **Major Renovated** build (its file says
 *Alpha*). Either works with this app for pen pressure.
 
-**For the timelapse, you need SAI Ver.2 (64bit) Alpha.2026.07.27.** That is the only build
-recording has been tested on. With other builds, such as 2026-10-19, it records nothing, and
-nothing in the app says so yet ([#56](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/56)).
-SYSTEMAX no longer offers that build for download, so this helps only if you still have it: if
-you updated SAI and recording stopped, put your old `sai2.exe` back. Support for the current
-build is the next step.
+**The timelapse** has been tested on SAI Ver.2 (64bit) Alpha.2026.07.27 and Alpha.2026.10.19
+(from v0.3.17). With another build it looks for the canvas by itself, and the Recording tab says
+whether it found it. If you are on v0.3.16 or older, recording works with 07.27 only
+([#56](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/56)).
 
 **The licence (paid, needed only to save)**
 
@@ -196,9 +194,11 @@ drawing's name in the **Videos** tab, in `~/Movies/SAI Timelapses`. Come back to
 another day and it is added to the same video. **Make video now…** in the Recording tab makes one
 mid-session; recording carries on afterwards.
 
-> **Only with SAI Ver.2 Alpha.2026.07.27 for now.** Recording reads SAI's memory at places that
-> change from one SAI build to the next, and it has been tested on that build only. Other builds
-> record nothing ([#56](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/56)).
+> **Tested on SAI Ver.2 Alpha.2026.07.27 and Alpha.2026.10.19** (v0.3.17 and later). Recording
+> reads SAI's memory, and the place it reads moves from one SAI build to the next. With a build
+> it does not know, it looks for the canvas by itself, and the Recording tab says whether that
+> worked. If it did not, nothing is recorded
+> ([#56](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/56)).
 
 It reads SAI's canvas out of memory rather than capturing the screen, so the video is the artwork
 alone: no panels, no cursor, and no camera movement when you zoom, pan or rotate while working.
@@ -324,11 +324,12 @@ SAI reads these when it starts, so a change applies the next time SAI opens.
 
 The canvas timelapse. Tick **Record a timelapse while I draw**, choose where videos are saved, and
 draw. The video is made when SAI closes. **Record every stroke separately** gives more detail, at
-the cost of drawing feeling slower.
+the cost of drawing feeling slower. **Video quality** is Standard (1024 px) or High (2048 px):
+High keeps fine lines sharper, and the videos are larger.
 
-It records the canvas, not the screen: no panels, no cursor, no zooming, and no sound. Changes
-apply the next time SAI starts. Works with SAI Ver.2 Alpha.2026.07.27 only, for now
-([#56](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/56)).
+A line under the settings names your SAI build and says whether recording works with it. It
+records the canvas, not the screen: no panels, no cursor, no zooming, and no sound. Changes
+apply the next time SAI starts.
 
 ### Videos
 

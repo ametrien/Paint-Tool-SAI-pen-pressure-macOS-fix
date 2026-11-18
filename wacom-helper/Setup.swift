@@ -237,6 +237,21 @@ func bridgeStatus() -> (BridgeCheck.Status?, Double?) {
     return (st, mod.map { Date().timeIntervalSince($0) })
 }
 
+/// SAI's own name for the build in the prefix, e.g. "PaintTool SAI Ver.2 (64bit)
+/// Alpha.2026.10.19". Read from sai2.exe, about 5 MB, so it is kept until the
+/// file's size or date changes (a SAI update). nil when it cannot be read.
+private var g_saiNameCache: (key: String, name: String?)?
+func prefixSAIName() -> String? {
+    let attrs = try? FileManager.default.attributesOfItem(atPath: prefixSAIExe)
+    guard let size = attrs?[.size] as? Int, let date = attrs?[.modificationDate] as? Date else { return nil }
+    let key = "\(size)-\(date.timeIntervalSince1970)"
+    if let c = g_saiNameCache, c.key == key { return c.name }
+    let name = (try? Data(contentsOf: URL(fileURLWithPath: prefixSAIExe), options: .mappedIfSafe))
+        .flatMap { BridgeCheck.saiVersionName(exeData: $0) }
+    g_saiNameCache = (key, name)
+    return name
+}
+
 /// The bridge probe shipped in the bundle. nil in dev mode (running outside a
 /// .app), where there is nothing to run and the button says so.
 func bridgeProbePath() -> String? {

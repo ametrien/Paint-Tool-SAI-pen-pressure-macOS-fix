@@ -578,9 +578,9 @@ func finalizeSegments() -> Int {
 /// cannot mix dimensions.
 func rebuildDrawing(from piecesDir: String, to outURL: URL, maxSeconds: Double) -> Bool {
     let fm = FileManager.default
-    let names = ((try? fm.contentsOfDirectory(atPath: piecesDir)) ?? [])
+    let files = ((try? fm.contentsOfDirectory(atPath: piecesDir)) ?? [])
         .filter { $0.hasSuffix(".mp4") && !$0.hasPrefix(".") }
-        .sorted()          // piece names are dates, so this is capture order
+    let names = LibraryCore.piecesInOrder(files)   // not .sorted(): see there
     guard !names.isEmpty else { return false }
 
     let comp = AVMutableComposition()

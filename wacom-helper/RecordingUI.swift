@@ -44,6 +44,20 @@ extension SetupController {
         everyHint.lineBreakMode = .byWordWrapping
         everyHint.usesSingleLineMode = false
         recordingTab.addArrangedSubview(everyHint)
+        // Video size. Both read the whole canvas; this is only how far it is
+        // shrunk. The labels say what changes, not the pixel count alone.
+        let qualityRow = NSStackView(); qualityRow.orientation = .horizontal
+        qualityRow.alignment = .centerY; qualityRow.spacing = 8
+        qualityRow.addArrangedSubview(lbl("Video quality", 12, bold: true))
+        recQualityPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        recQualityPopup.addItems(withTitles: ["Standard (1024 px)", "High (2048 px)"])
+        recQualityPopup.selectItem(at: timelapseQualityHigh() ? 1 : 0)
+        recQualityPopup.target = self
+        recQualityPopup.action = #selector(recQualityChanged)
+        recQualityPopup.controlSize = .small
+        recQualityPopup.toolTip = "High keeps fine lines sharper. Videos are larger and each frame takes a little longer."
+        qualityRow.addArrangedSubview(recQualityPopup)
+        recordingTab.addArrangedSubview(qualityRow)
         // Only while it matters: a change made with SAI closed simply applies.
         recApplyHint = lbl("SAI is open: this applies the next time it starts.", 11, color: .systemOrange)
         recApplyHint.isHidden = true
@@ -52,6 +66,14 @@ extension SetupController {
         recFramesLabel = lbl("", 13, bold: true)
         recordingTab.setCustomSpacing(14, after: recApplyHint)
         recordingTab.addArrangedSubview(recFramesLabel)
+        // Which SAI, and whether recording can see its canvases (#56). Shown
+        // only while SAI is open and the DLL has said; red when it cannot.
+        recSAILabel = lbl("", 11, color: .secondaryLabelColor)
+        recSAILabel.usesSingleLineMode = false
+        recSAILabel.lineBreakMode = .byWordWrapping
+        recSAILabel.preferredMaxLayoutWidth = rowWidth
+        recSAILabel.isHidden = true
+        recordingTab.addArrangedSubview(recSAILabel)
         recUsageLabel = lbl("", 11, color: .secondaryLabelColor)
         recUsageLabel.usesSingleLineMode = false
         recUsageLabel.lineBreakMode = .byWordWrapping
@@ -134,6 +156,7 @@ extension SetupController {
         guard recCheck != nil else { return }
         recCheck.state = timelapseOn ? .on : .off
         recEveryStrokeCheck?.state = timelapseEveryStroke() ? .on : .off
+        recQualityPopup?.selectItem(at: timelapseQualityHigh() ? 1 : 0)
         // Frames are encoded away within a second of being captured, so the
         // raw count is near zero while recording. What has been captured lives
         // in the segments, and counting only frames made a working recording
@@ -175,6 +198,20 @@ extension SetupController {
                 + "detail is thinned (every 2nd frame) rather than losing the start."
         }
         recFolderLabel?.stringValue = prettyPath(timelapseOutputFolder())
+        refreshRecordingCheck()
+    }
+    /// The line under the frame count: does recording work with this SAI?
+    func refreshRecordingCheck() {
+        guard recSAILabel != nil else { return }
+        let (st, age) = bridgeStatus()
+        let check = timelapseOn ? BridgeCheck.recordingCheck(st, ageSeconds: age) : .unknown
+        let text = BridgeCheck.explainRecording(check, sai: prefixSAIName().map(BridgeCheck.saiShortName))
+        recSAILabel.stringValue = text ?? ""
+        recSAILabel.textColor = (check == .unsupported || check == .unsure) ? .systemRed : .secondaryLabelColor
+        if recSAILabel.isHidden != (text == nil) {
+            recSAILabel.isHidden = text == nil
+            applyLayout()
+        }
     }
     /// Show a finished video in the Recording tab. The path is remembered so
     /// the preview survives a relaunch — otherwise the tab looks empty right
@@ -213,6 +250,11 @@ extension SetupController {
     }
     @objc func recEveryStrokeToggle() {
         setTimelapseEveryStroke(recEveryStrokeCheck.state == .on)
+        recApplyPending = saiProcessRunning()
+        refreshRecordingTab()
+    }
+    @objc func recQualityChanged() {
+        setTimelapseQualityHigh(recQualityPopup.indexOfSelectedItem == 1)
         recApplyPending = saiProcessRunning()
         refreshRecordingTab()
     }

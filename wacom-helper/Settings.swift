@@ -40,6 +40,19 @@ func setTimelapseEveryStroke(_ on: Bool) {
     else { try? FileManager.default.removeItem(atPath: timelapseEveryStrokeMarker()) }
 }
 
+/// Recording tab: how big the video is. Recording reads the whole canvas and
+/// shrinks it to this many pixels on the longer side (WT_TIMELAPSE_SIZE, read
+/// when SAI starts). Standard is the size videos have always been; High has
+/// four times the pixels, for fine lines, and heavier files.
+let timelapseSizeStandard = 1024, timelapseSizeHigh = 2048
+func timelapseQualityMarker() -> String { appSupport() + "/timelapse-quality-high.txt" }
+func timelapseQualityHigh() -> Bool { FileManager.default.fileExists(atPath: timelapseQualityMarker()) }
+func setTimelapseQualityHigh(_ on: Bool) {
+    if on { try? "1".write(toFile: timelapseQualityMarker(), atomically: true, encoding: .utf8) }
+    else { try? FileManager.default.removeItem(atPath: timelapseQualityMarker()) }
+}
+func timelapseFrameSize() -> Int { timelapseQualityHigh() ? timelapseSizeHigh : timelapseSizeStandard }
+
 /// Advanced tab: install updates without being asked?
 ///
 /// Off by default, and not because of the download. Every build is signed

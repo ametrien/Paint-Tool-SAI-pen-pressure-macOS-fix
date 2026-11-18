@@ -445,6 +445,12 @@ func runSelfTestIfAsked() {
     }
 
     if let dir = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_LIBRARY"] {
+        // SAIPP_SELFTEST_STALE_ANSWER plays the Videos tab: its copy of the
+        // library was read BEFORE this filing, and it answers the waiting
+        // question after it. See LibraryStore.reload for what that broke.
+        let staleAnswer = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_STALE_ANSWER"]
+        let tabCopy = staleAnswer == nil ? nil
+            : LibraryStore(videosDir: dir, indexPath: dir + "/.library.json")
         let store = LibraryStore(videosDir: dir, indexPath: dir + "/.library.json")
         if store.recoveredFromBrokenIndex { print("recovered from a broken index") }
         // SAIPP_SELFTEST_RUNMAP names a file that stands in for the app's
@@ -474,7 +480,14 @@ func runSelfTestIfAsked() {
             store.confirmSame(p)
             print("confirmed same -> \(store.lib.drawing(id: p.candidateId)?.folder ?? "?")")
         }
-        for d in store.lib.drawings.sorted(by: { $0.folder < $1.folder }) {
+        if let tabCopy, let p = tabCopy.lib.pending.first {
+            if staleAnswer == "same" { tabCopy.confirmSame(p) } else { tabCopy.confirmSeparate(p) }
+            print("answered \(staleAnswer ?? "?") from the tab's copy")
+        }
+        // Printed from disk, not from `store`: what is listed must be what the
+        // next launch of the app will see.
+        let onDisk = LibraryStore(videosDir: dir, indexPath: dir + "/.library.json")
+        for d in onDisk.lib.drawings.sorted(by: { $0.folder < $1.folder }) {
             print("drawing \(d.folder) [\(d.title)]: \(d.ordered.map(\.file).joined(separator: ", "))")
         }
         exit(0)
