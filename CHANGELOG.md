@@ -8,6 +8,36 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
 Not in a build yet. Move this under the next version number when it is released,
 and mention it in the release notes.
 
+## [0.3.17] — 2026-11-18
+
+### Added
+- **Recording finds the canvas in newer SAI builds**
+  ([#56](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/56)).
+  SAI Alpha.2026.10.19 moved the place in memory where it keeps its open canvases, so recording
+  there captured nothing. Builds that have been checked are now listed with their address
+  (07.27 and 10.19), and for any other build the recorder looks for the list of canvases itself.
+- **The Recording tab says whether recording works with your SAI.** It names the build and reads
+  "Recording works with SAI Alpha…", or says in red that it does not work yet and nothing is
+  being recorded. Before, a build recording could not read gave no sign at all.
+- **Video quality on the Recording tab:** Standard (1024 px, the default) or High (2048 px), which
+  keeps fine lines sharper in a larger file.
+
+### Fixed
+- **A new drawing could vanish from the Videos tab after "Is this the same drawing?".** Answering
+  that question right after **Make video now** saved an older copy of the library, one made before
+  the new drawing was filed, so the new drawing dropped out of the list while its video stayed in
+  its folder. Every change to the library now reads it from disk first.
+- **That question now asks about the video just made.** It used to ask about whichever older
+  session was waiting first, so it showed two earlier recordings and labelled one of them
+  "Tonight". Older questions are still shown on their drawing in the Videos tab.
+- **No more dark or empty frames.** Recording reads the full canvas instead of SAI's reduced
+  copies, which SAI does not always keep up to date: right after a canvas was created they could
+  be a dark fill, and later blank but for the newest stroke.
+- **Every stroke gets its own frame.** The wait after a stroke before a frame is taken is about
+  70 ms instead of about 270 ms, so quick strokes no longer share a frame.
+- **Pieces of a video are joined in the right order.** A piece named `… 1141 (2).mp4` was put
+  before `… 1141.mp4`.
+
 ### Changed
 - **The licence is now the Apache License 2.0, with a NOTICE file.** You may still use and change
   the code. Anyone who shares a copy or a version of their own keeps the NOTICE with it, shows it
