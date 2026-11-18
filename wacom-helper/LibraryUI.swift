@@ -908,10 +908,16 @@ extension SetupController {
     /// offers is also available from the Timelapses tab afterwards, so
     /// dismissing it costs nothing — the session is already filed and already
     /// has a video.
-    @objc func askAboutPendingSessions() {
-        let store = libStore ?? makeLibraryStore()
+    ///
+    /// `justFiled` is what the video just made filed. Only a question about one
+    /// of those is asked: see LibraryCore.questionAfterFiling. The store is read
+    /// fresh, not taken from the tab, which may predate that filing.
+    func askAboutPendingSessions(justFiled: [LibraryStore.Filed]) {
+        let store = makeLibraryStore()
         libStore = store
-        guard let p = store.lib.pending.first,
+        guard let p = LibraryCore.questionAfterFiling(
+                  pending: store.lib.pending,
+                  justFiled: justFiled.map { ($0.pieceFile, $0.drawingId) }),
               let mine = store.lib.drawing(id: p.drawingId),
               let other = store.lib.drawing(id: p.candidateId) else { return }
 

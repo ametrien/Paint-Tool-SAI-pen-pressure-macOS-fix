@@ -1329,6 +1329,33 @@ echo "$out" | grep -q "confirmed same -> Sketch" \
   && echo "  ok   confirm: exactly one copy of it exists afterwards" \
   || { echo "  FAIL confirm: the session was duplicated or lost"; lib_fail=1; }
 
+# THE TRAP OF THE TAB'S COPY (found 2026-11-18, while drawing): the Videos tab
+# keeps the library it read when it was last shown. "Make video now" filed a
+# brand-new drawing with a fresh copy, then the question about an OLDER session
+# was answered from the tab's copy, which had never heard of the new drawing.
+# Saving that copy wrote the new drawing out of the index: its folder stayed on
+# disk, the Videos tab no longer listed it, and to the artist the recording had
+# simply not happened.
+#
+# A question is waiting (opens well past where Sketch was left), and then a new
+# drawing is filed while the tab still holds the library from before it.
+mksession "session 2026-07-31 2000" "Sketch" "2026-07-31T20:00:00Z" 7 125 140
+out=$(file_them)
+echo "$out" | grep -q "ask:Sketch" \
+  && echo "  ok   stale tab: setup, a question is waiting" \
+  || { echo "  FAIL stale tab: setup expected a question, got: $out"; lib_fail=1; }
+mksession "session 2026-08-01 1000" "Landscape" "2026-08-01T10:00:00Z" 55 5 40
+out=$(file_them env SAIPP_SELFTEST_STALE_ANSWER=separate)
+echo "$out" | grep -q "answered separate from the tab's copy" \
+  && echo "  ok   stale tab: the question was answered from the old copy" \
+  || { echo "  FAIL stale tab: the old copy did not answer: $out"; lib_fail=1; }
+echo "$out" | grep -qE "^drawing Landscape [0-9-]+ [0-9]+ \[Landscape\]: 2026-08-01 1000.mp4$" \
+  && echo "  ok   stale tab: the drawing filed meanwhile is still in the library" \
+  || { echo "  FAIL stale tab: answering from an old copy dropped the new drawing: $out"; lib_fail=1; }
+echo "$out" | grep -qE "^drawing Sketch [0-9-]+ [0-9]+ \[Sketch\]: 2026-07-31 2000.mp4$" \
+  && echo "  ok   stale tab: and the answered session stays a drawing of its own" \
+  || { echo "  FAIL stale tab: the answered session is missing: $out"; lib_fail=1; }
+
 [ "$lib_fail" = 0 ] || exit 1
 echo "All library filing tests passed."
 

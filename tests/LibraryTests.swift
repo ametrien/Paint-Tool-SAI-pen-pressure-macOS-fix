@@ -653,6 +653,27 @@ do {
     }
 }
 
+// MARK: - which question to ask after "Make video now"
+do {
+    let t = Date(timeIntervalSince1970: 0)
+    let old = Pending(pieceFile: "2026-11-18 1223.mp4", drawingId: "d1223",
+                      candidateId: "dOld", askedAt: t)
+    let now = Pending(pieceFile: "2026-11-18 1230.mp4", drawingId: "d1230",
+                      candidateId: "dOld", askedAt: t)
+    // THE TRAP: an older question waits first in the list. Asking `pending.first`
+    // showed it right after a new drawing was made, about two old recordings.
+    expect(LibraryCore.questionAfterFiling(pending: [old], justFiled: [("2026-11-18 1230.mp4", "d1230")]) == nil,
+           "ask after filing: an older waiting question is not asked about a new video")
+    expect(LibraryCore.questionAfterFiling(pending: [old, now], justFiled: [("2026-11-18 1230.mp4", "d1230")]) == now,
+           "ask after filing: the question about the piece just filed is the one asked")
+    // Piece names are timestamps, so two drawings can each hold a piece with the
+    // same name. The drawing it went to is part of the identity.
+    expect(LibraryCore.questionAfterFiling(pending: [old], justFiled: [("2026-11-18 1223.mp4", "dOther")]) == nil,
+           "ask after filing: same file name in another drawing is not the same piece")
+    expect(LibraryCore.questionAfterFiling(pending: [old, now], justFiled: []) == nil,
+           "ask after filing: nothing filed, nothing asked")
+}
+
 if failures > 0 {
     print("FAILED: \(failures) test(s)")
     exit(1)

@@ -386,6 +386,25 @@ enum LibraryCore {
     }
 }
 
+// MARK: - which question to ask now
+
+extension LibraryCore {
+    /// The question to ask right after a video was made: only one about a piece
+    /// filed by THAT video, identified by its file and the drawing it went to.
+    ///
+    /// THE TRAP: the first waiting question can be about a session from hours
+    /// ago. Asking it right after "Make video now" showed two older recordings
+    /// side by side with the old one labelled "Tonight", while the drawing just
+    /// made was not in the question at all (2026-11-18). Older questions are
+    /// still on the drawing's card in the Videos tab; they are not asked here.
+    static func questionAfterFiling(pending: [Pending],
+                                    justFiled: [(pieceFile: String, drawingId: String)]) -> Pending? {
+        pending.first { p in
+            justFiled.contains { $0.pieceFile == p.pieceFile && $0.drawingId == p.drawingId }
+        }
+    }
+}
+
 // MARK: - the same canvas, later in the same run of SAI
 
 extension LibraryCore {
