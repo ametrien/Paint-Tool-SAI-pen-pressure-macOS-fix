@@ -8,8 +8,8 @@
 Run **PaintTool SAI Ver.2** on a Mac with **real pen pressure**, and record a **timelapse of your
 canvas** while you draw. Free and open source.
 
-- **[What you need](#what-you-need):** a Mac, a tablet and your own SAI, and the setups users have reported working.
-- **[Get started](#get-started):** download, drag to Applications, follow the setup window.
+- **[What you need](#what-you-need):** a Mac, a tablet and your own SAI.
+- **[Get started](#get-started):** download the free app, follow the setup window, get SAI and a licence, and the setups users have reported working.
 - **[What you get](#what-you-get):** pressure and pen feel, Mac shortcuts, sharp text on Retina screens, Chinese, Japanese and Korean text, timelapse.
 - **[What it does not do](#what-it-does-not-do):** SAI and its licence are not included, pressure only, and the limits that belong to SAI or Wine.
 - **[What it looks like](#what-it-looks-like):** every tab, with a screenshot.
@@ -30,6 +30,24 @@ canvas** while you draw. Free and open source.
   **[Where to get both, step by step](#get-sai-and-a-licence)**.
 
 Wine is installed for you during setup.
+
+## Get started
+
+SAI Pen Pressure is free.
+
+1. **[Download the latest release](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/releases/latest)** and drag the app to Applications.
+2. **Right-click it → Open** the first time (macOS asks once, because the app is not notarised).
+3. Follow the setup window. It installs Wine, finds your SAI folder, and checks the one permission it needs.
+
+You bring your own copy of **PaintTool SAI Ver.2** and, if you want to save your work, a licence
+from SYSTEMAX. Everything else the app handles. How to get both is just below.
+
+**Check it on your own Mac in a minute:** the Pen tab's **Test pen** shows the pressure the app
+sends and the pressure that arrives on SAI's side. Both bars move when it works.
+
+→ **[Full install guide](https://ametrien.github.io/Paint-Tool-SAI-pen-pressure-macOS-fix/install)**, including the manual command-line route
+→ **[Troubleshooting](https://ametrien.github.io/Paint-Tool-SAI-pen-pressure-macOS-fix/troubleshooting)**, organised by how to tell which problem you have
+→ **[How it works](https://ametrien.github.io/Paint-Tool-SAI-pen-pressure-macOS-fix/how-it-works)**, if you want the architecture
 
 ### Get SAI and a licence
 
@@ -70,6 +88,8 @@ Lost the email? SYSTEMAX can send it again:
 
 This project is not affiliated with SYSTEMAX and cannot sell, make or unlock a licence.
 
+### Reported working
+
 Users have reported it working on:
 
 - Macs: **M5 MacBook Air** and **M3 Pro MacBook Pro** on **macOS Tahoe 26**, and **M1 Pro MacBook Pro**
@@ -81,9 +101,6 @@ Users have reported it working on:
 
 If you try another Mac or tablet, a short report as an issue helps the next person, whether it
 worked or not (see [CONTRIBUTING](CONTRIBUTING.md)).
-
-**Check it on your own Mac in a minute:** the Pen tab's **Test pen** shows the pressure the app
-sends and the pressure that arrives on SAI's side. Both bars move when it works.
 
 ---
 
@@ -157,21 +174,6 @@ route you take. What this saves you is the Windows licence and the machine aroun
 → **[The longer version](https://ametrien.github.io/Paint-Tool-SAI-pen-pressure-macOS-fix/#why-not-just-run-a-virtual-machine)**, including the honest
 trade-off: a VM runs real Windows, so when something misbehaves there it is SAI's fault rather than
 the translation layer's.
-
----
-
-## Get started
-
-1. **[Download the latest release](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/releases/latest)** and drag the app to Applications.
-2. **Right-click it → Open** the first time (macOS asks once, because the app is not notarised).
-3. Follow the setup window. It installs Wine, finds your SAI folder, and checks the one permission it needs.
-
-You bring your own copy of **PaintTool SAI Ver.2** and, if you want to save your work, a licence
-from SYSTEMAX. Everything else the app handles.
-
-→ **[Full install guide](https://ametrien.github.io/Paint-Tool-SAI-pen-pressure-macOS-fix/install)**, including the manual command-line route
-→ **[Troubleshooting](https://ametrien.github.io/Paint-Tool-SAI-pen-pressure-macOS-fix/troubleshooting)**, organised by how to tell which problem you have
-→ **[How it works](https://ametrien.github.io/Paint-Tool-SAI-pen-pressure-macOS-fix/how-it-works)**, if you want the architecture
 
 ---
 
