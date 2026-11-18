@@ -44,6 +44,7 @@
 
 #include <stdint.h>
 #include <string.h>
+#include <stdio.h>     /* snprintf, for tlc_format_status */
 
 /* ---------------------------------------------------------------------------
  * Sanity ceilings. These are GUARDS, not facts about SAI: their job is to turn
@@ -240,23 +241,71 @@ static int tlc_tilemap_read(TLC_READ_FN rd, void *ctx, const TLC_LAYOUT *L,
     return 1;
 }
 
-/* Pick the SMALLEST mip level still at least `target` px on a side.
+/* --- reading the full canvas, and shrinking it ourselves (2026-11-18) -----
+ * SAI's reduced copies (levels 1 and up) are not always drawn: right after a
+ * canvas is created they held a dark fill, and once mid-session level 2 went
+ * blank and then showed only the newest stroke while the canvas itself was
+ * whole. Level 0 is what SAI paints the strokes into, and a session read from
+ * it (51 frames, 2026-11-18) had none of that. So recording reads level 0 and
+ * shrinks it here to the size the artist chose on the Recording tab.
  *
- * This is the main cost control: for a 1024px timelapse frame of a 4000px
- * canvas we read roughly a sixteenth of the memory. Level 0 is always a valid
- * answer, so a canvas smaller than the target simply returns 0. */
-static int tlc_pick_level(TLC_READ_FN rd, void *ctx, const TLC_LAYOUT *L,
-                          uint64_t canvas, uint32_t target) {
-    int best = 0, i;
-    int limit = (int)L->c_map_count;
+ * Only a canvas too big to buffer (over max_bytes at level 0) falls back to a
+ * reduced level: the smallest step down that fits. */
+static int tlc_full_level(TLC_READ_FN rd, void *ctx, const TLC_LAYOUT *L,
+                          uint64_t canvas, uint64_t max_bytes) {
+    int i, limit = (int)L->c_map_count;
     if (limit > TLC_MAX_LEVELS) limit = TLC_MAX_LEVELS;
     for (i = 0; i < limit; i++) {
         TLC_TILEMAP tm;
         if (!tlc_tilemap_read(rd, ctx, L, canvas, i, &tm)) break;
-        if (tm.width < target && tm.height < target) break;
-        best = i;
+        if ((uint64_t)tm.width * tm.height * 4u <= max_bytes) return i;
     }
-    return best;
+    return 0;   /* nothing fits or nothing reads: the caller's checks refuse it */
+}
+
+/* The size a w x h frame is shrunk to: its longer side at most `target`, the
+ * same shape, never enlarged. */
+static void tlc_shrink_size(uint32_t w, uint32_t h, uint32_t target, uint32_t *ow, uint32_t *oh) {
+    if (!target || (w <= target && h <= target)) { *ow = w; *oh = h; return; }
+    if (w >= h) {
+        *ow = target;
+        *oh = (uint32_t)(((uint64_t)h * target + w / 2) / w);
+    } else {
+        *oh = target;
+        *ow = (uint32_t)(((uint64_t)w * target + h / 2) / h);
+    }
+    if (!*ow) *ow = 1;
+    if (!*oh) *oh = 1;
+}
+
+/* Shrink a BGRA image by averaging every source pixel that falls in each
+ * destination pixel (a box filter). Thin lines stay visible as lighter lines
+ * instead of vanishing, which is what plain skipping of pixels would do. Each
+ * source pixel is read once. ow and oh must not be larger than w and h. */
+static void tlc_downscale_bgra(const uint8_t *src, uint32_t w, uint32_t h,
+                               uint8_t *dst, uint32_t ow, uint32_t oh) {
+    uint32_t oy, ox, c;
+    for (oy = 0; oy < oh; oy++) {
+        uint32_t y0 = (uint32_t)((uint64_t)oy * h / oh);
+        uint32_t y1 = (uint32_t)((uint64_t)(oy + 1) * h / oh);
+        if (y1 <= y0) y1 = y0 + 1;
+        for (ox = 0; ox < ow; ox++) {
+            uint32_t x0 = (uint32_t)((uint64_t)ox * w / ow);
+            uint32_t x1 = (uint32_t)((uint64_t)(ox + 1) * w / ow);
+            uint64_t sum[4] = { 0, 0, 0, 0 }, n;
+            uint32_t y, x;
+            if (x1 <= x0) x1 = x0 + 1;
+            for (y = y0; y < y1; y++) {
+                const uint8_t *p = src + ((size_t)y * w + x0) * 4u;
+                for (x = x0; x < x1; x++, p += 4) {
+                    sum[0] += p[0]; sum[1] += p[1]; sum[2] += p[2]; sum[3] += p[3];
+                }
+            }
+            n = (uint64_t)(y1 - y0) * (x1 - x0);
+            for (c = 0; c < 4; c++)
+                dst[((size_t)oy * ow + ox) * 4u + c] = (uint8_t)((sum[c] + n / 2) / n);
+        }
+    }
 }
 
 /* --- pixels -------------------------------------------------------------- */
@@ -640,6 +689,229 @@ static int tlc_read_level_incremental(TLC_READ_FN rd, void *ctx, const TLC_LAYOU
 fail:
     cache->ntiles = 0;
     return 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * FINDING THE CANVAS LIST IN A BUILD WE HAVE NO TABLE ENTRY FOR (issue #56)
+ * ---------------------------------------------------------------------------
+ * Every SAI update moves session_offset, the one place in sai2.exe's own data
+ * that holds the address of the canvas list. The canvas fields themselves
+ * stayed where they were from Alpha.2026.07.27 to Alpha.2026.10.19. So for an
+ * unknown build we look for that one place ourselves instead of needing a new
+ * table entry, and the artist does nothing.
+ *
+ * What makes a slot the list head, and not just any pointer to a canvas:
+ *
+ *   1. It points at a well-formed list (tlc_list_length): every node passes
+ *      tlc_canvas_read, has a level-0 tile map of exactly its own size and a
+ *      name, and every node's prev points back at the node before it.
+ *   2. Nothing comes before what it points at (tlc_is_list_head). SAI also
+ *      keeps statics for the CURRENT canvas (TIMELAPSE-PLAN.md lists four in
+ *      07.27). One pointing at an open drawing passes test 1 as a shorter
+ *      list, but that drawing's prev is a canvas whose next is the drawing.
+ *      Walking from there would skip the drawing as if it were the scratch
+ *      pad, which is why this rule exists.
+ *   3. Of the slots left, the one with the longest list wins.
+ *
+ * A "current canvas" static that points at the scratch pad (nothing open yet,
+ * or the artist is on the scratch pad) is indistinguishable from the head at
+ * that moment: same value. Either then gives the same list, so the lowest
+ * such slot is taken. When it later moves to a drawing it fails rule 2, the
+ * caller sees that (tlc_is_list_head on every capture) and searches again.
+ * ------------------------------------------------------------------------- */
+
+#define TLC_LIST_MAX_NODES 64     /* more open canvases than this is not SAI   */
+#define TLC_NAME_MAX_UNITS 260    /* MAX_PATH; SAI's name field is about this  */
+
+/* A canvas that is a full member of a list: it validates, its level-0 tile map
+ * is the same size, and it has a non-empty, terminated name. */
+static int tlc_canvas_node_ok(TLC_READ_FN rd, void *ctx, const TLC_LAYOUT *L, uint64_t addr) {
+    TLC_CANVAS cv;
+    TLC_TILEMAP tm;
+    uint16_t u = 0;
+    uint32_t i;
+    if (!tlc_canvas_read(rd, ctx, L, addr, &cv)) return 0;
+    if (!tlc_tilemap_read(rd, ctx, L, addr, 0, &tm)) return 0;
+    if (tm.width != (uint32_t)cv.width || tm.height != (uint32_t)cv.height) return 0;
+    for (i = 0; i < TLC_NAME_MAX_UNITS; i++) {
+        if (!rd(ctx, addr + L->c_name + (uint64_t)i * 2, &u, 2)) return 0;
+        if (u == 0) break;
+        if (u < 32) return 0;                 /* control characters: not a name */
+    }
+    return i > 0 && i < TLC_NAME_MAX_UNITS;   /* empty or unterminated: no     */
+}
+
+/* How many canvases the list starting at `head` holds, or 0 if it is not a
+ * well-formed list (a bad node, a prev that does not point back, a loop). */
+static int tlc_list_length(TLC_READ_FN rd, void *ctx, const TLC_LAYOUT *L, uint64_t head) {
+    uint64_t cur = head, before = 0;
+    int n;
+    for (n = 0; cur; n++) {
+        uint64_t next = 0, prev = 0;
+        if (n >= TLC_LIST_MAX_NODES) return 0;   /* a loop, or not SAI's list   */
+        if (!tlc_canvas_node_ok(rd, ctx, L, cur)) return 0;
+        if (n > 0) {
+            if (!tlc_u64(rd, ctx, cur + L->c_prev, &prev) || prev != before) return 0;
+        }
+        if (!tlc_canvas_next(rd, ctx, L, cur, &next)) return 0;
+        before = cur;
+        cur = next;
+    }
+    return n;
+}
+
+/* Is `node` the first canvas of its list? True when its prev is empty, or when
+ * whatever prev points at does not link forward to it. */
+static int tlc_is_list_head(TLC_READ_FN rd, void *ctx, const TLC_LAYOUT *L, uint64_t node) {
+    uint64_t prev = 0, prev_next = 0;
+    TLC_CANVAS cv;
+    if (!tlc_u64(rd, ctx, node + L->c_prev, &prev)) return 0;
+    if (!prev) return 1;
+    if (!tlc_canvas_read(rd, ctx, L, prev, &cv)) return 1;
+    if (!tlc_canvas_next(rd, ctx, L, prev, &prev_next)) return 1;
+    return prev_next != node;
+}
+
+/* The anchor still holds the head of a well-formed list. Cheap enough to run
+ * before every capture: it reads the list the capture walks anyway. */
+static int tlc_anchor_ok(TLC_READ_FN rd, void *ctx, const TLC_LAYOUT *L,
+                         uint64_t image_base, uint64_t offset) {
+    uint64_t head = 0;
+    if (!tlc_u64(rd, ctx, image_base + offset, &head) || !head) return 0;
+    return tlc_list_length(rd, ctx, L, head) > 0 && tlc_is_list_head(rd, ctx, L, head);
+}
+
+enum {
+    TLC_FIND_NOTHING   = 0,   /* no slot points at a canvas list              */
+    TLC_FIND_FOUND     = 1,   /* one list, and offset is the slot holding it  */
+    TLC_FIND_AMBIGUOUS = 2,   /* two different lists of the same length       */
+};
+
+typedef struct {
+    int      status;          /* TLC_FIND_*                                    */
+    uint64_t offset;          /* from image_base, when FOUND                   */
+    int      nodes;           /* canvases in that list, scratch pad included   */
+    int      slots;           /* slots that held that same head                */
+    unsigned long checked;    /* slots looked at, for the log                  */
+} TLC_FOUND;
+
+/* Search the 8-byte slots of [lo, hi) ranges (the image's writable data
+ * sections) for the list head. `ranges` holds nranges lo/hi pairs. Values that
+ * cannot be a heap pointer are skipped before any read, which is most of them. */
+static int tlc_find_session(TLC_READ_FN rd, void *ctx, const TLC_LAYOUT *L,
+                            uint64_t image_base, uint64_t image_end,
+                            const uint64_t *ranges, int nranges, TLC_FOUND *out) {
+    uint64_t best_head = 0;
+    int r, best = 0, tie = 0;
+    memset(out, 0, sizeof *out);
+    for (r = 0; r < nranges; r++) {
+        uint64_t lo = (ranges[2 * r] + 7) & ~(uint64_t)7, hi = ranges[2 * r + 1], a;
+        for (a = lo; a + 8 <= hi; a += 8) {
+            uint64_t v = 0;
+            int n;
+            out->checked++;
+            if (!tlc_u64(rd, ctx, a, &v)) continue;
+            if (v < 0x10000 || (v & 7) || v >= 0x800000000000ULL) continue;
+            if (v >= image_base && v < image_end) continue;   /* canvases live on the heap */
+            if (v == best_head) {                 /* another slot, same head   */
+                out->slots++;
+                continue;
+            }
+            n = tlc_list_length(rd, ctx, L, v);
+            if (n == 0 || n < best || !tlc_is_list_head(rd, ctx, L, v)) continue;
+            if (n == best) { tie = 1; continue; }  /* a different list, as long */
+            best = n; best_head = v; tie = 0;
+            out->offset = a - image_base; out->nodes = n; out->slots = 1;
+        }
+    }
+    if (!best) return out->status = TLC_FIND_NOTHING;
+    if (tie) { out->offset = 0; return out->status = TLC_FIND_AMBIGUOUS; }
+    return out->status = TLC_FIND_FOUND;
+}
+
+/* Is `canvas` one of the open canvases in the list at `head`? A "current
+ * canvas" hint is used only when it is: a canvas that was closed but not yet
+ * freed still validates on its own (TIMELAPSE-PLAN.md, "How the anchor was
+ * confirmed"), and a hint read from the wrong place could point anywhere. */
+static int tlc_list_contains(TLC_READ_FN rd, void *ctx, const TLC_LAYOUT *L,
+                             uint64_t head, uint64_t canvas) {
+    int n;
+    for (n = 0; head && n < TLC_LIST_MAX_NODES; n++) {
+        uint64_t next = 0;
+        if (head == canvas) return 1;
+        if (!tlc_canvas_next(rd, ctx, L, head, &next)) return 0;
+        head = next;
+    }
+    return 0;
+}
+
+/* --- builds we have checked by hand --------------------------------------
+ * Known by two numbers from sai2.exe's PE header, which the DLL reads from
+ * memory without opening the file: the link time stamp and SizeOfImage. A
+ * known build uses its row; anything else is found by tlc_find_session. A row
+ * is also only trusted while tlc_anchor_ok agrees, so a wrong row costs one
+ * search, not a silent recording of nothing. */
+typedef struct {
+    uint32_t    stamp;           /* IMAGE_FILE_HEADER.TimeDateStamp            */
+    uint32_t    image_size;      /* IMAGE_OPTIONAL_HEADER.SizeOfImage          */
+    uint64_t    session_offset;
+    const char *name;
+} TLC_KNOWN_BUILD;
+
+static const TLC_KNOWN_BUILD TLC_KNOWN_BUILDS[] = {
+    /* md5 96b7a5b218b6953647405874528936e1; see TLC_LAYOUT_2026_07_27 */
+    { 0x6a66dba6u, 0x51d000u, 0x471380u, "Alpha.2026.07.27" },
+    /* Found by tlc_find_session in a real 10.19 and recorded there
+     * (2026-11-18); the same offset art-timelapse uses, found independently. */
+    { 0x6ad549f7u, 0x527000u, 0x47a380u, "Alpha.2026.10.19" },
+};
+
+static const TLC_KNOWN_BUILD *tlc_known_build(uint32_t stamp, uint32_t image_size) {
+    size_t i;
+    for (i = 0; i < sizeof TLC_KNOWN_BUILDS / sizeof TLC_KNOWN_BUILDS[0]; i++)
+        if (TLC_KNOWN_BUILDS[i].stamp == stamp && TLC_KNOWN_BUILDS[i].image_size == image_size)
+            return &TLC_KNOWN_BUILDS[i];
+    return NULL;
+}
+
+/* --- what the app is told -------------------------------------------------
+ * Lines appended to wt_status.txt, so the app can say in words whether
+ * recording can see SAI's canvases. Recording failing silently is how a whole
+ * evening was lost (issue #56).
+ *
+ *   tl=off        recording is not on for this SAI
+ *   tl=waiting    on, but not looked for yet (no stroke since SAI started)
+ *   tl=known      a build in TLC_KNOWN_BUILDS, its row checked out
+ *   tl=found      a build we had no row for; the search found the list
+ *   tl=none       searched, and no canvas list anywhere: unsupported build
+ *   tl=ambiguous  searched, and two lists matched; nothing recorded
+ *   tl_offset=0x… the slot in use, for known and found
+ */
+enum { TLC_TL_OFF, TLC_TL_WAITING, TLC_TL_KNOWN, TLC_TL_FOUND, TLC_TL_NONE, TLC_TL_AMBIGUOUS };
+
+static const char *tlc_tl_state_name(int state) {
+    switch (state) {
+    case TLC_TL_WAITING:   return "waiting";
+    case TLC_TL_KNOWN:     return "known";
+    case TLC_TL_FOUND:     return "found";
+    case TLC_TL_NONE:      return "none";
+    case TLC_TL_AMBIGUOUS: return "ambiguous";
+    default:               return "off";
+    }
+}
+
+/* Same contract as wtc_format_status: the length written, or 0 and an empty
+ * string when it does not fit. */
+static int tlc_format_status(char *out, size_t cap, int state, uint64_t offset) {
+    int n;
+    if (!out || cap == 0) return 0;
+    if (state == TLC_TL_KNOWN || state == TLC_TL_FOUND)
+        n = snprintf(out, cap, "tl=%s\ntl_offset=%#llx\n", tlc_tl_state_name(state),
+                     (unsigned long long)offset);
+    else
+        n = snprintf(out, cap, "tl=%s\n", tlc_tl_state_name(state));
+    if (n < 0 || (size_t)n >= cap) { out[0] = '\0'; return 0; }
+    return n;
 }
 
 #endif /* TIMELAPSE_CORE_H */

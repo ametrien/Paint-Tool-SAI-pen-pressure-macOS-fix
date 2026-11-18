@@ -95,6 +95,16 @@ echo "== C core (timelapse_core.h) — under AddressSanitizer + UBSanitizer =="
 cc -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all \
    -o "$WORK/test_timelapse_core" "$REPO/tests/test_timelapse_core.c"
 "$WORK/test_timelapse_core"
+# The DLL's own wait after a stroke (debounce + settle) must stay under the
+# 170 ms gap between two strokes that once shared a frame (2026-11-18). The
+# C test above uses these numbers as literals; this keeps the DLL honest.
+tl_db=$(sed -n 's/^#define TL_DEFAULT_DEBOUNCE *\([0-9]*\).*/\1/p' "$REPO/wintab-src/timelapse_win.h")
+tl_st=$(sed -n 's/^#define TL_SETTLE_MS *\([0-9]*\).*/\1/p' "$REPO/wintab-src/timelapse_win.h")
+if [ -n "$tl_db" ] && [ -n "$tl_st" ] && [ $((tl_db + tl_st)) -lt 170 ]; then
+  echo "  ok   wired: the DLL waits ${tl_db} + ${tl_st} ms after a stroke, under the 170 ms gap"
+else
+  echo "  FAIL wired: TL_DEFAULT_DEBOUNCE + TL_SETTLE_MS (${tl_db:-?} + ${tl_st:-?}) must stay under 170 ms"; exit 1
+fi
 
 echo ""
 echo "== Swift core (PressureCore.swift) =="

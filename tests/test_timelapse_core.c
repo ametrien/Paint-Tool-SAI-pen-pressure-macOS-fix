@@ -115,7 +115,7 @@ static uint64_t build_canvas(FAKE *f, uint64_t at, const char *name,
     }
 
     /* tile_maps[0] is a pointer to a pointer to the map (two derefs). Higher
-     * levels are halved, so tlc_pick_level has a pyramid to choose from. */
+     * levels are halved, so tlc_full_level has a pyramid to fall back on. */
     slot = *heap; *heap += 8;
     put64(f, slot, tm);
     put64(f, at + L->c_tile_maps + 0 * 8, slot);
@@ -213,6 +213,33 @@ int main(void) {
         EXPECT(fired == 0, "stroke: mid-stroke dip through zero does NOT split the stroke");
         EXPECT(tlc_stroke_update(&s, 0, 400) == 1, "stroke: ends once after the dip recovers");
 
+        /* THE CASE from 2026-11-18: two strokes, the second begun 170 ms after
+         * the first lifted, landed in one frame. With the DLL's numbers
+         * (TL_DEFAULT_DEBOUNCE 30, TL_SETTLE_MS 40) the first stroke's end
+         * fires and its capture may run before the second stroke begins.
+         * With the old 150 + 120 neither held. run-tests.sh checks that the
+         * DLL's constants still add up to less than this gap. */
+        {
+            const uint32_t debounce = 30, settle = 40, up = 1000, next_down = up + 170;
+            uint32_t t, fired_at = 0;
+            tlc_stroke_init(&s, debounce);
+            tlc_stroke_update(&s, 900, up - 10);            /* stroke 1, last pressed sample */
+            for (t = up; t < next_down && !fired_at; t += 10)
+                if (tlc_stroke_update(&s, 0, t)) fired_at = t;
+            EXPECT(fired_at && fired_at < next_down,
+                   "stroke: THE CASE: stroke 1 ends before stroke 2 begins 170 ms later");
+            /* The pen rests from `up`; the capture may start once settle has passed. */
+            EXPECT(fired_at && tlc_capture_wait(fired_at + settle, up, fired_at, 0, settle, 10000) == 0
+                   && fired_at + settle < next_down,
+                   "stroke: THE CASE: its capture is due before stroke 2 begins");
+            tlc_stroke_init(&s, 150);
+            tlc_stroke_update(&s, 900, up - 10);
+            for (t = up, fired_at = 0; t < next_down && !fired_at; t += 10)
+                if (tlc_stroke_update(&s, 0, t)) fired_at = t;
+            EXPECT(!fired_at || fired_at + 120 >= next_down,
+                   "stroke: control: the old 150 + 120 could not capture between those strokes");
+        }
+
         /* Hovering never touches the canvas, so it must never make a frame. */
         tlc_stroke_init(&s, 150);
         fired  = tlc_stroke_update(&s, 0, 0);
@@ -296,7 +323,7 @@ int main(void) {
         EXPECT(tlc_canvas_read(fake_read, &f, L, c1, &cv), "guard: restored canvas valid again");
     }
 
-    /* --- tile map + mip selection ----------------------------------------- */
+    /* --- tile map ---------------------------------------------------------- */
     {
         TLC_TILEMAP tm;
         EXPECT(tlc_tilemap_read(fake_read, &f, L, c1, 0, &tm) &&
@@ -306,12 +333,6 @@ int main(void) {
         EXPECT(!tlc_tilemap_read(fake_read, &f, L, c1, -1, &tm), "tilemap: negative level rejected");
         EXPECT(!tlc_tilemap_read(fake_read, &f, L, c1, 99, &tm), "tilemap: level past map_count rejected");
 
-        /* Levels halve: 300x140, 150x70, 75x35, ... */
-        EXPECT(tlc_pick_level(fake_read, &f, L, c1, 1000) == 0,
-               "mip: target larger than the canvas gives level 0");
-        EXPECT(tlc_pick_level(fake_read, &f, L, c1, 100) == 1,
-               "mip: picks the smallest level still at or above the target");
-        EXPECT(tlc_pick_level(fake_read, &f, L, c1, 300) == 0, "mip: exact-size target stays at 0");
     }
 
     /* --- the stitch -------------------------------------------------------- */
@@ -650,6 +671,227 @@ int main(void) {
         EXPECT(sweep_ok, "tiles: 200 random changes, the frame always matches a full read");
 #undef FRESH
 #undef INC
+    }
+
+    /* --- finding the canvas list in an unknown build (issue #56) -----------
+     * A small sai2.exe of our own: the image is [ORIGIN, ORIGIN+0x80000), its
+     * writable data section is [ORIGIN+0x40000, ORIGIN+0x60000), and canvases
+     * live on a heap above the image, as they do in SAI. The list head goes in
+     * a slot we pick, and the search must find that slot and no other. */
+    {
+        FAKE g;
+        const uint64_t IB = FAKE_ORIGIN, IE = FAKE_ORIGIN + 0x80000;
+        const uint64_t data[2] = { FAKE_ORIGIN + 0x40000, FAKE_ORIGIN + 0x60000 };
+        const uint64_t HEAD_SLOT = FAKE_ORIGIN + 0x47380;   /* the "session_offset" */
+        const uint64_t CUR_LOW   = FAKE_ORIGIN + 0x441d8; /* a current-canvas static, BELOW the head */
+        const uint64_t CUR_HIGH  = HEAD_SLOT + 8;          /* the one tl_target_canvas reads */
+        uint64_t gh = FAKE_ORIGIN + 0x100000;
+        uint64_t sp, a, b, x, y;
+        TLC_FOUND fd;
+        /* The struct first, its tile maps and tiles after it, page-aligned.
+         * Tiles are 256 px as in SAI, so sizes are kept small to fit. */
+#define NEWC(name, w, h) (x = gh, gh += 0x1000, \
+        build_canvas(&g, x, name, w, h, 256, -1, -1, &gh), \
+        gh = (gh + 0xfff) & ~(uint64_t)0xfff, x)
+
+        g.buf = (uint8_t *)calloc(1, FAKE_SIZE);
+        g.len = FAKE_SIZE;
+        if (!g.buf) { printf("out of memory\n"); return 1; }
+
+        /* SAI as it starts: the scratch pad alone, and every "current canvas"
+         * static pointing at it too. */
+        sp = NEWC("ScratchPad1", 199, 300);
+        put64(&g, HEAD_SLOT, sp);
+        put64(&g, CUR_LOW, sp);
+        put64(&g, CUR_HIGH, sp);
+        tlc_find_session(fake_read, &g, L, IB, IE, data, 1, &fd);
+        EXPECT(fd.status == TLC_FIND_FOUND && fd.nodes == 1 && fd.slots == 3,
+               "find: scratch pad alone is found, held by 3 slots");
+        EXPECT(fd.offset == CUR_LOW - IB,
+               "find: with every slot on the scratch pad, the lowest is taken (same list either way)");
+
+        /* Two drawings open: scratch -> A -> B. The current-canvas statics now
+         * point at B and A, which are lists too, only shorter. */
+        a = NEWC("Rose", 300, 140);
+        b = NEWC("Sketch", 600, 100);
+        put64(&g, sp + L->c_next, a); put64(&g, a + L->c_prev, sp);
+        put64(&g, a + L->c_next, b);  put64(&g, b + L->c_prev, a);
+        put64(&g, CUR_LOW, b);
+        put64(&g, CUR_HIGH, a);
+
+        /* THE TRAP. The anchor locked above is CUR_LOW, which now points at B.
+         * Read as a list it is B alone: well formed, one node. If that were
+         * accepted, the capture would skip B as the "scratch pad" and record
+         * nothing, the very failure this issue is about. Make tlc_is_list_head
+         * return 1 and this goes red. */
+        EXPECT(!tlc_anchor_ok(fake_read, &g, L, IB, CUR_LOW - IB),
+               "find: a slot that moved to a drawing is no longer accepted as the head");
+        EXPECT(!tlc_anchor_ok(fake_read, &g, L, IB, CUR_HIGH - IB),
+               "find: a slot on the middle drawing is not the head either");
+        EXPECT(tlc_anchor_ok(fake_read, &g, L, IB, HEAD_SLOT - IB),
+               "find: the real head slot is still accepted");
+
+        tlc_find_session(fake_read, &g, L, IB, IE, data, 1, &fd);
+        EXPECT(fd.status == TLC_FIND_FOUND && fd.offset == HEAD_SLOT - IB && fd.nodes == 3 && fd.slots == 1,
+               "find: with drawings open, the search lands on the head slot alone");
+        EXPECT(fd.checked == (data[1] - data[0]) / 8, "find: every slot of the section is looked at once");
+        EXPECT(tlc_list_contains(fake_read, &g, L, sp, a) && tlc_list_contains(fake_read, &g, L, sp, b),
+               "find: both drawings are members of the list");
+
+        /* A drawing that was closed but not freed: it validates on its own,
+         * with every link zero. It must not be taken for an open drawing. */
+        x = NEWC("Closed", 260, 50);
+        put64(&g, data[0] + 0x10, x);
+        tlc_find_session(fake_read, &g, L, IB, IE, data, 1, &fd);
+        EXPECT(fd.status == TLC_FIND_FOUND && fd.offset == HEAD_SLOT - IB,
+               "find: a closed canvas still in memory does not beat the open list");
+        EXPECT(!tlc_list_contains(fake_read, &g, L, sp, x),
+               "find: a closed canvas is not a member, so it is never used as the hint");
+
+        /* Broken back link: the list is not SAI's, or is being changed under
+         * us. Refused rather than half-walked. */
+        put64(&g, b + L->c_prev, sp);
+        EXPECT(tlc_list_length(fake_read, &g, L, sp) == 0, "find: a prev that does not point back spoils the list");
+        put64(&g, b + L->c_prev, a);
+        EXPECT(tlc_list_length(fake_read, &g, L, sp) == 3, "find: restored, the list is whole again");
+
+        /* A loop must end, not spin inside SAI's process. */
+        put64(&g, b + L->c_next, sp); put64(&g, sp + L->c_prev, b);
+        {
+            /* Counted, not just checked: without the node cap it still says 0,
+             * after about a hundred million reads, which inside SAI is a
+             * freeze of most of a minute. */
+            COUNTING cnt = { &g, 0 };
+            EXPECT(tlc_list_length(counting_read, &cnt, L, sp) == 0 && cnt.reads < 100000,
+                   "find: a list that loops is refused, and quickly");
+        }
+        put64(&g, b + L->c_next, 0); put64(&g, sp + L->c_prev, 0);
+
+        /* Look-alikes. y has a canvas's size and tile counts, the pair a
+         * dimensions-only check would accept, but its tile map is another size. */
+        y = NEWC("Navigator", 300, 140);
+        put32(&g, y + L->c_width, 290);
+        EXPECT(!tlc_canvas_node_ok(fake_read, &g, L, y), "find: a tile map of another size is not a canvas");
+        put32(&g, y + L->c_width, 300);
+        putname(&g, y + L->c_name, "");
+        EXPECT(!tlc_canvas_node_ok(fake_read, &g, L, y), "find: a canvas with no name is refused");
+        putname(&g, y + L->c_name, "Navigator");
+        EXPECT(tlc_canvas_node_ok(fake_read, &g, L, y), "find: the same struct, made whole, passes");
+
+        /* A list inside the image itself is not where SAI keeps canvases. */
+        put64(&g, data[0] + 0x18, data[0] + 0x1000);
+        tlc_find_session(fake_read, &g, L, IB, IE, data, 1, &fd);
+        EXPECT(fd.status == TLC_FIND_FOUND && fd.offset == HEAD_SLOT - IB,
+               "find: pointers into the image are skipped");
+
+        /* Two different lists of the same length: no guessing. */
+        put64(&g, data[0] + 0x10, 0);
+        {
+            uint64_t s2 = NEWC("ScratchPad1", 199, 300), a2, b2;
+            a2 = NEWC("Other", 100, 100);
+            b2 = NEWC("Other2", 120, 90);
+            put64(&g, s2 + L->c_next, a2); put64(&g, a2 + L->c_prev, s2);
+            put64(&g, a2 + L->c_next, b2); put64(&g, b2 + L->c_prev, a2);
+            put64(&g, data[0] + 0x20, s2);
+            tlc_find_session(fake_read, &g, L, IB, IE, data, 1, &fd);
+            EXPECT(fd.status == TLC_FIND_AMBIGUOUS && fd.offset == 0,
+                   "find: two lists of the same length are reported, not guessed between");
+            put64(&g, data[0] + 0x20, 0);
+        }
+
+        /* Nothing there at all: a build whose layout has changed. */
+        put64(&g, HEAD_SLOT, 0); put64(&g, CUR_LOW, 0); put64(&g, CUR_HIGH, 0);
+        tlc_find_session(fake_read, &g, L, IB, IE, data, 1, &fd);
+        EXPECT(fd.status == TLC_FIND_NOTHING, "find: no list anywhere says so");
+        EXPECT(!tlc_anchor_ok(fake_read, &g, L, IB, HEAD_SLOT - IB), "find: an empty anchor is not ok");
+
+#undef NEWC
+        free(g.buf);
+    }
+
+    /* --- full canvas, shrunk here (2026-11-18) ------------------------------ */
+    {
+        uint32_t ow, oh;
+        static uint8_t src[8 * 6 * 4], dst[4 * 3 * 4];
+        int i, ok;
+
+        /* Sizes: the 2026-11-18 canvas, 2894 x 4093, at both choices. */
+        tlc_shrink_size(2894, 4093, 1024, &ow, &oh);
+        EXPECT(oh == 1024 && ow == 724, "shrink: 2894x4093 at Standard is 724x1024, as level 2 was");
+        tlc_shrink_size(2894, 4093, 2048, &ow, &oh);
+        EXPECT(oh == 2048 && ow == 1448, "shrink: at High it is 1448x2048");
+        tlc_shrink_size(7777, 33, 1024, &ow, &oh);
+        EXPECT(ow == 1024 && oh == 4, "shrink: a wide strip keeps its shape");
+        tlc_shrink_size(600, 400, 1024, &ow, &oh);
+        EXPECT(ow == 600 && oh == 400, "shrink: a small canvas is never enlarged");
+        tlc_shrink_size(5000, 1, 1024, &ow, &oh);
+        EXPECT(ow == 1024 && oh == 1, "shrink: never a zero side");
+
+        /* Averaging: 8x6 to 4x3 is 2x2 blocks. A one-pixel black line on white
+         * must stay as grey, not vanish (pixel skipping drops every other column). */
+        memset(src, 0xff, sizeof src);
+        for (i = 0; i < 6; i++) { uint8_t *p = src + ((size_t)i * 8 + 3) * 4; p[0] = p[1] = p[2] = 0; }
+        tlc_downscale_bgra(src, 8, 6, dst, 4, 3);
+        ok = 1;
+        for (i = 0; i < 3; i++) {
+            const uint8_t *g = dst + ((size_t)i * 4 + 1) * 4, *wpx = dst + ((size_t)i * 4 + 0) * 4;
+            if (g[0] != 128 || g[1] != 128 || g[2] != 128 || g[3] != 255) ok = 0;
+            if (wpx[0] != 255 || wpx[2] != 255) ok = 0;
+        }
+        EXPECT(ok, "shrink: a 1 px line becomes a 50% grey line, the rest stays white");
+
+        /* Uneven ratio and the last row/column are covered, nothing read past the end (ASan). */
+        {
+            static uint8_t s2[7 * 5 * 4], d2[3 * 2 * 4];
+            memset(s2, 0x40, sizeof s2);
+            tlc_downscale_bgra(s2, 7, 5, d2, 3, 2);
+            ok = 1;
+            for (i = 0; i < (int)sizeof d2; i++) if (d2[i] != 0x40) ok = 0;
+            EXPECT(ok, "shrink: an uneven ratio averages a flat colour to the same colour");
+        }
+
+        /* Level choice: level 0 unless it does not fit the buffer limit. */
+        {
+            uint64_t big = heap; heap += 0x2000;
+            build_canvas(&f, big, "Big", 300, 140, 256, -1, -1, &heap);
+            EXPECT(tlc_full_level(fake_read, &f, L, big, 64u << 20) == 0,
+                   "level: a canvas that fits is read at full size (level 0)");
+            EXPECT(tlc_full_level(fake_read, &f, L, big, 300u * 140u * 4u - 1) == 1,
+                   "level: one byte over the limit falls back one step, not all the way");
+        }
+    }
+
+    /* --- known builds and the status lines --------------------------------- */
+    {
+        const TLC_KNOWN_BUILD *kb;
+        char sb[64];
+        int n;
+
+        /* 07.27's numbers, read from the real sai2.exe with md5 96b7a5b2…:
+         * TimeDateStamp 0x6a66dba6, SizeOfImage 0x51d000. */
+        kb = tlc_known_build(0x6a66dba6u, 0x51d000u);
+        EXPECT(kb && kb->session_offset == 0x471380u && kb->session_offset == TLC_LAYOUT_2026_07_27.session_offset,
+               "known: Alpha.2026.07.27 maps to the verified 0x471380");
+        /* 10.19: stamp 0x6ad549f7, size 0x527000. Its row went in after the
+         * search found +0x47a380 in a real SAI 10.19 and recording worked
+         * there; that the search itself still works is tested above on
+         * made-up memory, which no table row can stand in for. */
+        kb = tlc_known_build(0x6ad549f7u, 0x527000u);
+        EXPECT(kb && kb->session_offset == 0x47a380u && !strcmp(kb->name, "Alpha.2026.10.19"),
+               "known: Alpha.2026.10.19 maps to the 0x47a380 the search found");
+        EXPECT(tlc_known_build(0x6ad549f7u, 0x51d000u) == NULL,
+               "known: 10.19's stamp with 07.27's size is no build we know");
+        EXPECT(tlc_known_build(0x6a66dba6u, 0x527000u) == NULL,
+               "known: the stamp alone is not enough, the size must match too");
+
+        n = tlc_format_status(sb, sizeof sb, TLC_TL_FOUND, 0x47a380u);
+        EXPECT(n > 0 && !strcmp(sb, "tl=found\ntl_offset=0x47a380\n"), "status: found, with the offset");
+        n = tlc_format_status(sb, sizeof sb, TLC_TL_NONE, 0x47a380u);
+        EXPECT(n > 0 && !strcmp(sb, "tl=none\n"), "status: none has no offset line");
+        n = tlc_format_status(sb, sizeof sb, 99, 0);
+        EXPECT(n > 0 && !strcmp(sb, "tl=off\n"), "status: an unknown state reads as off");
+        n = tlc_format_status(sb, 8, TLC_TL_KNOWN, 0x471380u);
+        EXPECT(n == 0 && sb[0] == 0, "status: too small a buffer writes nothing");
     }
 
     free(f.buf);
