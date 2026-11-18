@@ -75,6 +75,10 @@ cp "$REPO/wine-patch/winemac-iosurface-11.16.so" "$APP/Contents/Resources/winema
 # side of the bridge with SAI closed. Shipped rather than built on demand for
 # the same reason as the DLL — the user has no mingw.
 cp "$REPO/wintab-src/wtprobe.exe"   "$APP/Contents/Resources/wtprobe.exe"
+# The GPL 3 says everyone who gets the program gets the licence with it, and
+# NOTICE holds the attribution terms that come with it (section 7).
+cp "$REPO/LICENSE"                  "$APP/Contents/Resources/LICENSE"
+cp "$REPO/NOTICE"                   "$APP/Contents/Resources/NOTICE"
 cp "$REPO/install-wine.sh"          "$APP/Contents/Resources/install-wine.sh"
 chmod +x "$APP/Contents/Resources/install-wine.sh"
 # Ships inside the bundle so it is signed with the app and needs no separate
@@ -117,6 +121,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleIconFile</key><string>AppIcon</string>}
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSHumanReadableCopyright</key>
+  <string>SAI Pen Pressure by ametrien. GNU GPL version 3, see NOTICE. https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix</string>
   <!-- shown in the permission prompts -->
   <key>NSInputMonitoringUsageDescription</key>
   <string>Reads pen pressure from your drawing tablet to send it to SAI.</string>
