@@ -395,7 +395,10 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     var tabView: NSTabView!
     var recordingTab: NSStackView!
     var recEveryStrokeCheck: NSButton!
+    var recQualityPopup: NSPopUpButton!
     var recFramesLabel: NSTextField!
+    /// Whether recording works with the SAI that is open, by name (#56).
+    var recSAILabel: NSTextField!
     var recCheck: NSButton!
     var recMakeBtn: NSButton!
     var recDiscardBtn: NSButton!
@@ -514,6 +517,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         wlog("bridge: our DLL installed: \(bridgeDLLMatchesApp()) · override: \(BridgeCheck.overrideValue(inUserReg: readUserReg() ?? "") ?? "MISSING")")
         wlog("wine: \(wineBin() ?? "NOT FOUND")")
         wlog("tablet: \(tabletLine)")
+        wlog("sai: \(prefixSAIName() ?? "name not found in sai2.exe")")
     }
 
     func applicationDidFinishLaunching(_ note: Notification) {

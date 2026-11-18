@@ -386,6 +386,9 @@ func launchSAIApp() {
     // Recording tab's "every stroke": no rest before a capture. The DLL raises
     // 0 to its settle time, so SAI still finishes the stroke first.
     if e["WT_TIMELAPSE_QUIET_MS"] == nil, timelapseEveryStroke() { e["WT_TIMELAPSE_QUIET_MS"] = "0" }
+    // Video size from the Recording tab. A value already in the environment
+    // (open --env WT_TIMELAPSE_SIZE=…) wins, for testing.
+    if e["WT_TIMELAPSE_SIZE"] == nil { e["WT_TIMELAPSE_SIZE"] = "\(timelapseFrameSize())" }
     p.environment = e
     forgetRunCanvases()           // a new SAI: its canvas ids mean nothing yet
     startLiveEncoder()
