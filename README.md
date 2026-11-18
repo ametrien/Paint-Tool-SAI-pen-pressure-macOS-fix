@@ -320,7 +320,7 @@ SAI reads these when it starts, so a change applies the next time SAI opens.
 
 ### Recording
 
-<p align="center"><a href="docs/assets/screenshots/recording.png"><img src="docs/assets/screenshots/recording.png" alt="The Recording tab: Record a timelapse while I draw, Record every stroke separately, and the folder videos are saved to." width="70%"></a></p>
+<p align="center"><a href="docs/assets/screenshots/recording.png"><img src="docs/assets/screenshots/recording.png" alt="The Recording tab: Record a timelapse while I draw, Record every stroke separately, Video quality set to Standard (1024 px), and the folder videos are saved to." width="70%"></a></p>
 
 The canvas timelapse. Tick **Record a timelapse while I draw**, choose where videos are saved, and
 draw. The video is made when SAI closes. **Record every stroke separately** gives more detail, at
