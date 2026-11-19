@@ -77,11 +77,14 @@ extension SetupController {
         if let best = found.first {
             let shown = (best as NSString).abbreviatingWithTildeInPath
             if found.count == 1 {
-                let c = osa("button returned of (display dialog \"Found SAI here:\n\n\(shown)\n\nUse this folder?\" buttons {\"Choose another…\", \"Use this folder\"} default button \"Use this folder\" with icon note)")
+                // The folder name goes through osaQuote: a quote in it would
+                // otherwise end the AppleScript string, and the dialog would
+                // fail to compile and never appear (OsaQuote.swift).
+                let c = osa("button returned of (display dialog \(osaQuote("Found SAI here:\n\n\(shown)\n\nUse this folder?")) buttons {\"Choose another…\", \"Use this folder\"} default button \"Use this folder\" with icon note)")
                 if c == "Use this folder" { adoptSAIFolder(best); return }
             } else {
                 // several installs — let the user pick which one
-                let items = found.map { "\"\(($0 as NSString).abbreviatingWithTildeInPath)\"" }.joined(separator: ", ")
+                let items = found.map { osaQuote(($0 as NSString).abbreviatingWithTildeInPath) }.joined(separator: ", ")
                 if let picked = osa("choose from list {\(items)} with prompt \"Found more than one SAI folder. Pick the one to use:\" OK button name \"Use this folder\" cancel button name \"Choose another…\""),
                    picked != "false" {
                     let full = found.first { ($0 as NSString).abbreviatingWithTildeInPath == picked }
@@ -122,7 +125,7 @@ extension SetupController {
             alertUser("License detected ✅\n\n\(lic) was already in the folder you picked.\n\n\(where_)")
         }
         if saiInstalledInPrefix() && prefixIsStale() {
-            let c = osa("button returned of (display dialog \"Copy this SAI into the Wine prefix now?\n\nSAI runs from a copy inside \(( prefixSAIDir as NSString).abbreviatingWithTildeInPath). Until it's copied, SAI will keep running the previous version.\" buttons {\"Later\", \"Reinstall now\"} default button \"Reinstall now\" with icon note)")
+            let c = osa("button returned of (display dialog \(osaQuote("Copy this SAI into the Wine prefix now?\n\nSAI runs from a copy inside \(( prefixSAIDir as NSString).abbreviatingWithTildeInPath). Until it's copied, SAI will keep running the previous version.")) buttons {\"Later\", \"Reinstall now\"} default button \"Reinstall now\" with icon note)")
             if c == "Reinstall now" { doReinstall(mode: .repair) }
         }
         refresh()
@@ -276,11 +279,11 @@ extension SetupController {
         }
         guard savedSAIPath() != nil else { chooseSAI(); return }
         _ = wine
-        let c = osa("button returned of (display dialog \"How much do you want to reinstall?\n\n• Repair: copy SAI and the pressure bridge back into the existing Wine prefix. Keeps your license and Wine settings. Try this first.\n\n• Full rebuild: delete \(( appPrefix as NSString).abbreviatingWithTildeInPath) entirely and build it from scratch. Use this if the prefix is damaged. Your license is saved and put back automatically.\" buttons {\"Cancel\", \"Full rebuild…\", \"Repair\"} default button \"Repair\" with icon caution)")
+        let c = osa("button returned of (display dialog \(osaQuote("How much do you want to reinstall?\n\n• Repair: copy SAI and the pressure bridge back into the existing Wine prefix. Keeps your license and Wine settings. Try this first.\n\n• Full rebuild: delete \(( appPrefix as NSString).abbreviatingWithTildeInPath) entirely and build it from scratch. Use this if the prefix is damaged. Your license is saved and put back automatically.")) buttons {\"Cancel\", \"Full rebuild…\", \"Repair\"} default button \"Repair\" with icon caution)")
         switch c {
         case "Repair":       doReinstall(mode: .repair)
         case "Full rebuild…":
-            let ok = osa("button returned of (display dialog \"Delete and rebuild \(( appPrefix as NSString).abbreviatingWithTildeInPath)?\n\nEverything in that folder is removed, including anything you put there by hand. SAI is copied in again from your source folder, and your saved license is restored.\" buttons {\"Cancel\", \"Rebuild\"} default button \"Cancel\" with icon caution)")
+            let ok = osa("button returned of (display dialog \(osaQuote("Delete and rebuild \(( appPrefix as NSString).abbreviatingWithTildeInPath)?\n\nEverything in that folder is removed, including anything you put there by hand. SAI is copied in again from your source folder, and your saved license is restored.")) buttons {\"Cancel\", \"Rebuild\"} default button \"Cancel\" with icon caution)")
             if ok == "Rebuild" { doReinstall(mode: .rebuild) }
         default: break
         }
@@ -294,7 +297,7 @@ extension SetupController {
         let ours = wineInstalledByUs()
         var bullets = "• delete \(( appPrefix as NSString).abbreviatingWithTildeInPath) (the whole Wine prefix)\n• forget your saved SAI folder\n• forget which build was installed"
         bullets += "\n• KEEP your saved license, and put it back afterwards"
-        let c = osa("button returned of (display dialog \"Reset everything and start over?\n\nThis will:\n\n\(bullets)\n\nThen it asks you to pick your SAI folder again and rebuilds from scratch. Takes about a minute.\" buttons {\"Cancel\", \"Reset everything\"} default button \"Cancel\" with icon caution)")
+        let c = osa("button returned of (display dialog \(osaQuote("Reset everything and start over?\n\nThis will:\n\n\(bullets)\n\nThen it asks you to pick your SAI folder again and rebuilds from scratch. Takes about a minute.")) buttons {\"Cancel\", \"Reset everything\"} default button \"Cancel\" with icon caution)")
         guard c == "Reset everything" else { return }
 
         // Wine is shared with any other Windows app you run, so never remove it
@@ -306,7 +309,7 @@ extension SetupController {
                 ? "Also remove Wine?\n\nThis app installed Wine Staging for SAI, so removing it should be safe. It goes to the Trash and you can reinstall it from this window anytime."
                 : "Also remove Wine?\n\nWine Staging was not installed by this app; you may be using it for other Windows programs. Keeping it is the safe choice."
             let def = ours ? "Move Wine to Trash" : "Keep Wine"
-            let w = osa("button returned of (display dialog \(q.debugDescription) buttons {\"Keep Wine\", \"Move Wine to Trash\"} default button \(def.debugDescription) with icon caution)")
+            let w = osa("button returned of (display dialog \(osaQuote(q)) buttons {\"Keep Wine\", \"Move Wine to Trash\"} default button \(osaQuote(def)) with icon caution)")
             removeWine = (w == "Move Wine to Trash")
         }
 
@@ -470,6 +473,19 @@ extension SetupController {
                 self.afterWineInstall = nil
                 self.wineBar.value = ok ? 1 : 0
                 self.refresh()
+                // Installed is not the same as able to start: on an Apple chip
+                // without Rosetta it is not. Find out now, while the person is
+                // looking at this row, rather than at Launch.
+                if ok, let w = wineBin() {
+                    DispatchQueue.global().async {
+                        let r = checkWineStarts(w, reuse: false)
+                        wlog("wine install: the new Wine " + (r.problem.map { "DOES NOT START, \($0)" } ?? "starts"))
+                        DispatchQueue.main.async {
+                            self.refresh()
+                            if let p = r.problem { self.offerWineStartFix(p) }
+                        }
+                    }
+                }
                 if !ok {
                     let c = osa("button returned of (display dialog \"The automatic Wine install didn't finish.\n\nRun it in a Terminal window instead so you can see the full output?\" buttons {\"Cancel\", \"Open Terminal\"} default button \"Open Terminal\" with icon caution)")
                     if c == "Open Terminal" { installWineViaTerminal() }
@@ -526,13 +542,20 @@ extension SetupController {
             }
         }
         guard let wine = wineBin() else { return }
+        // Wine is there; does it start? (WineStartCore.swift) Nothing after
+        // this step can work if it does not, so stop here and say why.
+        if let p = checkWineStarts(wine).problem {
+            wlog("auto setup: stopped, Wine does not start: \(p)")
+            onMain { self.offerWineStartFix(p) }
+            return
+        }
 
         // 2 — SAI source folder
         if savedSAIPath() == nil {
             step(2, "finding your SAI folder…")
             let found = onMain { self.findSAIFolders() }
             if found.count == 1 {
-                let c = onMain { osa("button returned of (display dialog \"Found SAI here:\n\n\((found[0] as NSString).abbreviatingWithTildeInPath)\n\nUse this folder?\" buttons {\"Choose another…\", \"Use this folder\"} default button \"Use this folder\" with icon note)") }
+                let c = onMain { osa("button returned of (display dialog \(osaQuote("Found SAI here:\n\n\((found[0] as NSString).abbreviatingWithTildeInPath)\n\nUse this folder?")) buttons {\"Choose another…\", \"Use this folder\"} default button \"Use this folder\" with icon note)") }
                 if c == "Use this folder" { onMain { saveSAIPath(found[0]) } } else { onMain { self.chooseSAI() } }
             } else {
                 onMain { self.chooseSAI() }
@@ -620,13 +643,13 @@ extension SetupController {
         let keptLine = srcExists
             ? "\n\nKEPT (yours, never touched):\n• \((src! as NSString).abbreviatingWithTildeInPath)"
             : "\n\nYour own SAI folder is never touched."
-        let c = osa("button returned of (display dialog \"Remove SAI Pen Pressure's installation?\n\nWILL BE DELETED:\n• \(( appPrefix as NSString).abbreviatingWithTildeInPath) (Wine prefix + the SAI copy inside it)\n• saved settings: chosen folder, dev mode, recordings\(keptLine)\" buttons {\"Cancel\", \"Remove\"} default button \"Cancel\" with icon caution)")
+        let c = osa("button returned of (display dialog \(osaQuote("Remove SAI Pen Pressure's installation?\n\nWILL BE DELETED:\n• \(( appPrefix as NSString).abbreviatingWithTildeInPath) (Wine prefix + the SAI copy inside it)\n• saved settings: chosen folder, dev mode, recordings\(keptLine)")) buttons {\"Cancel\", \"Remove\"} default button \"Cancel\" with icon caution)")
         guard c == "Remove" else { return }
 
         // The licence is the one thing we cannot recreate — ask before dropping it.
         var keepLicense = true
         if !slcFiles(in: licenseStashDir()).isEmpty {
-            let l = osa("button returned of (display dialog \"Keep your saved license copy?\n\nWe hold a copy of \(slcFiles(in: licenseStashDir()).joined(separator: ", ")) so a future reinstall can restore it. Your ORIGINAL .slc file wherever you downloaded it is never touched either way.\" buttons {\"Delete it too\", \"Keep license\"} default button \"Keep license\" with icon note)")
+            let l = osa("button returned of (display dialog \(osaQuote("Keep your saved license copy?\n\nWe hold a copy of \(slcFiles(in: licenseStashDir()).joined(separator: ", ")) so a future reinstall can restore it. Your ORIGINAL .slc file wherever you downloaded it is never touched either way.")) buttons {\"Delete it too\", \"Keep license\"} default button \"Keep license\" with icon note)")
             keepLicense = (l != "Delete it too")
         }
 
@@ -637,7 +660,7 @@ extension SetupController {
                 ? "Also remove Wine?\n\nThis app installed Wine Staging for SAI, so removing it should be safe."
                 : "Also remove Wine?\n\nWine Staging was not installed by this app; you may use it for other Windows programs. Keeping it is the safe choice."
             let def = ours ? "Move Wine to Trash" : "Keep Wine"
-            removeWine = (osa("button returned of (display dialog \(q.debugDescription) buttons {\"Keep Wine\", \"Move Wine to Trash\"} default button \(def.debugDescription) with icon caution)") == "Move Wine to Trash")
+            removeWine = (osa("button returned of (display dialog \(osaQuote(q)) buttons {\"Keep Wine\", \"Move Wine to Trash\"} default button \(osaQuote(def)) with icon caution)") == "Move Wine to Trash")
         }
 
         performUninstall(keepLicense: keepLicense, removeWine: removeWine)
@@ -663,23 +686,74 @@ extension SetupController {
     /// menu. It writes only what is actually missing, takes a second, and keeps
     /// SAI, the licence and every setting exactly where they are — so there is
     /// nothing to warn about and no reason to make someone read a dialog first.
+    ///
+    /// The work (bridgeRepairWork) runs off the main thread. It starts Wine up
+    /// to three times, and the first start in a prefix Wine never ran in builds
+    /// the prefix, which takes about a minute: on the main thread that was a
+    /// frozen window, with no sign anything was happening.
     @objc func repairBridge() {
         guard let wine = wineBin() else {
             alertUser("Install Wine first. The bridge lives inside the Wine prefix."); return
         }
-        let wasComplete = bridgeInstalledOK()
-        syncBridgeDLL()
-        let overrideRepaired = ensureBridgeOverride(wine)
+        guard !bridgeRepairing else { return }      // a second press while the first is at work
+        bridgeRepairing = true
         refresh()
-        guard bridgeInstalledOK() else {
-            alertUser("Couldn't repair the bridge.\n\nTry Reinstall… → Repair, which rebuilds this part of the prefix from scratch.")
-            return
+        DispatchQueue.global(qos: .userInitiated).async {
+            let outcome = bridgeRepairWork(wine)
+            wlog("bridge: Repair pressed: \(outcome)")
+            DispatchQueue.main.async {
+                self.bridgeRepairing = false
+                self.refresh()
+                if case .wineCannotStart(let p) = outcome { self.offerWineStartFix(p) }
+                else { alertUser(bridgeRepairMessage(outcome)) }
+            }
         }
-        if wasComplete {
-            alertUser("The bridge was already complete. Nothing needed fixing.\n\nIf pressure still doesn't reach SAI, try Test pen in the Pen tab.")
-        } else {
-            alertUser("Fixed.\n\n\(overrideRepaired ? "Wine had been loading its own wintab32; it now loads ours. " : "")Restart SAI for this to take effect.")
+    }
+
+    // ---- a Wine that is there but cannot start (WineStartCore.swift) --------
+
+    /// Say why Wine does not start, and offer the fix in the same dialog.
+    func offerWineStartFix(_ p: WineStartProblem) {
+        let d = WineStartCore.fixDialog(p)
+        guard osa(d.script) == d.button else { return }
+        if p == .needsRosetta { installRosetta() } else { reinstallWine() }
+    }
+
+    /// Apple's own installer for Rosetta (WineStartCore.rosettaInstallScript).
+    /// Whether it worked is decided by starting Wine again afterwards
+    /// (WineStartCore.afterRosettaInstall), not by what the installer printed.
+    func installRosetta() {
+        guard !rosettaInstalling else { return }
+        rosettaInstalling = true
+        refresh()
+        DispatchQueue.global(qos: .userInitiated).async {
+            wlog("rosetta: installing")
+            _ = osa(WineStartCore.rosettaInstallScript)
+            let after = WineStartCore.afterRosettaInstall(wineBin().map { checkWineStarts($0, reuse: false) })
+            wlog("rosetta: afterwards: \(after)")
+            DispatchQueue.main.async {
+                self.rosettaInstalling = false
+                self.refresh()
+                self.refreshWineSection()
+                if case .otherProblem(let p) = after { self.offerWineStartFix(p) }
+                else if let m = WineStartCore.afterRosettaMessage(after) { alertUser(m) }
+            }
         }
+    }
+
+    /// Wine is there but broken: put a fresh copy in its place, the way Update
+    /// Wine does. The old one goes to the Trash, so it can be put back.
+    func reinstallWine() {
+        guard wineProc == nil, !wineChoosing else { return }
+        let app = "/Applications/Wine Staging.app"
+        if FileManager.default.fileExists(atPath: app) {
+            do { try FileManager.default.trashItem(at: URL(fileURLWithPath: app), resultingItemURL: nil) }
+            catch {
+                alertUser("Couldn't move the current Wine to the Trash:\n\n\(error.localizedDescription)")
+                return
+            }
+        }
+        installWineInApp()
     }
 
     @objc func autoUpdateToggled() {
@@ -716,7 +790,9 @@ extension SetupController {
                         ?? "\n\nNo license found. Use Install… on the license row if you need to save."
                     alertUser("Done. SAI is installed in:\n\n\(( prefixSAIDir as NSString).abbreviatingWithTildeInPath)\(lic)")
                 } else {
-                    self.subtitle.stringValue = "Reinstall failed. Check the SAI source folder."
+                    // performSetup has said why in a dialog; this line stays.
+                    self.subtitle.stringValue = g_wineStart.problem(for: wine).map(WineStartCore.rowLine)
+                        ?? "Reinstall failed. Check the SAI source folder."
                 }
             }
         }

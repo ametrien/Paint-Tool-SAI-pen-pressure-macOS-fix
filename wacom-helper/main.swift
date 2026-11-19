@@ -86,12 +86,7 @@ let appPrefix: String = {
     return NSString(string: "~/SAI2-pressure").expandingTildeInPath
 }()
 
-/// A string literal for inside an osa() script. AppleScript only escapes
-/// backslash and double quote; newlines are fine inside its quotes.
-func osaQuote(_ s: String) -> String {
-    "\"" + s.replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"") + "\""
-}
+// osaQuote and alertScript live in OsaQuote.swift, where the tests can reach them.
 func osa(_ src: String) -> String? {
     let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript"); p.arguments = ["-e", src]
     let out = Pipe(); p.standardOutput = out; p.standardError = Pipe()
@@ -101,7 +96,20 @@ func osa(_ src: String) -> String? {
         .trimmingCharacters(in: .whitespacesAndNewlines)
     return (s?.isEmpty ?? true) ? nil : s
 }
-func alertUser(_ msg: String) { _ = osa("display dialog \(msg.debugDescription) buttons {\"OK\"} with icon note") }
+/// One message, one OK button. Built by alertScript (OsaQuote.swift says what
+/// this line used to get wrong, and what that cost).
+func alertUser(_ msg: String) {
+    // The self-tests read the dialogs instead of showing them: each script is
+    // written to a file, so a test can compile it and read what it says.
+    if let dir = ProcessInfo.processInfo.environment["SAIPP_SELFTEST_DIALOG_DIR"] {
+        g_selfTestDialogs += 1
+        try? alertScript(msg).write(toFile: "\(dir)/dialog-\(getpid())-\(g_selfTestDialogs).applescript",
+                                    atomically: true, encoding: .utf8)
+        return
+    }
+    _ = osa(alertScript(msg))
+}
+var g_selfTestDialogs = 0
 
 // Diagnostic log for the "wake SAI" feature. Wake EVENTS are rare
 // (user/return-triggered) so they're always logged — field debugging of
@@ -126,6 +134,15 @@ func wineBin() -> String? {
     if FileManager.default.isExecutableFile(atPath: def) { return def }
     if let e = ProcessInfo.processInfo.environment["WINE"], FileManager.default.isExecutableFile(atPath: e) { return e }
     return nil
+}
+/// Wine is there AND not known to fail to start. What the rows and Launch that
+/// need Wine wait for: the file alone is not enough (WineStartCore.swift).
+func wineUsable() -> Bool { wineBin() != nil && g_wineStart.problem(for: wineBin()) == nil }
+/// The Setup tab's Wine row, from the file and the last start check.
+func wineRowState() -> (ok: Bool, detail: String, fixTitle: String) {
+    let last = wineBin().flatMap { g_wineStart.result(for: $0) }
+    return WineStartCore.wineRow(installed: wineBin() != nil, problem: last?.problem,
+                                 viaRosetta: last?.viaRosetta ?? false)
 }
 // ============================================================================
 // THE PREFIX. SAI is COPIED into a Wine prefix and run from THERE — the folder
@@ -328,6 +345,10 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         /// extra button is the opposite — it's the escape hatch for when it's
         /// still missing.
         var extraWhenSatisfied: Bool = true
+        /// The button while the step is not done, when that depends on why
+        /// (the Wine row: "Install Wine…", or "Install Rosetta…" for a Wine that
+        /// is there but cannot start). nil: fixTitle.
+        var dynamicFixTitle: (() -> String)? = nil
     }
     var reqs: [Req] = []
     var window: NSWindow!
@@ -338,6 +359,8 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     var fixButtons: [NSButton] = []
     var extraButtons: [NSButton?] = []      // optional "Show ▸" per row
     var running = false
+    var bridgeRepairing = false             // Repair on the bridge row is at work (repairBridge)
+    var rosettaInstalling = false           // Apple's Rosetta installer is running (installRosetta)
     // "Test Tablet Pressure" widgets — a live 0–100% bar so the user can confirm
     // the pen works BEFORE launching SAI.
     var testBtn: NSButton!
@@ -525,15 +548,25 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         startStats()
         NSApp.activate(ignoringOtherApps: true)
         reqs = [
-            Req(title: "Wine (runs SAI on Mac)", detail: "Gcenx Wine Staging in /Applications", fixTitle: "Install Wine…",
-                ok: { wineBin() != nil },
+            // Green only for a Wine that STARTS. The file alone used to be
+            // enough, and an Intel Wine on an Apple chip without Rosetta is a
+            // file that cannot run: this row was green while nothing below it
+            // could work (WineStartCore.swift).
+            Req(title: "Wine (runs SAI on Mac)", detail: WineStartCore.installedLine, fixTitle: "Install Wine…",
+                ok: { wineRowState().ok },
                 fix: { [weak self] in
                     // In-app install with a live progress bar (markWineInstalledByUs
                     // is set inside, so "Reset everything" can tell our Wine from
                     // one the user keeps for other Windows apps).
-                    if wineBin() == nil { self?.installWineInApp() } else { self?.uninstallWine() }
+                    if wineBin() == nil { self?.installWineInApp() }
+                    else if let p = g_wineStart.problem(for: wineBin()) { self?.offerWineStartFix(p) }
+                    else { self?.uninstallWine() }
                 }, required: true,
-                keepButton: true, keepButtonTitle: "Uninstall…"),
+                dynamicDetail: { [weak self] in
+                    (self?.rosettaInstalling ?? false) ? "Installing Rosetta…" : wineRowState().detail
+                },
+                keepButton: true, keepButtonTitle: "Uninstall…",
+                dynamicFixTitle: { wineRowState().fixTitle }),
             // SOURCE vs INSTALLED are two separate rows on purpose (issue #18).
             // SAI is COPIED out of the folder you pick; it then runs from the
             // Wine prefix. Showing only "Using: <your folder>" made people edit
@@ -554,7 +587,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
                     return saiBuildLabel().map { "\(where_)  ·  \($0)" } ?? where_
                 },
                 keepButton: true, keepButtonTitle: "Reinstall…",
-                enabledIf: { wineBin() != nil && saiReady() },
+                enabledIf: { wineUsable() && saiReady() },
                 blockedHint: "Needs Wine and a SAI folder first.",
                 extraTitle: "Show ▸", extraAction: { [weak self] in self?.openSAIInWine() }),
             // THE BRIDGE ITSELF — a file in the prefix and a Wine setting that
@@ -570,9 +603,13 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
                 fixTitle: "Repair…",
                 ok: { bridgeInstalledOK() },
                 fix: { [weak self] in self?.repairBridge() }, required: true,
-                dynamicDetail: { bridgeDetailLine() },
+                dynamicDetail: { [weak self] in
+                    (self?.bridgeRepairing ?? false) ? "Repairing…" : bridgeDetailLine()
+                },
                 keepButton: true, keepButtonTitle: "Repair…",
-                enabledIf: { wineBin() != nil },
+                // A Wine that cannot start cannot write the setting either, so
+                // Repair waits for the Wine row rather than fail in silence.
+                enabledIf: { wineUsable() },
                 blockedHint: "Needs Wine first."),
             // Optional (⚪️ not ❌): SAI launches without a licence, you just
             // can't save. Lives next to the INSTALLED row because that's the
@@ -610,7 +647,19 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         // of. Checking costs a file read; wine is only spawned when something is
         // actually wrong, and doing it here means simply opening this window is
         // enough to heal the prefix for whatever starts SAI next (#31).
-        DispatchQueue.global().async { ensureBridgeOverride(wineBin()) }
+        //
+        // First, though: does Wine start at all? The answer is what the Wine
+        // row shows (WineStartCore.swift), and with a Wine that cannot start
+        // the repair below could only fail.
+        DispatchQueue.global().async {
+            if let w = wineBin() {
+                let r = checkWineStarts(w, reuse: false)
+                wlog("wine: " + (r.problem.map { "DOES NOT START, \($0)" }
+                                 ?? "starts (\(r.version ?? "no answer within the time allowed"))"))
+                if r.problem != nil { return }
+            }
+            ensureBridgeOverride(wineBin())
+        }
         // On launch, actively ask for Input Monitoring — the ONLY permission this
         // app needs — via the native prompt (with an "Open System Settings"
         // button), so the user doesn't add the app manually. No-op if already
@@ -675,7 +724,17 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
     @objc func reinstallTapped() { showSetupWindow(); reinstallMenu() }
     @objc func licenseTapped()   { showSetupWindow(); chooseLicense() }
 
-    func applicationDidBecomeActive(_ note: Notification) { refresh() }   // re-check when refocused
+    func applicationDidBecomeActive(_ note: Notification) {
+        refresh()                                                          // re-check when refocused
+        // Back from installing Rosetta by hand, perhaps: look at Wine again,
+        // but only while the last look found it unable to start.
+        if let w = wineBin(), g_wineStart.problem(for: w) != nil, !rosettaInstalling {
+            DispatchQueue.global().async {
+                _ = checkWineStarts(w)
+                DispatchQueue.main.async { self.refresh() }
+            }
+        }
+    }
 
     // ---- version / update check -----------------------------------------------
     var versionLabel: NSTextField!
@@ -822,7 +881,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
             }
             if r.keepButton {                       // stays visible so you can change/uninstall it
                 fixButtons[i].isHidden = false
-                fixButtons[i].title = ok ? r.keepButtonTitle : r.fixTitle
+                fixButtons[i].title = ok ? r.keepButtonTitle : (r.dynamicFixTitle?() ?? r.fixTitle)
             } else {
                 fixButtons[i].isHidden = ok
             }
@@ -833,7 +892,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         // Launch needs Wine + SAI; Input Monitoring is verified for real by
         // actually creating the tap on Launch (the permission check can read
         // ❌ even when the tap will work), so it doesn't hard-block here.
-        let canLaunch = wineBin() != nil && saiReady()
+        let canLaunch = wineUsable() && saiReady()
         launchBtn.isEnabled = canLaunch
         if !canLaunch {
             subtitle.stringValue = "Add the missing items above, then Launch."
@@ -919,22 +978,34 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
         launchBtn.isEnabled = false
         subtitle.stringValue = "Setting up… (first time can take a minute)"
         DispatchQueue.global().async {
-            // An app update ships a new helper AND a new DLL, but the DLL only
-            // reaches the prefix if setup runs. Heal it here so the two halves
-            // can never drift apart (issue #21).
-            ensureBridgeUpToDate(wine)
-            // ...and the half of it that lives in the registry. Without this
-            // key Wine loads its OWN wintab32 and every line above is wasted
-            // work — a prefix in that state used to stay in it forever (#29).
-            ensureBridgeOverride(wine)
-            let ok = ensureSetup(sai, wine)
+            let prep = launchPrepare(sai, wine)
+            if case .wineCannotStart(let p) = prep {
+                wlog("launch: stopped, Wine does not start: \(p)")
+                DispatchQueue.main.async {
+                    self.launchBtn.isEnabled = true
+                    self.refresh()
+                    self.subtitle.stringValue = WineStartCore.rowLine(p)
+                    self.offerWineStartFix(p)
+                }
+                return
+            }
+            let ok = prep == .ready
             DispatchQueue.main.async {
                 guard ok else { self.subtitle.stringValue = "Setup failed. Re-check the SAI folder."; self.refresh(); return }
                 if startPressureEngineOnce() {
                     self.running = true
-                    launchSAIApp()
-                    self.subtitle.stringValue = "Running. Pressure is active, close SAI to quit."
-                    self.window.miniaturize(nil)
+                    if launchSAIApp() {
+                        self.subtitle.stringValue = "Running. Pressure is active, close SAI to quit."
+                        self.window.miniaturize(nil)
+                    } else {
+                        // Wine would not start after all (launchSAIApp logged
+                        // why). Say so here instead of going to the Dock as if
+                        // SAI had opened.
+                        self.running = false
+                        self.refresh()
+                        self.subtitle.stringValue = "SAI didn't start: Wine could not be run."
+                        if let p = g_wineStart.problem(for: wine) { self.offerWineStartFix(p) }
+                    }
                 } else {
                     self.relaunchForPermission()
                 }

@@ -399,10 +399,12 @@ extension SetupController {
         out.append("Mac: \(model) · \(cpu)")
         out.append("this app: \(appArch)\(translated ? " (running under Rosetta)" : "")")
         if let w = wineBin() {
-            let ver = runCapture(w, ["--version"]).trimmingCharacters(in: .whitespacesAndNewlines)
+            // Whether it STARTS, and if not why: "version unknown" was all a
+            // report said about an Intel Wine on an Apple chip without Rosetta.
             let archs = runCapture("/usr/bin/lipo", ["-archs", w]).trimmingCharacters(in: .whitespacesAndNewlines)
-            out.append("Wine: \(ver.isEmpty ? "version unknown" : ver)\(archs.isEmpty ? "" : " [\(archs)]")")
+            out.append(WineStartCore.wineReportLine(checkWineStarts(w, reuse: false), archs: archs))
         }
+        if let line = WineStartCore.rosettaReportLine(WineStartCore.rosettaInstalled()) { out.append(line) }
         let tablets = detectTablets()
         out.append("tablets: " + (tablets.isEmpty ? "none detected"
             : tablets.map { t in

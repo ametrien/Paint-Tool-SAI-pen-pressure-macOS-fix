@@ -194,6 +194,22 @@ swiftc -o "$WORK/bridge-tests" "$REPO/wacom-helper/BridgeCheck.swift" "$REPO/tes
 "$WORK/bridge-tests"
 
 echo ""
+echo "== Swift core (OsaQuote.swift): every dialog compiles, through the real osascript =="
+# alertUser built its script with debugDescription, which writes ' as \' and
+# does not compile: 25 of 56 messages were never shown, "Couldn't repair the
+# bridge" among them. Nothing here is put on screen (see the test file).
+swiftc -o "$WORK/osaquote-tests" "$REPO/wacom-helper/OsaQuote.swift" "$REPO/tests/OsaQuoteTests.swift"
+"$WORK/osaquote-tests"
+
+echo ""
+echo "== Swift core (WineStartCore.swift): does Wine start, and what the user is told =="
+# An Intel Wine on an Apple chip without Rosetta is a file that cannot run, and
+# the Wine row was green for it. Stand-in binaries fail to start each way.
+swiftc -o "$WORK/winestart-tests" "$REPO/wacom-helper/WineStartCore.swift" \
+  "$REPO/wacom-helper/OsaQuote.swift" "$REPO/tests/WineStartTests.swift"
+"$WORK/winestart-tests"
+
+echo ""
 echo "== Swift core (ReportCore.swift) =="
 swiftc -o "$WORK/report-tests" "$REPO/wacom-helper/ReportCore.swift" "$REPO/tests/ReportTests.swift"
 "$WORK/report-tests"
@@ -638,6 +654,164 @@ want "bridge: and leaves no override behind to be mistaken for one"     "$out" "
 
 [ "$bfail" = 0 ] || exit 1
 echo "All bridge check tests passed."
+
+echo ""
+echo "== A Mac where Wine cannot start is told so (real filesystem) =="
+# Reported on YouTube, 2026-11-17: Wine in /Applications that cannot start, most
+# likely an Intel Wine on an Apple chip without Rosetta. Every step after it
+# failed in silence. Setup copied SAI and our DLL (plain files) but could not
+# write the registry (that takes Wine), so the one red row said "Wine loads its
+# own wintab32, not ours. Press Repair.", and Repair's answer was a dialog that
+# did not compile and was never shown (WineStartCore.swift, OsaQuote.swift).
+#
+# A Mach-O for a processor no current Mac runs fails to start exactly the way
+# that Wine does ("Bad CPU type in executable", errno 86), so it stands in for
+# it. The app's own binary runs the real setup and the real Repair against a
+# throwaway prefix; every dialog is written to a file instead of shown, then
+# compiled here (a dialog that does not compile is never seen) and read.
+WS="$WORK/winestart"; mkdir -p "$WS/app" "$WS/sai"
+cp "$WORK/helper-upd" "$WS/app/helper"
+# Next to the binary is where an unbundled helper looks for the DLL it ships.
+printf 'stand-in for the shipped wintab32.dll' > "$WS/app/wintab32.dll"
+printf 'EXE' > "$WS/sai/sai2.exe"
+printf '\xcf\xfa\xed\xfe\x12\x00\x00\x00\x00\x00\x00\x00\x02\x00\x00\x00' > "$WS/wine-bad-cpu"
+printf '\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' >> "$WS/wine-bad-cpu"
+# Wine that starts, but whose registry writes all fail.
+printf '#!/bin/bash\n[ "$1" = --version ] && { echo "wine-11.16 (Staging)"; exit 0; }\nexit 1\n' > "$WS/wine-no-registry"
+# Wine that works, as far as the bridge can tell: it answers --version and
+# keeps the one registry value the bridge needs in a file in the prefix.
+cat > "$WS/wine-works" <<'FAKEWINE'
+#!/bin/bash
+reg="$WINEPREFIX/fake-wintab32-override"
+case "$1" in
+  --version) echo "wine-11.16 (Staging)";;
+  reg)
+    if [ "$2" = add ]; then
+      while [ $# -gt 0 ]; do [ "$1" = /d ] && printf '%s' "$2" > "$reg"; shift; done
+    elif [ "$2" = query ]; then
+      [ -f "$reg" ] || exit 1
+      printf 'HKEY_CURRENT_USER\\Software\\Wine\\DllOverrides\r\n    wintab32    REG_SZ    %s\r\n\r\n' "$(cat "$reg")"
+    fi;;
+esac
+exit 0
+FAKEWINE
+chmod +x "$WS/wine-bad-cpu" "$WS/wine-no-registry" "$WS/wine-works"
+wsfail=0
+ws() {  # mode wine case: the app's self-test, with a prefix and dialog folder per case
+  mkdir -p "$WS/dialogs-$3"
+  SAI_PREFIX="$WS/prefix-$3" SAIPP_CONFIG_DIR="$WS/cfg-$3" SAIPP_SELFTEST_DIALOG_DIR="$WS/dialogs-$3" \
+    SAIPP_SELFTEST_WINE="$2" SAIPP_SELFTEST_SAI="$WS/sai" SAIPP_SELFTEST_BRIDGE="$1" "$WS/app/helper"
+}
+wswant() { case "$2" in *"$3"*) echo "  ok   $1";; *) echo "  FAIL $1"; echo "$2" | sed 's/^/        /'; wsfail=1;; esac; }
+dialogs() { cat "$WS/dialogs-$1"/*.applescript 2>/dev/null; }
+dialogs_compile() {  # every dialog of a case compiles (inside `if false`: never shown)
+  local n=0 f
+  for f in "$WS/dialogs-$1"/*.applescript; do
+    [ -f "$f" ] || continue; n=$((n + 1))
+    osascript -e "if false then" -e "$(cat "$f")" -e "end if" >/dev/null 2>&1 \
+      || { echo "  FAIL $2: $(basename "$f") does not compile, so it would never be shown"; wsfail=1; return; }
+  done
+  if [ "$n" -gt 0 ]; then echo "  ok   $2"; else echo "  FAIL $2: no dialog at all"; wsfail=1; fi
+}
+if [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ]; then
+  apple=1; why_bad="needsRosetta"; says_bad="Rosetta"
+else  # an Intel Mac: the same refusal is not about Rosetta there
+  apple=0; why_bad="cannotStart(code: 86)"; says_bad="won't start it"
+fi
+
+out=$(ws winestart "$WS/wine-bad-cpu" check)
+wswant "start check: a Wine this Mac cannot run is seen ($why_bad)" "$out" "problem=$why_bad"
+wswant "start check: and the Wine row is not green for it"           "$out" "rowOK=false"
+[ "$apple" = 1 ] && wswant "start check: the row offers Rosetta" "$out" "button=Install Rosetta…"
+out=$(ws winestart "$WS/wine-works" check-ok)
+wswant "start check: a Wine that answers is green" "$out" "rowOK=true"
+case "$out" in *"runs through Rosetta"*) echo "  FAIL start check: a script Wine is not said to run through Rosetta"; wsfail=1;;
+  *) echo "  ok   start check: a script Wine is not said to run through Rosetta";; esac
+
+# The green row's Rosetta note, from a real Intel-only program like Gcenx's
+# Wine: on an Apple chip with Rosetta it runs, and the row must say how.
+printf '#include <stdio.h>\nint main(void){puts("wine-11.16 (Staging)");return 0;}\n' > "$WS/wine.c"
+if [ "$apple" = 1 ] && arch -x86_64 /usr/bin/true 2>/dev/null \
+   && clang -arch x86_64 -o "$WS/wine-intel" "$WS/wine.c" 2>/dev/null; then
+  out=$(ws winestart "$WS/wine-intel" intel)
+  wswant "start check: an Intel Wine that runs is green"              "$out" "rowOK=true"
+  wswant "start check: and its row says it runs through Rosetta"       "$out" "row=Gcenx Wine Staging in /Applications · runs through Rosetta"
+  clang -arch arm64 -o "$WS/wine-native" "$WS/wine.c"
+  out=$(ws winestart "$WS/wine-native" native)
+  case "$out" in *"runs through Rosetta"*) echo "  FAIL start check: a native Wine is not said to run through Rosetta"; wsfail=1;;
+    *) echo "  ok   start check: a native Wine is not said to run through Rosetta";; esac
+else
+  echo "  skip the Rosetta note: needs an Apple chip with Rosetta installed"
+fi
+
+# First setup on such a Mac: stops before touching anything, and says why.
+out=$(ws setup "$WS/wine-bad-cpu" fresh)
+wswant "setup: refuses with a Wine that cannot start" "$out" "performSetup=false"
+wswant "setup: copies no SAI into a prefix it cannot finish" "$out" "saiCopied=false"
+wswant "setup: and no DLL either" "$out" "dllCopied=false"
+dialogs_compile fresh "setup: its dialog compiles, so it is seen"
+wswant "setup: and the dialog says why ($says_bad)" "$(dialogs fresh)" "$says_bad"
+
+# Launch, the button people actually press, on that Mac: stops, touches
+# nothing, and says why in a dialog that compiles.
+out=$(ws launch "$WS/wine-bad-cpu" launch-bad)
+wswant "Launch: stops when Wine cannot start ($why_bad)" "$out" "launch=wineCannotStart($why_bad)"
+wswant "Launch: copies no SAI"                          "$out" "saiCopied=false"
+wswant "Launch: and no DLL"                             "$out" "dllCopied=false"
+wswant "Launch: the window's top line says why"         "$out" "subtitle="
+dialogs_compile launch-bad "Launch: its dialog compiles, so it is seen"
+wswant "Launch: and the dialog says why ($says_bad)" "$(dialogs launch-bad)" "$says_bad"
+[ "$apple" = 1 ] && wswant "Launch: and offers Install Rosetta" "$(dialogs launch-bad)" "\"Install Rosetta\""
+out=$(ws launch "$WS/wine-works" launch-ok)
+wswant "Launch, working Wine: goes ahead"   "$out" "launch=ready"
+wswant "Launch, working Wine: SAI is copied" "$out" "saiCopied=true"
+wswant "Launch, working Wine: so is the DLL" "$out" "dllCopied=true"
+
+# Advanced › Wine for the same Wine: not "No Wine installed yet".
+out=$(ws advanced "$WS/wine-bad-cpu" adv-bad)
+wswant "Advanced: a Wine that cannot start is its own state" "$out" "state=cannotStart"
+case "$out" in *"No Wine installed"*) echo "  FAIL Advanced: says 'No Wine installed yet' for a Wine that is there"; wsfail=1;;
+  *) echo "  ok   Advanced: never says 'No Wine installed yet' for a Wine that is there";; esac
+[ "$apple" = 1 ] && wswant "Advanced: names Rosetta and offers it" "$out" "button=Install Rosetta…"
+out=$(ws advanced "$WS/wine-works" adv-ok)
+case "$out" in *"state=cannotStart"*|*"state=notInstalled"*) echo "  FAIL Advanced: a working Wine is not reported as broken or missing"; wsfail=1;;
+  *) echo "  ok   Advanced: a working Wine is not reported as broken or missing";; esac
+
+# The prefix the old setup left behind on that Mac, exactly as reported.
+H="$WS/prefix-half"; mkdir -p "$H/drive_c/SAI2" "$H/drive_c/windows/system32"
+printf 'EXE' > "$H/drive_c/SAI2/sai2.exe"; cp "$WS/app/wintab32.dll" "$H/drive_c/windows/system32/"
+out=$(ws 1 "$WS/wine-bad-cpu" half)
+wswant "that prefix: the bridge row reads as the report quoted it" "$out" "Wine loads its own wintab32, not ours. Press Repair."
+out=$(ws repairwork "$WS/wine-bad-cpu" half)
+wswant "Repair there: names the real cause ($why_bad)" "$out" "$why_bad"
+dialogs_compile half "Repair there: its dialog compiles, so it is seen"
+wswant "Repair there: and the dialog says why ($says_bad)" "$(dialogs half)" "$says_bad"
+
+# Wine starts, the registry write fails: the dialog the reporter never saw.
+mkdir -p "$WS/prefix-noreg/drive_c/SAI2"; printf 'EXE' > "$WS/prefix-noreg/drive_c/SAI2/sai2.exe"
+out=$(ws repairwork "$WS/wine-no-registry" noreg)
+wswant "Repair, write fails: reported as a failure" "$out" "outcome=failed"
+dialogs_compile noreg "Repair, write fails: \"Couldn't repair the bridge\" compiles, so it is seen"
+wswant "Repair, write fails: and that is what it says" "$(dialogs noreg)" "Couldn't repair the bridge."
+
+# And a Wine that works is not held up by any of this.
+out=$(ws setup "$WS/wine-works" works)
+wswant "setup, working Wine: goes ahead"   "$out" "performSetup=true"
+wswant "setup, working Wine: SAI is copied" "$out" "saiCopied=true"
+wswant "setup, working Wine: so is the DLL" "$out" "dllCopied=true"
+out=$(ws repairwork "$WS/wine-works" works)
+wswant "Repair, working Wine: fixed" "$out" "outcome=fixed"
+dialogs_compile works "Repair, working Wine: its dialog compiles"
+[ "$wsfail" = 0 ] || exit 1
+echo "All Wine start tests passed."
+
+echo ""
+echo "== No dialog is built with debugDescription =="
+# debugDescription writes ' as \', which AppleScript cannot compile: the dialog
+# is then never shown (OsaQuote.swift). osaQuote is the way to put text in one.
+if grep -n 'debugDescription' "$REPO"/wacom-helper/*.swift | grep -E 'osa\(|display dialog|alertScript|choose from list'; then
+  echo "  FAIL an AppleScript above is built with debugDescription; use osaQuote"; exit 1
+else echo "  ok   no AppleScript is built with debugDescription"; fi
 
 echo ""
 echo "== Live encoding accumulates instead of overwriting =="

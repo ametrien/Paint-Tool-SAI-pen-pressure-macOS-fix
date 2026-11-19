@@ -12,23 +12,19 @@ func setWinePatchWanted(_ on: Bool) {
     else { try? "".write(toFile: winePatchOffFile(), atomically: true, encoding: .utf8) }
 }
 
-/// `wine --version`, e.g. "wine-11.16 (Staging)". nil if it cannot run.
+/// `wine --version`, e.g. "wine-11.16 (Staging)". nil if it cannot run. The
+/// same check the Setup tab's Wine row shows (WineStartCore.swift), so the two
+/// tabs can no longer disagree about whether there is a Wine.
 func wineVersionString(_ wine: String) -> String? {
-    let p = Process()
-    p.executableURL = URL(fileURLWithPath: wine)
-    p.arguments = ["--version"]
-    let pipe = Pipe()
-    p.standardOutput = pipe; p.standardError = Pipe()
-    do { try p.run() } catch { return nil }
-    p.waitUntilExit()
-    let s = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-    return (s?.isEmpty ?? true) ? nil : s
+    checkWineStarts(wine).version
 }
 
-func currentWineFixState() -> (WineFixState, String?) {
-    guard let wine = wineBin() else { return (.notInstalled, nil) }
-    let ver = wineVersionString(wine)
+/// wine: which Wine to look at (the self-test passes a stand-in).
+func currentWineFixState(_ wine: String? = wineBin()) -> (WineFixState, String?) {
+    guard let wine = wine else { return (.notInstalled, nil) }
+    // There, but no answer: not "No Wine installed yet", which is what this
+    // said beside a green Wine row on the Setup tab.
+    guard let ver = wineVersionString(wine) else { return (.cannotStart, nil) }
     return (WineStatusCore.state(version: ver, driverSHA: sha256Hex(wineMacDriverPath(wine))), ver)
 }
 
@@ -94,6 +90,8 @@ extension SetupController {
         switch state {
         case .notInstalled:
             text = "No Wine installed yet. Install it on the Setup tab."
+        case .cannotStart:
+            (text, button) = WineStartCore.advancedLine(g_wineStart.problem(for: wineBin()))
         case .fixedUpstream:
             text = "\(name). This Wine has the fix for smooth drawing with sharp text built in."
         case .patched:
@@ -121,6 +119,8 @@ extension SetupController {
         case .patched:   changePatch(wanted: false)
         case .patchable: changePatch(wanted: true)
         case .needsUpdate: updateWine()
+        case .cannotStart:
+            if let p = g_wineStart.problem(for: wineBin()) { offerWineStartFix(p) } else { refreshWineSection() }
         default: refreshWineSection()
         }
     }

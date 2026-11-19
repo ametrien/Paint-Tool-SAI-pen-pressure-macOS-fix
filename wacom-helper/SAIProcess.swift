@@ -317,7 +317,11 @@ func syncBridgeDLL() {
     try? FileManager.default.removeItem(atPath: dst)
     try? FileManager.default.copyItem(atPath: src, toPath: dst)
 }
-func launchSAIApp() {
+/// Start SAI through Wine. False when Wine could not be started at all: that
+/// used to go to the log only, and the window went to the Dock as if SAI had
+/// opened.
+@discardableResult
+func launchSAIApp() -> Bool {
     // Before anything else, including raising an SAI that is already open: a
     // Test pen probe left running holds the pen port, and SAI then reads the
     // pen from a file and misses quick strokes (2026-11-11). Stopping it here
@@ -335,7 +339,7 @@ func launchSAIApp() {
                 .activate(options: [.activateAllWindows])
         }
         pollUntilSAICloses()      // still quit with SAI, as a fresh launch would
-        return
+        return true
     }
     // A stopped probe leaves its Wine session behind, and SAI would join it
     // (BridgeCheck.restartWineAfterStrayProbes says why that is avoided).
@@ -418,7 +422,14 @@ func launchSAIApp() {
     do {
         try p.run()                                         // async; quits the app when SAI closes
         wlog("launch: started SAI through Wine, pid \(p.processIdentifier)")
+        return true
     } catch {
         wlog("launch: could not start Wine for SAI: \(error)")
+        // The Wine row shows why from now on (WineStartCore.swift).
+        let problem = WineStartCore.problem(spawnError: WineStartCore.errno(of: error), exitStatus: nil,
+                                            output: "", appleChip: WineStartCore.isAppleChip())
+        g_wineStart.record(g_wine, WineStartResult(version: nil, problem: problem))
+        stopLiveEncoder()         // started above for a SAI that never came
+        return false
     }
 }

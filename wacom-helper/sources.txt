@@ -8,6 +8,8 @@
 # tests/run-tests.sh checks this list against what is actually on disk, so a new
 # file cannot be forgotten here.
 wacom-helper/main.swift
+wacom-helper/OsaQuote.swift
+wacom-helper/WineStartCore.swift
 wacom-helper/PenEngine.swift
 wacom-helper/LatestFileWriter.swift
 wacom-helper/PressureCore.swift
