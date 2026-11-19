@@ -87,24 +87,10 @@ chmod +x "$APP/Contents/Resources/install-wine.sh"
 cp "$REPO/timelapse-encoder/sai-timelapse-encoder" "$APP/Contents/Resources/sai-timelapse-encoder"
 chmod +x "$APP/Contents/Resources/sai-timelapse-encoder"
 
-# App icon — render the pen emoji to a 1024px PNG, then build an .icns.
-# Best-effort: if anything fails the app just uses the default icon (non-fatal).
-HAS_ICON=""
-ICONWORK="$(mktemp -d)"
-if swiftc -O -o "$ICONWORK/make-icon" "$REPO/make-icon.swift" 2>/dev/null \
-   && "$ICONWORK/make-icon" "$ICONWORK/icon1024.png" 2>/dev/null; then
-  mkdir -p "$ICONWORK/icon.iconset"
-  for s in 16 32 128 256 512; do
-    sips -z $s $s        "$ICONWORK/icon1024.png" --out "$ICONWORK/icon.iconset/icon_${s}x${s}.png"    >/dev/null 2>&1
-    sips -z $((s*2)) $((s*2)) "$ICONWORK/icon1024.png" --out "$ICONWORK/icon.iconset/icon_${s}x${s}@2x.png" >/dev/null 2>&1
-  done
-  if iconutil -c icns "$ICONWORK/icon.iconset" -o "$APP/Contents/Resources/AppIcon.icns" 2>/dev/null; then
-    HAS_ICON=1
-    echo "App icon: built AppIcon.icns from pen emoji."
-  fi
-fi
-[ -z "$HAS_ICON" ] && echo "App icon: skipped (using default) — non-fatal."
-rm -rf "$ICONWORK"
+# App icon: the pen by gravisio from Flaticon on a light tile, committed ready
+# made. tools/make-icon.swift draws it again; the picture it draws from is not
+# in the repository (Flaticon's licence), so the build does not redraw it.
+cp "$REPO/icon/AppIcon.icns"        "$APP/Contents/Resources/AppIcon.icns"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -117,12 +103,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>$VERSION</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleExecutable</key><string>SAIPenPressure</string>${HAS_ICON:+
-  <key>CFBundleIconFile</key><string>AppIcon</string>}
+  <key>CFBundleExecutable</key><string>SAIPenPressure</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSHumanReadableCopyright</key>
-  <string>SAI Pen Pressure by ametrien. GNU GPL version 3, see NOTICE. https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix</string>
+  <string>SAI Pen Pressure by ametrien. GNU GPL version 3, see NOTICE. https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix Icon: "Pen" by gravisio from Flaticon, https://www.flaticon.com/free-icons/drawing</string>
   <!-- shown in the permission prompts -->
   <key>NSInputMonitoringUsageDescription</key>
   <string>Reads pen pressure from your drawing tablet to send it to SAI.</string>

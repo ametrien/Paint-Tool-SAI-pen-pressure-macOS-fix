@@ -10,6 +10,11 @@ wacom-helper/wacom-pressure-helper
 make-icon
 tools/sai-offset-scan
 
+# The app icon's source picture is from Flaticon, whose licence does not let it
+# be passed on by itself: download it (see tools/make-icon.swift), never commit
+# it. The finished icon/AppIcon.icns is committed.
+icon/*.png
+
 # NEVER commit proprietary SAI files or licenses
 *.exe
 *.slc

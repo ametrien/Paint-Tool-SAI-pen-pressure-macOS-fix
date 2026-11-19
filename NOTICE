@@ -30,5 +30,13 @@ versions stay under those licences.
 The Wine Mac driver in wine-patch/ is a modified part of Wine, licensed under
 the GNU Lesser General Public License, version 2.1 or later. See wine-patch/README.md.
 
+The app icon: "Pen" by gravisio from Flaticon.
+Drawing icons created by gravisio - Flaticon
+https://www.flaticon.com/free-icons/drawing
+The pen of the app icon (icon/AppIcon.icns) is "Pen" by gravisio from Flaticon
+(https://www.flaticon.com/free-icon/pen_11502485), used under Flaticon's free
+licence, which asks for this attribution. It is not covered by the GPL: the
+licence is at https://www.flaticon.com/legal (Free licence, with attribution).
+
 PaintTool SAI is proprietary software by SYSTEMAX Software Development and is
 not part of this project.

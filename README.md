@@ -547,7 +547,9 @@ The full story, with the reasons behind each choice, is in
 `make-app.sh` builds everything into `dist/`: the helper and the timelapse encoder as universal
 binaries, from the file lists in `wacom-helper/sources.txt` and `timelapse-encoder/sources.txt`,
 and the app bundle around them. Only `wintab32.dll` and the test probe `wtprobe.exe` are committed
-prebuilt, because cross-compiling them needs mingw-w64. By hand:
+prebuilt, because cross-compiling them needs mingw-w64, and the app icon `icon/AppIcon.icns`,
+because the picture it is drawn from may not be kept here (`tools/make-icon.swift` says how to
+draw it again). By hand:
 ```bash
 # wintab32.dll and the test probe  (brew install mingw-w64)
 cd wintab-src
@@ -591,6 +593,10 @@ process, though the field layout was informed by theirs rather than found blind;
 in [TIMELAPSE-PLAN.md](TIMELAPSE-PLAN.md).
 
 art-timelapse is GPL-3.0 and this project is not, which is why the boundary was worth keeping clear.
+
+**The app icon** is "Pen" by gravisio from Flaticon:
+[Drawing icons created by gravisio - Flaticon](https://www.flaticon.com/free-icons/drawing).
+It is used under Flaticon's free licence, which asks for this credit, and is not under the GPL.
 
 ## License & attribution
 

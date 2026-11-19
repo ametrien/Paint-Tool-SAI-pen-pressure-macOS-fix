@@ -3,6 +3,18 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+Not in a build yet. Move this under the next version number when it is released,
+and mention it in the release notes.
+
+### Changed
+- **A new app icon: the pen by gravisio from Flaticon,** on the same light tile, as in SAI Pen
+  for Android. The old icon was the pen emoji drawn in Apple's emoji font, and that picture is
+  Apple's, not free to use as an app icon. The credit is in NOTICE, the README and the app's
+  Get Info. The finished icon is committed as `icon/AppIcon.icns`; `tools/make-icon.swift` (moved
+  from the top folder) draws it again from the downloaded picture.
+
 ## [0.3.18] — 2026-11-19
 
 ### Fixed
