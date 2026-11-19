@@ -131,7 +131,8 @@ worked or not (see [CONTRIBUTING](CONTRIBUTING.md)).
 
 **Drawing statistics**
 
-- **Time and strokes per day**, a streak, and which hours of the day you draw in
+- **Time and strokes** by week, month, year or all time, your average day and your streak
+- **By day, by hour, by weekday, and a calendar** of the whole year
 - Counted from the pen itself, so it works with recording off, and stays on your Mac
 - **Export CSV…** with every day and every hour, for your own charts
 
@@ -268,7 +269,7 @@ what did not work.
 Seven tabs, one window. Each tab is described below.
 
 <p align="center">
-  <a href="docs/assets/screenshots/all-tabs.png"><img src="docs/assets/screenshots/all-tabs.png" alt="All seven tabs. Top row: Setup, with Launch and Wake SAI; Pen, with pressure levels, pen feel presets, the curve and two more feel sliders, and Test pen; Keys, with what each Option and Command key sends; Recording, with the timelapse switches and save folder. Bottom row: Videos, a grid of drawings with a bar for the selection; Statistics, with today, the last 7 days, the streak and a chart of the last two weeks; Advanced, with developer mode, automatic updates, sharp text on Retina screens, the Language menu with the font in use, and the Wine in use." width="100%"></a>
+  <a href="docs/assets/screenshots/all-tabs.png"><img src="docs/assets/screenshots/all-tabs.png" alt="All seven tabs. Top row: Setup, with Launch and Wake SAI; Pen, with pressure levels, pen feel presets, the curve and two more feel sliders, and Test pen; Keys, with what each Option and Command key sends; Recording, with the timelapse switches and save folder. Bottom row: Videos, a grid of drawings with a bar for the selection; Statistics, with the total, days drawn, average day and streak for the month, and a bar for each day; Advanced, with developer mode, automatic updates, sharp text on Retina screens, the Language menu with the font in use, and the Wine in use." width="100%"></a>
 </p>
 
 ### Setup
@@ -353,14 +354,27 @@ It does not edit videos beyond choosing their length.
 
 ### Statistics
 
-<p align="center"><a href="docs/assets/screenshots/statistics.png"><img src="docs/assets/screenshots/statistics.png" alt="The Statistics tab: today, the last 7 days and the streak, a chart of the last two weeks with Days and Hours, all-time totals and Export CSV." width="70%"></a></p>
+<p align="center"><a href="docs/assets/screenshots/statistics.png"><img src="docs/assets/screenshots/statistics.png" alt="The Statistics tab for the last month, Days view: 55 h and 200,095 strokes in total, 25 of 30 days drawn, an average day of 2 h 12 min and a streak of 4 days, best 9. Below, a bar for each day's drawing time with a line at the average day, then all-time totals, the best day and Export CSV." width="70%"></a></p>
 
 How much you draw, counted while SAI is the app in front, whether or not you record.
 
-- **Today**, **Last 7 days** and your **streak** of days in a row, plus all-time totals and your
-  best day.
-- A chart with two views: **Days**, the last two weeks, and **Hours**, which hours of the day you
-  drew in over the last 30 days.
+- Look at the last **Week**, **Month** or **Year**, or **All time**. For each you get the total
+  time and strokes, how many of the days you drew, your **average day**, and your **streak** of
+  days in a row with the best one.
+- Four views:
+  - **Days**: a bar for each day, with a line at your average day.
+  - **Hours**: which hours of the day you draw in, and when you draw most.
+  - **Weekdays**: your average Monday, Tuesday and so on, days off included.
+  - **Calendar**: every day of the year, coloured by how long you drew. Point at a day to see
+    its time, strokes, sessions, and when you started and stopped.
+- All-time totals and your best day, always at the bottom.
+
+<p align="center">
+  <a href="docs/assets/screenshots/statistics-hours.png"><img src="docs/assets/screenshots/statistics-hours.png" alt="The Hours view: drawing time by hour of the day over the last 30 days, mostly in the evening and at night, around 22:00." width="32%"></a>
+  <a href="docs/assets/screenshots/statistics-weekdays.png"><img src="docs/assets/screenshots/statistics-weekdays.png" alt="The Weekdays view: the average drawing time for each day of the week, highest on Saturday with 4 h 11." width="32%"></a>
+  <a href="docs/assets/screenshots/statistics-calendar.png"><img src="docs/assets/screenshots/statistics-calendar.png" alt="The Calendar view: every day of 2026 as a square, coloured from none to 2 h or more, with hours per month, and the day pointed at shown below: Thursday, 19 November, 12 min, 695 strokes, 1 session, 08:44 to 08:56." width="32%"></a>
+</p>
+
 - **Export CSV…** saves every day as a row for a spreadsheet: strokes, drawing and pen time,
   average stroke, strokes per minute, sessions, the longest session, first and last stroke, and
   minutes in each hour.
