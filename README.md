@@ -23,13 +23,14 @@ canvas** while you draw. Free and open source.
 
 ## What you need
 
-- **A Mac with Apple Silicon.** Intel Macs are untested.
+- **A Mac with Apple Silicon or an Intel Mac.** Both work.
 - **A pen tablet that macOS itself recognises.** The app reads the standard tablet events macOS
   gives every app, so nothing in it is tied to one tablet.
 - **PaintTool SAI Ver.2**, free to download, and a licence from SYSTEMAX if you want to save.
   **[Where to get both, step by step](#get-sai-and-a-licence)**.
 
-Wine is installed for you during setup.
+Wine is installed for you during setup. On Apple Silicon, setup also installs Rosetta if it is not
+there yet, because Wine runs through it. Intel Macs do not need Rosetta.
 
 ## Get started
 
@@ -92,7 +93,8 @@ This project is not affiliated with SYSTEMAX and cannot sell, make or unlock a l
 
 Users have reported it working on:
 
-- Macs: **M5 MacBook Air** and **M3 Pro MacBook Pro** on **macOS Tahoe 26**, and **M1 Pro MacBook Pro**
+- Macs: **M5 MacBook Air** and **M3 Pro MacBook Pro** on **macOS Tahoe 26**, **M1 Pro MacBook Pro**,
+  and an Intel **MacBook Air 13" (2019, Core i5, 8 GB)** on **macOS Sonoma 14.5** (app 0.3.18)
 - Tablets: **Wacom Intuos S**, over USB and Bluetooth (CTL-4100 and CTL-4100WL)
 - Displays: one screen, two screens mirrored, two screens extended, a screen connected while SAI is
   open, and an external LG UltraFine
