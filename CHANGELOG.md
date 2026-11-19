@@ -3,10 +3,21 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.3.18] — 2026-11-19
 
-Not in a build yet. Move this under the next version number when it is released,
-and mention it in the release notes.
+### Fixed
+- **Messages with an apostrophe were never shown.** 25 of the app's 56 dialogs, "Couldn't repair
+  the bridge" among them, did not compile as AppleScript and stayed invisible, so Repair could
+  fail with nothing on screen at all. They all show now, and so do the ones that name a folder, a
+  file or an error with a quote mark in it, which could be lost the same way.
+- **A Wine that cannot start is named on the Wine row** (reported on YouTube). On a Mac with an
+  Apple chip and no Rosetta, Wine, an app for Intel Macs, cannot run. The Wine row was green
+  anyway, setup built half an installation, and the only red row was the pressure bridge. Now the
+  Wine row turns red, says that Rosetta is missing and offers **Install Rosetta…**. Setup, Launch
+  and Repair stop and say why, Advanced › Wine no longer says "No Wine installed yet", and the
+  problem report says whether Rosetta is installed. On a Mac with an Apple chip where Wine does
+  start, the green Wine row now ends in "runs through Rosetta", so the check shows it passed.
+- **Repair works in the background**, so the window no longer freezes while Wine works.
 
 ### Changed
 - **The licence is now the GNU GPL version 3.** You may still use, change and share the code.

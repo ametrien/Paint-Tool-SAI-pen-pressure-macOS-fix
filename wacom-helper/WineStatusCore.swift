@@ -61,6 +61,10 @@ struct WineVersion: Comparable, Equatable {
 
 enum WineFixState: Equatable {
     case notInstalled
+    /// Wine is in /Applications but does not start (WineStartCore.swift). It
+    /// used to read as notInstalled: "No Wine installed yet" on Advanced,
+    /// beside a green Wine row on the Setup tab.
+    case cannotStart
     /// Wine itself has the fix (11.22 or newer).
     case fixedUpstream(WineVersion)
     /// Wine Staging 11.16 with our patched driver.

@@ -198,6 +198,75 @@ func bridgeOverrideViaWine(_ wine: String) -> String? {
     return BridgeCheck.overrideValue(inRegQuery: text)
 }
 
+/// What pressing Repair on the bridge row comes to. Kept apart from the button
+/// so the self-test can run exactly these steps against a throwaway prefix
+/// (tests/run-tests.sh, "A Mac where Wine cannot start").
+enum BridgeRepairOutcome: Equatable {
+    /// Nothing can be written: Wine does not start on this Mac.
+    case wineCannotStart(WineStartProblem)
+    /// Wine starts, and the bridge is still not right afterwards.
+    case failed
+    case alreadyComplete
+    case fixed(overrideRepaired: Bool)
+}
+
+/// Blocks while Wine works (up to three starts of it, and the first start in a
+/// prefix that never had Wine in it builds the prefix, about a minute), so
+/// never on the main thread.
+func bridgeRepairWork(_ wine: String) -> BridgeRepairOutcome {
+    let wasComplete = bridgeInstalledOK()
+    syncBridgeDLL()                      // a file copy: works with or without Wine
+    // The registry half needs Wine to run. Asked first, because "Couldn't
+    // repair the bridge" with no reason is where a user gave up (YouTube,
+    // 2026-11-17): the reason was a Wine that could not start at all.
+    if let p = checkWineStarts(wine).problem { return .wineCannotStart(p) }
+    let overrideRepaired = ensureBridgeOverride(wine)
+    guard bridgeInstalledOK() else { return .failed }
+    return wasComplete ? .alreadyComplete : .fixed(overrideRepaired: overrideRepaired)
+}
+
+/// What Repair says afterwards. (The window shows wineCannotStart as a dialog
+/// with the button that fixes it; this text is the plain version.)
+func bridgeRepairMessage(_ o: BridgeRepairOutcome) -> String {
+    switch o {
+    case .wineCannotStart(let p):
+        return WineStartCore.advice(p, button: false)
+    case .failed:
+        return "Couldn't repair the bridge.\n\nTry Reinstall… → Repair, which rebuilds this part of the prefix from scratch."
+    case .alreadyComplete:
+        return "The bridge was already complete. Nothing needed fixing.\n\nIf pressure still doesn't reach SAI, try Test pen in the Pen tab."
+    case .fixed(let overrideRepaired):
+        return "Fixed.\n\n\(overrideRepaired ? "Wine had been loading its own wintab32; it now loads ours. " : "")Restart SAI for this to take effect."
+    }
+}
+
+/// What Launch does before SAI starts. Kept apart from the button so the
+/// self-test runs exactly these steps (tests/run-tests.sh, "A Mac where Wine
+/// cannot start").
+enum LaunchPrep: Equatable {
+    case wineCannotStart(WineStartProblem)
+    case setupFailed
+    case ready
+}
+
+/// Blocks while Wine works, so never on the main thread.
+func launchPrepare(_ sai: String, _ wine: String) -> LaunchPrep {
+    // Before anything that needs Wine: does it start? An Intel Wine on an
+    // Apple chip without Rosetta does not, and everything below used to fail
+    // without a word, then send the window to the Dock as if SAI were
+    // running. Free when the window already checked this Wine.
+    if let p = checkWineStarts(wine).problem { return .wineCannotStart(p) }
+    // An app update ships a new helper AND a new DLL, but the DLL only
+    // reaches the prefix if setup runs. Heal it here so the two halves can
+    // never drift apart (issue #21).
+    ensureBridgeUpToDate(wine)
+    // ...and the half of it that lives in the registry. Without this key Wine
+    // loads its OWN wintab32 and every line above is wasted work: a prefix in
+    // that state used to stay in it forever (#29).
+    ensureBridgeOverride(wine)
+    return ensureSetup(sai, wine) ? .ready : .setupFailed
+}
+
 /// Where our DLL has to end up for Wine to find it.
 func bridgeDLLPath() -> String { "\(appPrefix)/drive_c/windows/system32/wintab32.dll" }
 
@@ -576,6 +645,18 @@ func performSetup(_ saiSrc: String, _ wine: String, mode: SetupMode = .ensure, q
     guard FileManager.default.fileExists(atPath: "\(saiSrc)/sai2.exe") else {
         alertUser("That folder doesn't contain sai2.exe:\n\n\(saiSrc)\n\nPick the folder that DIRECTLY contains sai2.exe (usually named like \"SAI Ver.2 64bit ...\").")
         try? FileManager.default.removeItem(atPath: appSupport() + "/config.txt")
+        return false
+    }
+
+    // Wine has to START, not just be there. On an Apple chip without Rosetta
+    // the Intel Wine cannot, and going on built half a prefix: SAI and our DLL
+    // copied (plain files), no registry (that takes Wine), the bridge row red,
+    // Repair useless, and not a word about why (WineStartCore.swift). Checked
+    // before anything is touched, so a Mac where Wine cannot run is left as it
+    // was, and Launch after installing Rosetta does the whole setup properly.
+    if let problem = checkWineStarts(wine).problem {
+        wlog("setup: stopped before it began, Wine does not start: \(problem)")
+        alertUser(WineStartCore.advice(problem, button: false))
         return false
     }
 

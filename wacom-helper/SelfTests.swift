@@ -138,6 +138,63 @@ func runSelfTestIfAsked() {
             print("override=\(BridgeCheck.overrideValue(inUserReg: readUserReg() ?? "") ?? "-")")
             exit(0)
         }
+        // A Mac where Wine is there but cannot start (WineStartCore.swift), and
+        // the dialogs that tell the user. Run with SAIPP_SELFTEST_DIALOG_DIR set:
+        // alertUser then writes each dialog's script there instead of showing
+        // it, and the tests compile it and read what it says.
+        // "setup": the whole first setup, SAIPP_SELFTEST_SAI as the SAI folder.
+        // "repairwork": what the bridge row's Repair button does.
+        // "winestart": the start check alone, and the Wine row it gives.
+        // "launch": what Launch does before SAI starts (launchPrepare).
+        // "advanced": the Advanced tab's Wine line for that Wine.
+        if ["setup", "repairwork", "winestart", "launch", "advanced"].contains(mode) {
+            let env = ProcessInfo.processInfo.environment
+            let w = env["SAIPP_SELFTEST_WINE"] ?? wineBin() ?? ""
+            switch mode {
+            case "launch":
+                let prep = launchPrepare(env["SAIPP_SELFTEST_SAI"] ?? "", w)
+                if case .wineCannotStart(let p) = prep { print("launch=wineCannotStart(\(p))") }
+                else { print("launch=\(prep)") }
+                // What the window then shows: the dialog's script, and the
+                // subtitle line. The script goes to the dialog folder too, so
+                // the test compiles it like every other.
+                if case .wineCannotStart(let p) = prep {
+                    print("subtitle=\(WineStartCore.rowLine(p))")
+                    if let dir = env["SAIPP_SELFTEST_DIALOG_DIR"] {
+                        try? WineStartCore.fixDialog(p).script
+                            .write(toFile: "\(dir)/launch.applescript", atomically: true, encoding: .utf8)
+                    }
+                }
+                print("saiCopied=\(saiInstalledInPrefix())")
+                print("dllCopied=\(FileManager.default.fileExists(atPath: bridgeDLLPath()))")
+            case "advanced":
+                let (state, _) = currentWineFixState(w)
+                print("state=\(state)")
+                if state == .cannotStart {
+                    _ = checkWineStarts(w)          // what the window has by then
+                    let line = WineStartCore.advancedLine(g_wineStart.problem(for: w))
+                    print("text=\(line.text)")
+                    print("button=\(line.button ?? "-")")
+                }
+            case "setup":
+                print("performSetup=\(performSetup(env["SAIPP_SELFTEST_SAI"] ?? "", w, mode: .ensure, quiet: true))")
+                print("saiCopied=\(saiInstalledInPrefix())")
+                print("dllCopied=\(FileManager.default.fileExists(atPath: bridgeDLLPath()))")
+            case "repairwork":
+                let o = bridgeRepairWork(w)
+                print("outcome=\(o)")
+                alertUser(bridgeRepairMessage(o))
+            default:
+                let r = checkWineStarts(w, reuse: false)
+                print("problem=\(r.problem.map { "\($0)" } ?? "none")")
+                print("version=\(r.version ?? "-")")
+                let row = WineStartCore.wineRow(installed: true, problem: r.problem, viaRosetta: r.viaRosetta)
+                print("rowOK=\(row.ok)")
+                print("row=\(row.detail)")
+                print("button=\(row.fixTitle)")
+            }
+            exit(0)
+        }
         if mode == "repair" {
             print("before=\(BridgeCheck.overrideValue(inUserReg: readUserReg() ?? "") ?? "-")")
             let repaired = ensureBridgeOverride(wineBin())

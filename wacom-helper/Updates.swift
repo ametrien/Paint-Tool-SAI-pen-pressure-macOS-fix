@@ -390,7 +390,7 @@ extension SetupController {
         NSApp.activate(ignoringOtherApps: true)
         let buttons = canRetry ? "{\"Close\", \"Open releases page\", \"Try again\"}" : "{\"OK\", \"Open releases page\"}"
         let dflt = canRetry ? "Try again" : "Open releases page"
-        let c = osa("button returned of (display dialog \"Update failed: \(why).\n\nYou can always download it by hand from the releases page. Nothing of yours is involved either way.\" buttons \(buttons) default button \"\(dflt)\" with icon caution)")
+        let c = osa("button returned of (display dialog \(osaQuote("Update failed: \(why).\n\nYou can always download it by hand from the releases page. Nothing of yours is involved either way.")) buttons \(buttons) default button \(osaQuote(dflt)) with icon caution)")
         if c == "Open releases page" { openReleasePage() }
         if c == "Try again" { installUpdate(auto: false) }
     }
