@@ -399,7 +399,7 @@ time, not what you drew or in which canvas.
 
 ### Advanced
 
-<p align="center"><a href="docs/assets/screenshots/advanced.png"><img src="docs/assets/screenshots/advanced.png" alt="The Advanced tab: Developer mode, Install updates automatically, Sharp text on Retina screens, the Language menu with the font in use, and the Wine in use." width="70%"></a></p>
+<p align="center"><a href="docs/assets/screenshots/advanced.png"><img src="docs/assets/screenshots/advanced.png" alt="The Advanced tab: Developer mode, Install updates automatically, Sharp text on Retina screens, the Language menu with the font in use, the Wine in use, Brushes & textures and Support on Ko-fi." width="70%"></a></p>
 
 - **Install updates automatically**, never while SAI is open.
 - **Display › Sharp text on Retina screens:** SAI at your screen's full resolution
