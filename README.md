@@ -282,7 +282,7 @@ what did not work.
 Seven tabs, one window. Each tab is described below.
 
 <p align="center">
-  <a href="docs/assets/screenshots/all-tabs.png"><img src="docs/assets/screenshots/all-tabs.png" alt="All seven tabs. Top row: Setup, with Launch and Wake SAI; Pen, with pressure levels, pen feel presets, the curve and two more feel sliders, and Test pen; Keys, with what each Option and Command key sends; Recording, with the timelapse switches and save folder. Bottom row: Videos, a grid of drawings with a bar for the selection; Statistics, with the total, days drawn, average day and streak for the month, and a bar for each day; Advanced, with developer mode, automatic updates, sharp text on Retina screens, the Language menu with the font in use, and the Wine in use." width="100%"></a>
+  <a href="docs/assets/screenshots/all-tabs.png"><img src="docs/assets/screenshots/all-tabs.png" alt="All seven tabs. Top row: Setup, with Launch and Wake SAI; Pen, with pressure levels, pen feel presets, the curve and two more feel sliders, and Test pen; Keys, with what each Option and Command key sends; Recording, with the timelapse switches and save folder. Bottom row: Videos, a grid of drawings with a bar for the selection; Statistics, with the total, days drawn, average day and streak for the month, and a bar for each day; Advanced, with developer mode, automatic updates, sharp text on Retina screens, the Language menu with the font in use, the Wine in use, Brushes & textures and Support on Ko-fi." width="100%"></a>
 </p>
 
 ### Setup
