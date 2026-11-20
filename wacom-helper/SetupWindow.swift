@@ -202,6 +202,8 @@ extension SetupController {
              "Open the folder this app is in, with the app selected.")
         item("Show SAI folder", #selector(openSAIInWine),
              "Open the copy of SAI that runs, inside Wine.")
+        item("Brushes & textures folder", #selector(openBrushesFolder),
+             "Open SAI's settings folder, where brush packs and presets go.")
         item("Update SAI…", #selector(updateSAITapped),
              "Point at a newer SAI folder. Keeps your licence, brushes and preferences.")
         more.menu?.addItem(.separator())
@@ -252,6 +254,26 @@ extension SetupController {
         let wineBox = buildWineSection()
         devSection.addArrangedSubview(wineBox)
         devUpdateRows.append(wineBox)
+        // Shown without Developer mode: adding a brush pack is an everyday thing.
+        // The steps are in the README; the button saves finding the folder.
+        let brushRow = NSStackView(); brushRow.orientation = .horizontal; brushRow.spacing = 6
+        brushRow.alignment = .centerY
+        let brushBtn = NSButton(title: "Brushes & textures ▸", target: self, action: #selector(openBrushesFolder))
+        brushBtn.bezelStyle = .rounded; brushBtn.controlSize = .small
+        brushBtn.toolTip = "Open SAI's settings folder. Copy brush packs into the folders of the same name, with SAI closed."
+        brushRow.addArrangedSubview(brushBtn)
+        brushRow.addArrangedSubview(lbl("Add brush packs, or bring your settings from a PC.", 10, color: .tertiaryLabelColor))
+        devSection.addArrangedSubview(brushRow)
+        devUpdateRows.append(brushRow)
+        let supportRow = NSStackView(); supportRow.orientation = .horizontal; supportRow.spacing = 6
+        supportRow.alignment = .centerY
+        let kofiBtn = NSButton(title: "Support on Ko-fi ♥", target: self, action: #selector(openKofi))
+        kofiBtn.bezelStyle = .rounded; kofiBtn.controlSize = .small
+        kofiBtn.toolTip = kofiURL
+        supportRow.addArrangedSubview(kofiBtn)
+        supportRow.addArrangedSubview(lbl("This app is free. If it helps you, you can buy me a coffee.", 10, color: .tertiaryLabelColor))
+        devSection.addArrangedSubview(supportRow)
+        devUpdateRows.append(supportRow)
         // Folders first — "where did my SAI actually go?" is the question the
         // whole copy-into-the-prefix model raises, so answer it with a button.
         let devFolders = NSStackView(); devFolders.orientation = .horizontal; devFolders.spacing = 6

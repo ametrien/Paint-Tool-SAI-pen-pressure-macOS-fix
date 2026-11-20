@@ -8,6 +8,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
 Not in a build yet. Move this under the next version number when it is released,
 and mention it in the release notes.
 
+## [0.3.19] — 2026-11-20
+
+### Added
+- **Brushes & textures ▸** in Advanced, and *Brushes & textures folder* in Setup's **More** menu,
+  open SAI's settings folder, where brush packs, textures and presets go. If SAI has not made
+  the folder yet, the app says to start SAI once first. The README has the steps.
+- **Support on Ko-fi** in Advanced, for anyone who would like to buy the author a coffee.
+
 ### Changed
 - **A new app icon: the pen by gravisio from Flaticon,** on the same light tile, as in SAI Pen
   for Android. The old icon was the pen emoji drawn in Apple's emoji font, and that picture is
