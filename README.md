@@ -5,8 +5,18 @@
 [![downloads](https://img.shields.io/github/downloads/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/total)](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/releases)
 [![license](https://img.shields.io/github/license/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix)](LICENSE)
 
+On an Android? The same, also by me:
+**[SAI Pen Pressure for Android](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-Android)**.
+
+> ### 🌱 Maintainer note
+>
+> This is a hobby project maintained by just one person (me!) for both the macOS and Android versions. I've been working hard on bringing SAI onto macOS and Android for the past few months, and I'm now taking a break.
+>
+> Issues and pull requests may sit unanswered for a while. Thank you for your patience and understanding!
+>
+
 Run **PaintTool SAI Ver.2** on a Mac with **real pen pressure**, and record a **timelapse of your
-canvas** while you draw. Free and open source.
+canvas** while you draw. Free and open source. 
 
 - **[What you need](#what-you-need):** a Mac, a tablet and your own SAI.
 - **[Get started](#get-started):** download the free app, follow the setup window, get SAI and a licence, and the setups users have reported working.
