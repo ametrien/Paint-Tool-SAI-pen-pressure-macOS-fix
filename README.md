@@ -13,6 +13,7 @@ canvas** while you draw. Free and open source.
 - **[What you get](#what-you-get):** pressure and pen feel, Mac shortcuts, sharp text on Retina screens, Chinese, Japanese and Korean text, timelapse.
 - **[What it does not do](#what-it-does-not-do):** SAI and its licence are not included, pressure only, and the limits that belong to SAI or Wine.
 - **[What it looks like](#what-it-looks-like):** every tab, with a screenshot.
+- **[Your brushes, textures and presets](#your-brushes-textures-and-presets):** bring your settings from a PC, or add a brush pack.
 - **[Something not working?](#something-not-working):** troubleshooting, and one button that collects a problem report.
 
 📺 **[Watch the setup video](https://youtu.be/62mJwWQsEYI)**
@@ -451,6 +452,67 @@ Use fonts whose licence lets you use them; the app never copies them.
 
 ---
 
+## Your brushes, textures and presets
+
+SAI keeps them where it does on Windows, in your **Documents** folder:
+**Documents › SYSTEMAX Software Development › SAIv2 › settings**. Wine gives SAI your Mac's own
+Documents folder, so this is an ordinary folder you can open in Finder. It appears the first time
+SAI starts.
+
+In it are your tools and brush presets (`custool`), brush textures (`brushtex`), paper textures
+(`papertex`), scatter shapes (`scatter`), brush shapes (`blotmap`, `bristle` and `brshape`, inside
+`brushfom`) and swatches (`swatch`). Updating SAI, Wine or this app does not touch it, and neither
+do *Reset everything & reinstall…* and *Uninstall…*.
+
+**From a PC: your whole settings folder**
+
+1. **Start SAI once from the app**, then close it.
+2. **On the PC**, in File Explorer open **Documents › SYSTEMAX Software Development › SAIv2**, and
+   copy the `settings` folder to the Mac: a USB stick, a cloud drive, or zip it and send it to
+   yourself.
+3. **On the Mac**, with SAI closed, open the same folder: in Finder choose **Go › Go to Folder…**
+   and paste `~/Documents/SYSTEMAX Software Development/SAIv2`. Rename the `settings` folder there
+   to keep it (`settings-mac`, say), and put the PC's `settings` folder in its place. Check that
+   `custool`, `brushtex` and the others are straight inside `settings`, not in a second `settings`
+   folder inside it.
+4. **Start SAI from the app.** Your tool tabs, presets and textures are there.
+
+Replace the whole folder rather than copying files into it: SAI numbers its tools, so two sets
+mixed together can mix up the tool panel. The PC's folder also brings the PC's window layout, so
+the first time SAI may open at the PC's size or position.
+
+**Brush and texture packs**
+
+Packs people share are `.bmp` pictures, some with an `.ini` beside them, in folders named the way
+SAI names them. With SAI closed, copy the files from each folder of the pack into the folder of the
+same name in `settings`, then start SAI:
+
+| Pack folder | Copy its files into | Where they show up in SAI |
+|---|---|---|
+| `brushtex` | `settings/brushtex` | a brush's texture list, `[ No Texture ]` |
+| `blotmap`, `bristle`, `brshape` | the folder of the same name in `settings/brushfom` | a brush's shape list, `[ Simple Circle ]` |
+| `papertex` | `settings/papertex` | **Layer Effect › Paper**, in the layer settings |
+| `scatter` | `settings/scatter` | the Scatter tool's shape list (*Stars* at first) |
+
+Copy only the `.bmp` and `.ini` files. Leave out `bak` folders, which are old copies, and any
+`.exe` that comes with a pack: SAI does not need it.
+
+A big pack does not slow SAI's start. With the whole Brush Collection from r/PaintToolSAI added
+(2,195 files, 612 MB), SAI's window opened as quickly as without it, in under two seconds.
+
+<p align="center">
+  <a href="docs/assets/screenshots/brushes-texture.png"><img src="docs/assets/screenshots/brushes-texture.png" alt="A brush's texture list in SAI on a Mac: No Texture, Layer Paper, Acrylic from a brush pack, SAI's own Canvas, a home-made test texture with diagonal stripes, and Paper." width="24%"></a>
+  <a href="docs/assets/screenshots/brushes-shape.png"><img src="docs/assets/screenshots/brushes-shape.png" alt="A brush's shape list: Berber, Bencil and Hexagon from a brush pack among SAI's own Blots, Bristle, Flat Bristle and Flat Face." width="24%"></a>
+  <a href="docs/assets/screenshots/brushes-paper.png"><img src="docs/assets/screenshots/brushes-paper.png" alt="Layer Effect, Paper: the paper texture list with Berber from a pack and the striped test texture next to SAI's own textures." width="24%"></a>
+  <a href="docs/assets/screenshots/brushes-scatter.png"><img src="docs/assets/screenshots/brushes-scatter.png" alt="The Scatter tool's shape list: two shapes from a pack, one with an accented name, next to SAI's Stars." width="24%"></a><br>
+  <sub>Textures and shapes from a brush pack in SAI on a Mac: brush texture, brush shape, paper and scatter.</sub>
+</p>
+
+Tested with SAI Ver.2 Alpha.2026.10.19 and app 0.3.18: a whole settings folder (its tool tab
+names and presets came through) and the Brush Collection from r/PaintToolSAI.
+
+---
+
 ## Something not working?
 
 First: **[Troubleshooting](https://ametrien.github.io/Paint-Tool-SAI-pen-pressure-macOS-fix/troubleshooting)**,
@@ -565,6 +627,12 @@ swiftc -O -o wacom-pressure-helper $(bash ../tools/sources.sh helper)
 
 Tests: `bash tests/run-tests.sh` runs the C cores under AddressSanitizer and UBSanitizer, the
 Swift cores, and the end-to-end checks on a real filesystem. CI runs the same script on every push.
+
+## Support
+
+The best support is simply using SAI Pen Pressure and telling me what goes wrong, in an
+[issue here on GitHub](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues).
+If you'd really like to do more, you can [buy me a coffee on Ko-fi](https://ko-fi.com/ametrien).
 
 Contributions welcome — especially testing on other tablets and Macs.
 

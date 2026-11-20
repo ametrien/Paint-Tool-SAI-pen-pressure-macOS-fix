@@ -725,13 +725,23 @@ func performSetup(_ saiSrc: String, _ wine: String, mode: SetupMode = .ensure, q
     }
     return saiInstalledInPrefix()
 }
-/// What in the prefix's SAI folder belongs to the USER rather than to the
-/// program. A SAI update replaces the program; touching these would throw away
-/// exactly the things nobody wants to set up twice.
+/// What in the prefix's SAI folder is kept across a SAI update. A SAI update
+/// replaces the program and puts these back.
 ///
-///   sai2.ini    window layout, tool options, preferences
-///   settings/   brushes, palettes, presets
-///   history.txt recent files
+///   sai2.ini    SAI's menu language and pen tablet options ([Locale],
+///               [PenTablet]); the Language menu writes lang here too
+///   settings/   a copy of the licence (sai-*.slc), nothing else
+///   history.txt SAI's own list of changes, which comes with each build. It is
+///               not the user's: keeping it leaves the old build's list beside
+///               the new sai2.exe (seen 2026-11-20 with 10.19)
+///
+/// The user's brushes, textures, tool presets, swatches and window layout are
+/// NOT in this folder. SAI Ver.2 keeps them in Documents\SYSTEMAX Software
+/// Development\SAIv2\settings, and the prefix's Documents
+/// (drive_c/users/<name>/Documents) is Wine's link to the Mac's ~/Documents.
+/// So they live in ~/Documents/SYSTEMAX Software Development/SAIv2/settings,
+/// outside the prefix: Update SAI, Repair, Full rebuild, Reset and Uninstall
+/// never touch them (removing the prefix removes the link, not the folder).
 ///
 /// Licences (*.slc) are handled separately by the existing stash, because they
 /// can also live outside this folder.
