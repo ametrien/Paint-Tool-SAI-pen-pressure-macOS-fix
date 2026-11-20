@@ -12,7 +12,9 @@ On an Android? The same, also by me:
 >
 > This is a hobby project maintained by just one person (me!) for both the macOS and Android versions. I've been working hard on bringing SAI onto macOS and Android for the past few months, and I'm now taking a break.
 >
-> Issues and pull requests may sit unanswered for a while. Thank you for your patience and understanding!
+> GitHub issues are closed for now. To report a problem or ask a question, please comment on the
+> [Reddit post](https://www.reddit.com/r/PaintToolSAI/comments/1usoz18/i_built_a_tool_that_makes_pen_pressure_work_for/) instead.
+> Replies may take a while. Thank you for your patience and understanding!
 >
 
 Run **PaintTool SAI Ver.2** on a Mac with **real pen pressure**, and record a **timelapse of your
@@ -112,7 +114,7 @@ Users have reported it working on:
 - Wine: **Wine Staging 11.16 (Gcenx) with the Retina patch**, the build Setup installs
 - SAI: **PaintTool SAI Ver.2 (64-bit)**
 
-If you try another Mac or tablet, a short report as an issue helps the next person, whether it
+If you try another Mac or tablet, a short report in the [Reddit thread](https://www.reddit.com/r/PaintToolSAI/comments/1usoz18/i_built_a_tool_that_makes_pen_pressure_work_for/) helps the next person, whether it
 worked or not (see [CONTRIBUTING](CONTRIBUTING.md)).
 
 ---
@@ -535,19 +537,19 @@ will tell you what to press.
   <img src="docs/assets/test-pen.svg" alt="Finding a pressure problem with Test pen. Strokes come out all one width, or there is no pressure: on the Pen tab press Test pen, press the pen on the tablet and watch both bars. Neither bar moves: macOS isn't passing the pen on, so turn on Input Monitoring for SAI Pen Pressure in System Settings and reopen the app. Top moves, bottom stays flat: Wine isn't loading the bridge, so press Repair in the Pressure bridge row on the Setup tab. Both bars move: the fault is inside SAI, so turn on Use WinTab API, quit SAI fully and reopen it, and keep the brush's Min Size below 100%. Still stuck: Copy problem report on the Setup tab and open an issue." width="100%">
 </p>
 
-If that doesn't sort it, **[open an issue](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues/new/choose)**
-and start it with **Copy problem report** on the Setup tab.
+If that doesn't sort it, **[comment on the Reddit post](https://www.reddit.com/r/PaintToolSAI/comments/1usoz18/i_built_a_tool_that_makes_pen_pressure_work_for/)**
+(GitHub issues are closed for now) and include **Copy problem report** from the Setup tab.
 
 That one button collects everything needed to help: your Mac and chip, macOS and Wine versions,
 your tablet and how it is connected, whether Wine is loading the pressure bridge or ignoring it,
-what SAI last received, and the recent log. Paste it into the issue and there is usually nothing
+what SAI last received, and the recent log. Paste it into your comment and there is usually nothing
 else to gather.
 
-**Please write issues in English.** A machine translation (DeepL, Google Translate, ChatGPT) is
+**Please write reports in English.** A machine translation (DeepL, Google Translate, ChatGPT) is
 completely fine — I just can't read Chinese, Japanese, Korean and so on, and I'd rather not guess at
 what you meant. You're welcome to paste your original text underneath the translation.
 
-请用英文提交 issue（机器翻译即可）· Issue は英語でお願いします（機械翻訳で大丈夫です）
+请用英文反馈（机器翻译即可）· 報告は英語でお願いします（機械翻訳で大丈夫です）
 
 ---
 
@@ -640,8 +642,8 @@ Swift cores, and the end-to-end checks on a real filesystem. CI runs the same sc
 
 ## Support
 
-The best support is simply using SAI Pen Pressure and telling me what goes wrong, in an
-[issue here on GitHub](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-macOS-fix/issues).
+The best support is simply using SAI Pen Pressure and telling me what goes wrong on
+[Reddit](https://www.reddit.com/r/PaintToolSAI/comments/1usoz18/i_built_a_tool_that_makes_pen_pressure_work_for/) (GitHub issues are closed for now).
 If you'd really like to do more, you can [buy me a coffee on Ko-fi](https://ko-fi.com/ametrien).
 
 Contributions welcome — especially testing on other tablets and Macs.
