@@ -113,9 +113,6 @@ extension SetupController {
         }
         NSWorkspace.shared.open(URL(fileURLWithPath: p))
     }
-    @objc func openKofi() {
-        if let u = URL(string: kofiURL) { NSWorkspace.shared.open(u) }
-    }
     func openFolder(_ p: String) {
         guard FileManager.default.fileExists(atPath: p) else { alertUser("That folder doesn't exist yet:\n\n\(p)"); return }
         NSWorkspace.shared.open(URL(fileURLWithPath: p))
@@ -459,5 +456,3 @@ extension SetupController {
     }
 }
 
-/// Advanced › Support on Ko-fi, and the README's link.
-let kofiURL = "https://ko-fi.com/ametrien"

@@ -284,7 +284,7 @@ what did not work.
 Seven tabs, one window. Each tab is described below.
 
 <p align="center">
-  <a href="docs/assets/screenshots/all-tabs.png"><img src="docs/assets/screenshots/all-tabs.png" alt="All seven tabs. Top row: Setup, with Launch and Wake SAI; Pen, with pressure levels, pen feel presets, the curve and two more feel sliders, and Test pen; Keys, with what each Option and Command key sends; Recording, with the timelapse switches and save folder. Bottom row: Videos, a grid of drawings with a bar for the selection; Statistics, with the total, days drawn, average day and streak for the month, and a bar for each day; Advanced, with developer mode, automatic updates, sharp text on Retina screens, the Language menu with the font in use, the Wine in use, Brushes & textures and Support on Ko-fi." width="100%"></a>
+  <a href="docs/assets/screenshots/all-tabs.png"><img src="docs/assets/screenshots/all-tabs.png" alt="All seven tabs. Top row: Setup, with Launch and Wake SAI; Pen, with pressure levels, pen feel presets, the curve and two more feel sliders, and Test pen; Keys, with what each Option and Command key sends; Recording, with the timelapse switches and save folder. Bottom row: Videos, a grid of drawings with a bar for the selection; Statistics, with the total, days drawn, average day and streak for the month, and a bar for each day; Advanced, with developer mode, automatic updates, sharp text on Retina screens, the Language menu with the font in use, the Wine in use and Brushes & textures." width="100%"></a>
 </p>
 
 ### Setup
@@ -401,7 +401,7 @@ time, not what you drew or in which canvas.
 
 ### Advanced
 
-<p align="center"><a href="docs/assets/screenshots/advanced.png"><img src="docs/assets/screenshots/advanced.png" alt="The Advanced tab: Developer mode, Install updates automatically, Sharp text on Retina screens, the Language menu with the font in use, the Wine in use, Brushes & textures and Support on Ko-fi." width="70%"></a></p>
+<p align="center"><a href="docs/assets/screenshots/advanced.png"><img src="docs/assets/screenshots/advanced.png" alt="The Advanced tab: Developer mode, Install updates automatically, Sharp text on Retina screens, the Language menu with the font in use, the Wine in use and Brushes & textures." width="70%"></a></p>
 
 - **Install updates automatically**, never while SAI is open.
 - **Display › Sharp text on Retina screens:** SAI at your screen's full resolution
@@ -644,7 +644,6 @@ Swift cores, and the end-to-end checks on a real filesystem. CI runs the same sc
 
 The best support is simply using SAI Pen Pressure and telling me what goes wrong on
 [Reddit](https://www.reddit.com/r/PaintToolSAI/comments/1usoz18/i_built_a_tool_that_makes_pen_pressure_work_for/) (GitHub issues are closed for now).
-If you'd really like to do more, you can [buy me a coffee on Ko-fi](https://ko-fi.com/ametrien).
 
 Contributions welcome — especially testing on other tablets and Macs.
 

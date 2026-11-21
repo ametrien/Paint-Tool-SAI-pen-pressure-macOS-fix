@@ -265,15 +265,6 @@ extension SetupController {
         brushRow.addArrangedSubview(lbl("Add brush packs, or bring your settings from a PC.", 10, color: .tertiaryLabelColor))
         devSection.addArrangedSubview(brushRow)
         devUpdateRows.append(brushRow)
-        let supportRow = NSStackView(); supportRow.orientation = .horizontal; supportRow.spacing = 6
-        supportRow.alignment = .centerY
-        let kofiBtn = NSButton(title: "Support on Ko-fi ♥", target: self, action: #selector(openKofi))
-        kofiBtn.bezelStyle = .rounded; kofiBtn.controlSize = .small
-        kofiBtn.toolTip = kofiURL
-        supportRow.addArrangedSubview(kofiBtn)
-        supportRow.addArrangedSubview(lbl("This app is free. If it helps you, you can buy me a coffee.", 10, color: .tertiaryLabelColor))
-        devSection.addArrangedSubview(supportRow)
-        devUpdateRows.append(supportRow)
         // Folders first — "where did my SAI actually go?" is the question the
         // whole copy-into-the-prefix model raises, so answer it with a button.
         let devFolders = NSStackView(); devFolders.orientation = .horizontal; devFolders.spacing = 6
