@@ -43,8 +43,8 @@ On an Android? The same, also by me:
 >
 > - **Not official.** SAI Pen Pressure is **not affiliated with SYSTEMAX** (the makers of SAI).
 >   I made it for fun because I love SAI.
-> - **Not guaranteed to work** on your Mac. It's maintained by one person, and with so many Macs,
->   macOS versions and tablets a lot can go wrong. **There are bugs, and there will be more.**
+> - **Not guaranteed to work** on your Mac. It's maintained by one person, and with so many Macs, processors
+>   (Apple Silicon and Intel) and macOS versions a lot can go wrong. **There are bugs, and there will be more.**
 > - **Most features should work for most people**, but not everything works everywhere.
 > - **Use it at your own risk.** SAI Pen Pressure is provided as is, and I'm not responsible for
 >   any purchases (such as a SAI licence), lost work or other problems that come from using it.
