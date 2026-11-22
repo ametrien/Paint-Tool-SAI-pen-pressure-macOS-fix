@@ -8,6 +8,22 @@
 On an Android? The same, also by me:
 **[SAI Pen Pressure for Android](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-Android)**.
 
+> [!NOTE]
+> ### A fan project, with respect to SYSTEMAX
+>
+> SAI Pen Pressure is a **fan project**, made out of love for PaintTool SAI. I've been using SAI for
+> around 15 years, and having it on macOS and Android was a dream of mine, so this project is my
+> humble attempt at it. All my thanks go to SYSTEMAX for creating SAI. **If SYSTEMAX ever asks,
+> I'll gladly take this project down.**
+>
+> **日本語：** SYSTEMAX様へ、心からの敬意と感謝を込めて。
+>
+> 本プロジェクトは、約15年にわたりPaintTool SAIを愛用させていただいている一ファンが、SAIへの深い愛情から個人的に制作いたしました、非公式のファンプロジェクトでございます。SAIをmacOSやAndroidでも使わせていただけたら、というのが長年の夢であり、本プロジェクトはその夢を形にしようとした、ささやかな試みにすぎません。
+>
+> このような素晴らしいソフトウェアを生み出し、長年にわたり大切に開発を続けてくださっているSYSTEMAX様に、心より御礼申し上げます。
+>
+> 万が一、本プロジェクトがご迷惑となる場合や、SYSTEMAX様より公開停止のご要望をいただいた場合には、直ちに公開を取り下げさせていただきます。何卒よろしくお願い申し上げます。
+
 > ### 🌱 Maintainer note
 >
 > This is a hobby project maintained by just one person (me!) for both the macOS and Android versions. I've been working hard on bringing SAI onto macOS and Android for the past few months, and I'm now taking a break.
