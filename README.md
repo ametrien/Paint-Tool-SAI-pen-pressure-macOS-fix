@@ -903,14 +903,5 @@ This project does **not** include — and must never include — SAI itself, its
 any license certificate. You get those from SYSTEMAX yourself:
 [where to get SAI and a licence](#get-sai-and-a-licence).
 
-<details>
-<summary>Older versions, and the Wine Mac driver</summary>
-
-Versions up to and including **0.3.16** were released under the MIT License, and **0.3.17** under
-the Apache License 2.0. Those copies stay under those licences.
-
 The Wine Mac driver in [wine-patch/](wine-patch/) is a modified part of Wine and stays under
-Wine's own licence, the GNU LGPL 2.1 or later. The licence here covers only the bridge code in
-this repository.
-
-</details>
+Wine's own licence, the GNU LGPL 2.1 or later.
