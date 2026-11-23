@@ -122,7 +122,7 @@ extension SetupController {
             let where_ = installedLicenseName() != nil
                 ? "It's installed in every folder SAI might read it from, and saved so a rebuild can restore it."
                 : "Saved. It installs automatically when SAI is set up."
-            alertUser("License detected ✅\n\n\(lic) was already in the folder you picked.\n\n\(where_)")
+            alertUser("License detected ✅\n\n\(maskedLicenseName(lic)) was already in the folder you picked.\n\n\(where_)")
         }
         if saiInstalledInPrefix() && prefixIsStale() {
             let c = osa("button returned of (display dialog \(osaQuote("Copy this SAI into the Wine prefix now?\n\nSAI runs from a copy inside \(( prefixSAIDir as NSString).abbreviatingWithTildeInPath). Until it's copied, SAI will keep running the previous version.")) buttons {\"Later\", \"Reinstall now\"} default button \"Reinstall now\" with icon note)")
@@ -649,7 +649,7 @@ extension SetupController {
         // The licence is the one thing we cannot recreate — ask before dropping it.
         var keepLicense = true
         if !slcFiles(in: licenseStashDir()).isEmpty {
-            let l = osa("button returned of (display dialog \(osaQuote("Keep your saved license copy?\n\nWe hold a copy of \(slcFiles(in: licenseStashDir()).joined(separator: ", ")) so a future reinstall can restore it. Your ORIGINAL .slc file wherever you downloaded it is never touched either way.")) buttons {\"Delete it too\", \"Keep license\"} default button \"Keep license\" with icon note)")
+            let l = osa("button returned of (display dialog \(osaQuote("Keep your saved license copy?\n\nWe hold a copy of \(slcFiles(in: licenseStashDir()).map(maskedLicenseName).joined(separator: ", ")) so a future reinstall can restore it. Your ORIGINAL .slc file wherever you downloaded it is never touched either way.")) buttons {\"Delete it too\", \"Keep license\"} default button \"Keep license\" with icon note)")
             keepLicense = (l != "Delete it too")
         }
 
@@ -786,7 +786,7 @@ extension SetupController {
                 self.running = wasRunning
                 self.refresh()
                 if ok {
-                    let lic = installedLicenseName().map { "\n\nLicense in place: \($0)" }
+                    let lic = installedLicenseName().map { "\n\nLicense in place: \(maskedLicenseName($0))" }
                         ?? "\n\nNo license found. Use Install… on the license row if you need to save."
                     alertUser("Done. SAI is installed in:\n\n\(( prefixSAIDir as NSString).abbreviatingWithTildeInPath)\(lic)")
                 } else {

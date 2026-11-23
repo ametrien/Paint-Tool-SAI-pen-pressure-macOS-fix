@@ -210,6 +210,11 @@ swiftc -o "$WORK/winestart-tests" "$REPO/wacom-helper/WineStartCore.swift" \
 "$WORK/winestart-tests"
 
 echo ""
+echo "== Swift core (LicenceMask.swift): the licence number never reaches the screen =="
+swiftc -o "$WORK/licencemask-tests" "$REPO/wacom-helper/LicenceMask.swift" "$REPO/tests/LicenceMaskTests.swift"
+"$WORK/licencemask-tests" "$REPO"
+
+echo ""
 echo "== Swift core (ReportCore.swift) =="
 swiftc -o "$WORK/report-tests" "$REPO/wacom-helper/ReportCore.swift" "$REPO/tests/ReportTests.swift"
 "$WORK/report-tests"

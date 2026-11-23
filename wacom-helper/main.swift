@@ -620,7 +620,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSTabViewDelegate 
                 ok: { installedLicenseName() != nil },
                 fix: { [weak self] in self?.chooseLicense() }, required: false,
                 dynamicDetail: {
-                    if let n = installedLicenseName() { return "\(n) · \(licenseLocationSummary())" }
+                    if let n = installedLicenseName() { return "\(maskedLicenseName(n)) · \(licenseLocationSummary())" }
                     if !slcFiles(in: licenseStashDir()).isEmpty {
                         return "Saved copy will be restored when SAI is installed."
                     }

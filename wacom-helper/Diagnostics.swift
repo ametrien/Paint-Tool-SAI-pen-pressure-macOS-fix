@@ -214,9 +214,9 @@ extension SetupController {
 
         // --- licence + runtime files
         check("license (.slc) in prefix", installedLicenseName() != nil,
-              installedLicenseName() ?? "none (SAI can draw but not save)", fatal: false)
+              installedLicenseName().map(maskedLicenseName) ?? "none (SAI can draw but not save)", fatal: false)
         check("stashed license backup", !slcFiles(in: licenseStashDir()).isEmpty,
-              slcFiles(in: licenseStashDir()).joined(separator: ", "), fatal: false)
+              slcFiles(in: licenseStashDir()).map(maskedLicenseName).joined(separator: ", "), fatal: false)
         check("pressure file", fm.fileExists(atPath: "\(appPrefix)/drive_c/wt_pressure.txt"),
               "", fatal: false)
 
@@ -293,7 +293,7 @@ extension SetupController {
         prefix                    \(appPrefix)
         sai2.exe installed        \(saiInstalledInPrefix())
         prefix stale              \(prefixIsStale())
-        license                   \(installedLicenseName() ?? "none")
+        license                   \(installedLicenseName().map(maskedLicenseName) ?? "none")
         Input Monitoring          \(inputMonitoringGranted())
 
         --- wake log during recording (\(newLines.count) lines) ---
@@ -439,7 +439,7 @@ extension SetupController {
             "SAI installed from: \(installedSrcPath() ?? "unknown")",
             "sai2.exe in prefix: \(saiInstalledInPrefix())",
             "prefix stale: \(prefixIsStale())",
-            "license: \(installedLicenseName() ?? "none")",
+            "license: \(installedLicenseName().map(maskedLicenseName) ?? "none")",
             // "the file is there" was the ONLY thing this used to say about the
             // bridge, and #29 was a machine where the file was there, correct,
             // and never loaded. The next two lines are the ones that answer it.

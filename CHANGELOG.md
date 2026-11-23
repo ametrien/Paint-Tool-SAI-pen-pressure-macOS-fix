@@ -8,6 +8,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: [SemVer](ht
 Not in a build yet. Move this under the next version number when it is released,
 and mention it in the release notes.
 
+## [0.3.20] — 2026-11-23
+
+### Changed
+- **The licence number is hidden.** The app shows the licence file as `sai-••••••.slc`
+  in Setup, dialogs and reports, so it does not end up in screenshots.
+
 ### Removed
 - **Support on Ko-fi** in Advanced, and the Ko-fi link in the README. The app is free, and
   that is all.
