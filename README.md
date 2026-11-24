@@ -18,12 +18,17 @@ On an Android? The same, also by me:
 📺 **[Watch the setup video](https://youtu.be/62mJwWQsEYI)**
 
 > [!NOTE]
-> ### A fan project, with respect to SYSTEMAX
+> **A fan project, with respect to SYSTEMAX.** If SYSTEMAX ever asks, I'll gladly take it down.
+>
+> <details>
+> <summary>More</summary>
 >
 > SAI Pen Pressure is a **fan project**, made out of love for PaintTool SAI. I've been using SAI for
 > around 15 years, and having it on macOS and Android was a dream of mine, so this project is my
 > humble attempt at it. All my thanks go to SYSTEMAX for creating SAI. **If SYSTEMAX ever asks,
 > I'll gladly take this project down.**
+>
+> </details>
 >
 > <details>
 > <summary><b>日本語</b></summary>
@@ -39,7 +44,10 @@ On an Android? The same, also by me:
 > </details>
 
 > [!WARNING]
-> ## ⚠️ Please read first: a hobby project, no guarantees
+> **Not official, no guarantees:** use it at your own risk.
+>
+> <details>
+> <summary>Please read</summary>
 >
 > - **Not official.** SAI Pen Pressure is **not affiliated with SYSTEMAX** (the makers of SAI).
 >   I made it for fun because I love SAI.
@@ -48,13 +56,13 @@ On an Android? The same, also by me:
 > - **Most features should work for most people**, but not everything works everywhere.
 > - **Use it at your own risk.** SAI Pen Pressure is provided as is, and I'm not responsible for
 >   any purchases (such as a SAI licence), lost work or other problems that come from using it.
-
-> ### 🌱 Maintainer note
 >
-> This is a hobby project maintained by just one person (me!) for both the macOS and Android
-> versions. I've been working hard on bringing SAI onto macOS and Android for the past few months,
-> and I'm now taking a break. Questions and problems: see
-> [Something not working?](#something-not-working)
+> </details>
+
+> 🌱 **A hobby project by one person (me!)**, for both the macOS and
+> [Android](https://github.com/ametrien/Paint-Tool-SAI-pen-pressure-Android) versions. I'm on a
+> break: maybe something small now and then, but mostly not until I'm back. Questions and
+> problems: [Something not working?](#something-not-working)
 
 ## Contents
 
