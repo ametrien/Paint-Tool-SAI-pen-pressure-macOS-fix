@@ -15,8 +15,6 @@ On an Android? The same, also by me:
   <img src="docs/assets/screenshots/sai-on-mac.png" alt="PaintTool SAI Ver.2 running on a MacBook next to SAI Pen Pressure, with a pressure-sensitive pen stroke on the canvas" width="88%">
 </p>
 
-📺 **[Watch the setup video](https://youtu.be/62mJwWQsEYI)**
-
 > [!NOTE]
 > **A fan project, with respect to SYSTEMAX.** If SYSTEMAX ever asks, I'll gladly take it down.
 >
